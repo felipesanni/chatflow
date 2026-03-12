@@ -24,7 +24,6 @@ export async function ensureBootstrapAdmin(app: FastifyInstance, env: AppEnv) {
       status: 'active',
       agent: {
         create: {
-          id: userId,
           name: env.ADMIN_BOOTSTRAP_NAME,
           presence: 'online',
         },

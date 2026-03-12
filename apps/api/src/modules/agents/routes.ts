@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
+import type { Prisma } from '@prisma/client';
 import { requireSession } from '../../lib/auth-guard.js';
 import { hashPassword } from '../../lib/password.js';
 
@@ -52,7 +53,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     const body = createAgentSchema.parse(request.body);
     const userId = randomUUID();
 
-    const created = await app.prisma.user.create({
+    await app.prisma.user.create({
       data: {
         id: userId,
         email: body.email.toLowerCase(),
@@ -61,7 +62,6 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         status: 'active',
         agent: {
           create: {
-            id: userId,
             name: body.name,
             presence: 'offline',
             queueLinks: {
@@ -70,6 +70,10 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
           },
         },
       },
+    });
+
+    const created = await app.prisma.user.findUnique({
+      where: { id: userId },
       include: {
         agent: {
           include: {
@@ -80,6 +84,10 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     });
+
+    if (!created) {
+      return reply.internalServerError('Agent user was not persisted.');
+    }
 
     app.io.emit('agent.updated', { agentId: userId, action: 'created' });
 

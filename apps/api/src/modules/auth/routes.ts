@@ -30,7 +30,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const userId = randomUUID();
     const passwordHash = hashPassword(body.password);
 
-    const user = await app.prisma.user.create({
+    await app.prisma.user.create({
       data: {
         id: userId,
         email: body.email.toLowerCase(),
@@ -39,16 +39,21 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         status: 'active',
         agent: {
           create: {
-            id: userId,
             name: body.name,
             presence: 'online',
           },
         },
       },
-      include: {
-        agent: true,
-      },
     });
+
+    const user = await app.prisma.user.findUnique({
+      where: { id: userId },
+      include: { agent: true },
+    });
+
+    if (!user) {
+      return reply.internalServerError('Bootstrap user was not persisted.');
+    }
 
     const token = createSessionToken({
       userId: user.id,

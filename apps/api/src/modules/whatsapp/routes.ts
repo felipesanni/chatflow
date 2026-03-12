@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
+import type { Prisma } from '@prisma/client';
 import { parseEvolutionWebhook } from '../../lib/evolution.js';
 import { requireSession } from '../../lib/auth-guard.js';
 
@@ -39,7 +40,7 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
         source: 'evolution',
         eventName: parsed.event,
         whatsappInstanceId: instance?.id,
-        payload: parsed.rawPayload,
+        payload: parsed.rawPayload as Prisma.InputJsonValue,
         receivedAt: new Date(),
       },
     });
@@ -128,7 +129,7 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
           contentType: parsed.contentType,
           body: parsed.body,
           senderNameSnapshot: parsed.pushName ?? parsed.phone ?? parsed.remoteJid,
-          rawPayload: parsed.rawPayload,
+          rawPayload: parsed.rawPayload as Prisma.InputJsonValue,
         },
       });
 
