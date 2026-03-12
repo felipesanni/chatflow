@@ -1,0 +1,194 @@
+CREATE TYPE user_role AS ENUM ('admin', 'agent');
+CREATE TYPE user_status AS ENUM ('active', 'inactive');
+CREATE TYPE agent_presence AS ENUM ('online', 'offline', 'busy');
+CREATE TYPE ticket_status AS ENUM ('open', 'pending', 'closed');
+CREATE TYPE message_direction AS ENUM ('inbound', 'outbound', 'system');
+CREATE TYPE message_content_type AS ENUM ('text', 'image', 'audio', 'video', 'document', 'sticker', 'other');
+CREATE TYPE attachment_storage AS ENUM ('local', 's3', 'minio', 'external');
+CREATE TYPE instance_status AS ENUM ('disconnected', 'pairing', 'connected', 'error');
+CREATE TYPE ticket_event_type AS ENUM (
+  'created',
+  'accepted',
+  'assigned',
+  'transferred',
+  'queue_changed',
+  'message_in',
+  'message_out',
+  'closed',
+  'reopened',
+  'tag_added',
+  'tag_removed'
+);
+
+CREATE TABLE users (
+  id UUID PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role user_role NOT NULL DEFAULT 'agent',
+  status user_status NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_login_at TIMESTAMPTZ
+);
+
+CREATE TABLE agents (
+  id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  avatar_url TEXT,
+  presence agent_presence NOT NULL DEFAULT 'offline',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_active_at TIMESTAMPTZ
+);
+
+CREATE TABLE customers (
+  id UUID PRIMARY KEY,
+  name TEXT NOT NULL,
+  phone_e164 TEXT,
+  email TEXT,
+  company_name TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX customers_phone_e164_key
+  ON customers(phone_e164)
+  WHERE phone_e164 IS NOT NULL;
+
+CREATE TABLE queues (
+  id UUID PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  color TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE whatsapp_instances (
+  id UUID PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  evolution_instance_name TEXT NOT NULL UNIQUE,
+  base_url TEXT NOT NULL,
+  api_key_encrypted TEXT NOT NULL,
+  webhook_secret TEXT,
+  status instance_status NOT NULL DEFAULT 'disconnected',
+  phone_number TEXT,
+  last_seen_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE tickets (
+  id UUID PRIMARY KEY,
+  customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
+  whatsapp_instance_id UUID NOT NULL REFERENCES whatsapp_instances(id),
+  current_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
+  current_queue_id UUID REFERENCES queues(id) ON DELETE SET NULL,
+  external_chat_id TEXT NOT NULL,
+  external_contact_id TEXT,
+  customer_name_snapshot TEXT NOT NULL,
+  customer_avatar_url TEXT,
+  title TEXT,
+  status ticket_status NOT NULL DEFAULT 'open',
+  unread_count INTEGER NOT NULL DEFAULT 0,
+  is_group BOOLEAN NOT NULL DEFAULT FALSE,
+  last_message_preview TEXT,
+  closed_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ
+);
+
+CREATE INDEX tickets_status_updated_at_idx ON tickets(status, updated_at DESC);
+CREATE INDEX tickets_current_agent_id_idx ON tickets(current_agent_id, updated_at DESC);
+CREATE INDEX tickets_current_queue_id_idx ON tickets(current_queue_id, updated_at DESC);
+CREATE UNIQUE INDEX tickets_open_contact_instance_idx
+  ON tickets(whatsapp_instance_id, external_chat_id)
+  WHERE status IN ('open', 'pending');
+
+CREATE TABLE ticket_messages (
+  id UUID PRIMARY KEY,
+  ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  sender_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
+  external_message_id TEXT,
+  direction message_direction NOT NULL,
+  content_type message_content_type NOT NULL DEFAULT 'text',
+  body TEXT,
+  sender_name_snapshot TEXT,
+  raw_payload JSONB,
+  reply_to_message_id UUID REFERENCES ticket_messages(id) ON DELETE SET NULL,
+  delivered_at TIMESTAMPTZ,
+  read_at TIMESTAMPTZ,
+  edited_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX ticket_messages_ticket_id_created_at_idx
+  ON ticket_messages(ticket_id, created_at ASC);
+CREATE INDEX ticket_messages_external_message_id_idx
+  ON ticket_messages(external_message_id)
+  WHERE external_message_id IS NOT NULL;
+
+CREATE TABLE attachments (
+  id UUID PRIMARY KEY,
+  message_id UUID NOT NULL REFERENCES ticket_messages(id) ON DELETE CASCADE,
+  file_name TEXT,
+  mime_type TEXT NOT NULL,
+  size_bytes BIGINT,
+  storage attachment_storage NOT NULL,
+  storage_key TEXT NOT NULL,
+  public_url TEXT,
+  checksum_sha256 TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX attachments_message_id_idx ON attachments(message_id);
+
+CREATE TABLE ticket_assignments (
+  id UUID PRIMARY KEY,
+  ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  from_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
+  to_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
+  from_queue_id UUID REFERENCES queues(id) ON DELETE SET NULL,
+  to_queue_id UUID REFERENCES queues(id) ON DELETE SET NULL,
+  reason TEXT,
+  created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX ticket_assignments_ticket_id_idx
+  ON ticket_assignments(ticket_id, created_at DESC);
+
+CREATE TABLE ticket_events (
+  id UUID PRIMARY KEY,
+  ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  event_type ticket_event_type NOT NULL,
+  actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX ticket_events_ticket_id_idx
+  ON ticket_events(ticket_id, created_at DESC);
+
+CREATE TABLE webhook_logs (
+  id UUID PRIMARY KEY,
+  source TEXT NOT NULL,
+  event_name TEXT NOT NULL,
+  whatsapp_instance_id UUID REFERENCES whatsapp_instances(id) ON DELETE SET NULL,
+  payload JSONB NOT NULL,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  processed_at TIMESTAMPTZ,
+  status_code INTEGER,
+  error_message TEXT
+);
+
+CREATE INDEX webhook_logs_received_at_idx ON webhook_logs(received_at DESC);
+
+CREATE TABLE queue_agents (
+  queue_id UUID NOT NULL REFERENCES queues(id) ON DELETE CASCADE,
+  agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (queue_id, agent_id)
+);
