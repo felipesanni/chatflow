@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import sensible from '@fastify/sensible';
-import fastifySocketIO from '@fastify/socket.io';
+import fastifySocketIO from 'fastify-socket.io';
 import { loadEnv } from './config/env.js';
 import { prismaPlugin } from './plugins/prisma.js';
 import { realtimePlugin } from './plugins/realtime.js';
