@@ -1,4 +1,4 @@
-"use client";
+ï»¿"use client";
 
 import * as React from "react";
 import { io, type Socket } from "socket.io-client";
@@ -330,7 +330,7 @@ export default function HomePage() {
       });
       setMode("login");
       setLoginForm({ email: bootstrapForm.email, password: bootstrapForm.password });
-      setPanelMessage("Administrador inicial criado. Faça login para continuar.");
+      setPanelMessage("Administrador inicial criado. FaÃ§a login para continuar.");
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Falha ao criar administrador inicial.");
     }
@@ -591,7 +591,7 @@ export default function HomePage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm">
                 <div className="font-medium text-white">{user.name}</div>
-                <div className="text-slate-300">{user.email} · {user.role === "admin" ? "Administrador" : "Agente"}</div>
+                <div className="text-slate-300">{user.email} Â· {user.role === "admin" ? "Administrador" : "Agente"}</div>
               </div>
               <button type="button" onClick={() => void refreshAll()} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 px-4 py-3 text-sm transition hover:border-emerald-300/30 hover:text-white">
                 <RefreshCw className={`h-4 w-4 ${ticketLoading || messageLoading ? "animate-spin" : ""}`} />
@@ -657,7 +657,7 @@ export default function HomePage() {
                   <div className="flex flex-col gap-4 border-b border-white/10 pb-4 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <h2 className="text-xl font-semibold text-white">{selectedTicket.customerName}</h2>
-                      <p className="mt-1 text-sm text-slate-300">{selectedTicket.externalChatId} · {selectedTicket.whatsappInstance.name}</p>
+                      <p className="mt-1 text-sm text-slate-300">{selectedTicket.externalChatId} Â· {selectedTicket.whatsappInstance.name}</p>
                       <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-400">
                         <span>Status: {selectedTicket.status}</span>
                         <span>Agente: {selectedTicket.currentAgent?.name ?? "Nao atribuido"}</span>
@@ -683,7 +683,7 @@ export default function HomePage() {
                             key={message.id}
                             className={`max-w-[85%] rounded-3xl px-4 py-3 text-sm ${outgoing ? "ml-auto bg-emerald-400 text-slate-950" : message.direction === "system" ? "mx-auto bg-white/10 text-slate-200" : "bg-white/8 text-slate-100"}`}
                           >
-                            <div className="mb-1 text-xs opacity-75">{message.senderName ?? (outgoing ? "Equipe" : "Cliente")} · {formatDate(message.createdAt)}</div>
+                            <div className="mb-1 text-xs opacity-75">{message.senderName ?? (outgoing ? "Equipe" : "Cliente")} Â· {formatDate(message.createdAt)}</div>
                             <div className="leading-6">{message.body ?? `[${message.contentType}]`}</div>
                           </article>
                         );
@@ -738,7 +738,7 @@ export default function HomePage() {
                         <div key={instance.id} className="rounded-2xl border border-white/10 bg-black/10 px-4 py-3 text-sm">
                           <div className="font-medium text-white">{instance.name}</div>
                           <div className="text-slate-300">{instance.evolutionInstanceName}</div>
-                          <div className="mt-1 text-xs text-slate-400">{instance.status} · {instance.phoneNumber ?? "sem telefone"}</div>
+                          <div className="mt-1 text-xs text-slate-400">{instance.status} Â· {instance.phoneNumber ?? "sem telefone"}</div>
                         </div>
                       ))}
                     </div>
@@ -764,7 +764,7 @@ export default function HomePage() {
                         <div key={agent.id} className="rounded-2xl border border-white/10 bg-black/10 px-4 py-3 text-sm">
                           <div className="font-medium text-white">{agent.name}</div>
                           <div className="text-slate-300">{agent.email}</div>
-                          <div className="mt-1 text-xs text-slate-400">{agent.role} · {agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}</div>
+                          <div className="mt-1 text-xs text-slate-400">{agent.role} Â· {agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}</div>
                         </div>
                       ))}
                     </div>
@@ -877,3 +877,4 @@ function QueueEditor(props: {
     </div>
   );
 }
+
