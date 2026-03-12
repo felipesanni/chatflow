@@ -2,7 +2,6 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import sensible from '@fastify/sensible';
-import fastifySocketIO from 'fastify-socket.io';
 import { loadEnv } from './config/env.js';
 import { prismaPlugin } from './plugins/prisma.js';
 import { realtimePlugin } from './plugins/realtime.js';
@@ -32,15 +31,11 @@ export async function buildApp() {
     origin: [env.WEB_APP_URL],
     credentials: true,
   });
-  await app.register(fastifySocketIO, {
-    cors: {
-      origin: [env.WEB_APP_URL],
-      credentials: true,
-    },
-  });
 
   await app.register(prismaPlugin);
-  await app.register(realtimePlugin);
+  await app.register(realtimePlugin, {
+    corsOrigin: env.WEB_APP_URL,
+  });
   await ensureBootstrapAdmin(app, env);
 
   await app.register(healthRoutes, { prefix: '/api' });

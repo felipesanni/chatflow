@@ -19,7 +19,6 @@
     "dotenv": "^16.5.0",
     "fastify": "^5.2.1",
     "fastify-plugin": "^5.0.1",
-    "fastify-socket.io": "^5.1.0",
     "pino": "^9.6.0",
     "socket.io": "^4.8.1",
     "zod": "^3.24.2"
