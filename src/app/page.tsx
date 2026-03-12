@@ -3,16 +3,34 @@
 import * as React from "react";
 import { io, type Socket } from "socket.io-client";
 import {
+  ArrowRightLeft,
+  Calendar,
+  CheckSquare,
+  ChevronDown,
+  Clock,
   Database,
+  Eye,
+  EyeOff,
+  Info,
+  LayoutGrid,
+  LayoutList,
   LogIn,
-  MessageSquareText,
-  PlugZap,
-  RefreshCw,
+  Menu,
+  MessageSquare,
+  Monitor,
+  Phone,
+  Plus,
+  Search,
   Send,
+  Settings,
   ShieldCheck,
+  Smartphone,
+  User,
   UserPlus,
   Users,
   Workflow,
+  X,
+  Zap,
 } from "lucide-react";
 
 type AuthUser = {
@@ -106,7 +124,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
-function formatDate(value: string) {
+function formatDateTime(value: string) {
   try {
     return new Intl.DateTimeFormat("pt-BR", {
       day: "2-digit",
@@ -119,8 +137,24 @@ function formatDate(value: string) {
   }
 }
 
-function cardClassName(extra?: string) {
-  return `rounded-3xl border border-white/10 bg-white/5 p-5 shadow-2xl shadow-black/20 backdrop-blur ${extra ?? ""}`;
+function formatHour(value: string) {
+  try {
+    return new Intl.DateTimeFormat("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
+}
+
+function initials(name: string) {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
 }
 
 export default function HomePage() {
@@ -146,6 +180,11 @@ export default function HomePage() {
   const [assignmentLoading, setAssignmentLoading] = React.useState<string | null>(null);
 
   const [messageInput, setMessageInput] = React.useState("");
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "grupos">("atendendo");
+  const [adminSection, setAdminSection] = React.useState<"instances" | "agents" | "queues">("instances");
+  const [showAdminPanel, setShowAdminPanel] = React.useState(true);
+
   const [loginForm, setLoginForm] = React.useState({ email: "", password: "" });
   const [bootstrapForm, setBootstrapForm] = React.useState({ name: "", email: "", password: "" });
   const [instanceForm, setInstanceForm] = React.useState({
@@ -161,12 +200,53 @@ export default function HomePage() {
     password: "",
     role: "agent" as "admin" | "agent",
   });
-  const [queueForm, setQueueForm] = React.useState({ name: "", color: "#16a34a" });
+  const [queueForm, setQueueForm] = React.useState({ name: "", color: "#1A1C32" });
   const socketRef = React.useRef<Socket | null>(null);
 
   const selectedTicket = React.useMemo(
     () => tickets.find((ticket) => ticket.id === selectedTicketId) ?? null,
     [tickets, selectedTicketId],
+  );
+
+  const filteredTickets = React.useMemo(() => {
+    const search = searchQuery.trim().toLowerCase();
+
+    return tickets.filter((ticket) => {
+      const matchesTab =
+        activeTab === "grupos"
+          ? ticket.isGroup
+          : activeTab === "aguardando"
+            ? ticket.status === "pending" && !ticket.isGroup
+            : ticket.status === "open" && !ticket.isGroup;
+
+      if (!matchesTab) {
+        return false;
+      }
+
+      if (!search) {
+        return true;
+      }
+
+      return [
+        ticket.customerName,
+        ticket.externalChatId,
+        ticket.lastMessagePreview ?? "",
+        ticket.currentAgent?.name ?? "",
+        ticket.currentQueue?.name ?? "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(search);
+    });
+  }, [activeTab, searchQuery, tickets]);
+
+  const counters = React.useMemo(
+    () => ({
+      atendendo: tickets.filter((ticket) => ticket.status === "open" && !ticket.isGroup).length,
+      aguardando: tickets.filter((ticket) => ticket.status === "pending" && !ticket.isGroup).length,
+      grupos: tickets.filter((ticket) => ticket.isGroup).length,
+    }),
+    [tickets],
   );
 
   const refreshAuth = React.useCallback(async () => {
@@ -430,12 +510,7 @@ export default function HomePage() {
         method: "POST",
         body: JSON.stringify({ ...agentForm, queueIds: [] }),
       });
-      setAgentForm({
-        name: "",
-        email: "",
-        password: "",
-        role: "agent",
-      });
+      setAgentForm({ name: "", email: "", password: "", role: "agent" });
       setPanelMessage("Agente criado.");
       await refreshAgents();
     } catch (error) {
@@ -453,7 +528,7 @@ export default function HomePage() {
         method: "POST",
         body: JSON.stringify(queueForm),
       });
-      setQueueForm({ name: "", color: "#16a34a" });
+      setQueueForm({ name: "", color: "#1A1C32" });
       setPanelMessage("Fila criada.");
       await refreshQueues();
     } catch (error) {
@@ -482,12 +557,10 @@ export default function HomePage() {
 
   if (loadingAuth) {
     return (
-      <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(21,128,61,0.24),_transparent_35%),linear-gradient(180deg,#05080d_0%,#0c1724_100%)] px-6 py-10">
-        <div className="mx-auto flex min-h-[80vh] max-w-7xl items-center justify-center">
-          <div className={cardClassName("flex items-center gap-3 text-sm text-slate-300")}>
-            <RefreshCw className="h-4 w-4 animate-spin" />
-            Carregando sessao...
-          </div>
+      <main className="flex min-h-screen items-center justify-center bg-[#ebf1f4] p-6">
+        <div className="flex items-center gap-3 rounded-xl border bg-white px-5 py-4 text-sm text-slate-600 shadow-sm">
+          <RefreshCw className="h-4 w-4 animate-spin" />
+          Carregando sessao...
         </div>
       </main>
     );
@@ -495,338 +568,572 @@ export default function HomePage() {
 
   if (!user) {
     return (
-      <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(21,128,61,0.24),_transparent_35%),linear-gradient(180deg,#05080d_0%,#0c1724_100%)] px-6 py-10 text-slate-100">
-        <div className="mx-auto grid min-h-[80vh] max-w-6xl gap-8 lg:grid-cols-[1.2fr_0.8fr]">
-          <section className="flex flex-col justify-between rounded-[32px] border border-emerald-400/20 bg-emerald-400/10 p-8 shadow-2xl shadow-black/30">
-            <div className="space-y-5">
-              <p className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-xs uppercase tracking-[0.28em] text-emerald-200">
-                <ShieldCheck className="h-4 w-4" />
-                ChatFlow interno
-              </p>
-              <h1 className="max-w-xl text-4xl font-semibold leading-tight text-white sm:text-5xl">
-                Painel de atendimento pronto para backend proprio, Evolution e PostgreSQL.
+      <main className="min-h-screen bg-[#ebf1f4] px-6 py-8">
+        <div className="mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.1)] lg:grid-cols-[1.1fr_0.9fr]">
+          <section className="bg-[#1A1C32] px-8 py-10 text-white lg:px-12 lg:py-12">
+            <div className="inline-flex items-center gap-3 text-xl font-semibold">
+              <span className="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10">
+                <ShieldCheck className="h-5 w-5" />
+              </span>
+              CHATFLOW
+            </div>
+            <div className="mt-12 max-w-xl space-y-5">
+              <p className="text-xs font-bold uppercase tracking-[0.28em] text-white/60">Painel interno</p>
+              <h1 className="text-5xl font-semibold leading-[1.02] tracking-[-0.04em]">
+                Atendimento com cara de operacao real.
               </h1>
-              <p className="max-w-2xl text-base leading-7 text-slate-200/80">
-                A base foi reorganizada para deploy em EasyPanel, com autenticacao no servidor, webhook da Evolution e dados operacionais no banco novo.
+              <p className="text-base leading-8 text-white/72">
+                Backend proprio, PostgreSQL e Evolution com uma interface mais proxima do sistema original, mas sem voltar Firebase nem dependencias antigas.
               </p>
             </div>
-            <div className="grid gap-4 pt-8 sm:grid-cols-3">
-              <article className={cardClassName("bg-black/10")}>
-                <Database className="mb-3 h-5 w-5 text-emerald-300" />
-                <h2 className="text-sm font-semibold text-white">PostgreSQL</h2>
-                <p className="mt-2 text-sm text-slate-300">Tickets, mensagens, filas, auditoria e usuarios agora vivem no banco principal.</p>
-              </article>
-              <article className={cardClassName("bg-black/10")}>
-                <PlugZap className="mb-3 h-5 w-5 text-emerald-300" />
-                <h2 className="text-sm font-semibold text-white">Evolution API</h2>
-                <p className="mt-2 text-sm text-slate-300">A integracao segue na VPS, mas agora passa por uma API propria.</p>
-              </article>
-              <article className={cardClassName("bg-black/10")}>
-                <Workflow className="mb-3 h-5 w-5 text-emerald-300" />
-                <h2 className="text-sm font-semibold text-white">EasyPanel</h2>
-                <p className="mt-2 text-sm text-slate-300">Separacao clara entre web, api e postgres para publicar sem improviso.</p>
-              </article>
+            <div className="mt-12 grid gap-4 md:grid-cols-3">
+              <FeatureCard icon={Database} title="Banco novo" description="Tickets, mensagens e filas agora vivem no PostgreSQL." />
+              <FeatureCard icon={Zap} title="Evolution" description="Webhook e envio centralizados pela API propria." />
+              <FeatureCard icon={Workflow} title="Operacao" description="Layout administrativo inspirado no sistema anterior." />
             </div>
           </section>
 
-          <section className={cardClassName("self-center")}>
-            <div className="mb-6 flex items-center justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-semibold text-white">{mode === "login" ? "Entrar no painel" : "Criar administrador inicial"}</h2>
-                <p className="mt-1 text-sm text-slate-300">
-                  {mode === "login" ? "Use o bootstrap ou um agente criado pelo painel." : "Use esta opcao so na primeira inicializacao do banco."}
-                </p>
+          <section className="flex items-center bg-[#f7fafc] p-6 lg:p-10">
+            <div className="w-full rounded-[28px] border border-slate-200 bg-white p-7 shadow-sm lg:p-8">
+              <div className="mb-8 flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-[0.22em] text-slate-400">Acesso</div>
+                  <h2 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-slate-900">
+                    {mode === "login" ? "Entrar no painel" : "Criar administrador inicial"}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMode((current) => (current === "login" ? "bootstrap" : "login"))}
+                  className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-white"
+                >
+                  {mode === "login" ? "Primeiro acesso" : "Voltar"}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setMode((current) => (current === "login" ? "bootstrap" : "login"))}
-                className="rounded-full border border-white/10 px-4 py-2 text-sm text-slate-200 transition hover:border-emerald-300/30 hover:text-white"
-              >
-                {mode === "login" ? "Primeiro acesso" : "Voltar"}
-              </button>
+
+              {mode === "login" ? (
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <AuthField label="E-mail" value={loginForm.email} onChange={(value) => setLoginForm((current) => ({ ...current, email: value }))} placeholder="admin@chatflow.local" />
+                  <AuthField label="Senha" type="password" value={loginForm.password} onChange={(value) => setLoginForm((current) => ({ ...current, password: value }))} placeholder="Sua senha" />
+                  <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#19c37d] px-4 py-3 text-base font-semibold text-slate-950 transition hover:bg-[#14b26f]">
+                    <LogIn className="h-4 w-4" />
+                    Entrar
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={handleBootstrap} className="space-y-4">
+                  <AuthField label="Nome" value={bootstrapForm.name} onChange={(value) => setBootstrapForm((current) => ({ ...current, name: value }))} placeholder="Administrador ChatFlow" />
+                  <AuthField label="E-mail" value={bootstrapForm.email} onChange={(value) => setBootstrapForm((current) => ({ ...current, email: value }))} placeholder="admin@chatflow.local" />
+                  <AuthField label="Senha" type="password" value={bootstrapForm.password} onChange={(value) => setBootstrapForm((current) => ({ ...current, password: value }))} placeholder="Minimo de 8 caracteres" />
+                  <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#19c37d] px-4 py-3 text-base font-semibold text-slate-950 transition hover:bg-[#14b26f]">
+                    <ShieldCheck className="h-4 w-4" />
+                    Criar administrador
+                  </button>
+                </form>
+              )}
+
+              {(authError || panelMessage) && (
+                <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  {authError ?? panelMessage}
+                </div>
+              )}
             </div>
-
-            {mode === "login" ? (
-              <form onSubmit={handleLogin} className="space-y-4">
-                <Field label="E-mail" value={loginForm.email} onChange={(value) => setLoginForm((current) => ({ ...current, email: value }))} placeholder="admin@chatflow.local" />
-                <Field label="Senha" type="password" value={loginForm.password} onChange={(value) => setLoginForm((current) => ({ ...current, password: value }))} placeholder="Sua senha" />
-                <button type="submit" className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-4 py-3 font-medium text-slate-950 transition hover:bg-emerald-400">
-                  <LogIn className="h-4 w-4" />
-                  Entrar
-                </button>
-              </form>
-            ) : (
-              <form onSubmit={handleBootstrap} className="space-y-4">
-                <Field label="Nome" value={bootstrapForm.name} onChange={(value) => setBootstrapForm((current) => ({ ...current, name: value }))} placeholder="Administrador ChatFlow" />
-                <Field label="E-mail" value={bootstrapForm.email} onChange={(value) => setBootstrapForm((current) => ({ ...current, email: value }))} placeholder="admin@chatflow.local" />
-                <Field label="Senha" type="password" value={bootstrapForm.password} onChange={(value) => setBootstrapForm((current) => ({ ...current, password: value }))} placeholder="Minimo de 8 caracteres" />
-                <button type="submit" className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-4 py-3 font-medium text-slate-950 transition hover:bg-emerald-400">
-                  <ShieldCheck className="h-4 w-4" />
-                  Criar administrador
-                </button>
-              </form>
-            )}
-
-            {(authError || panelMessage) && (
-              <div className="mt-4 rounded-2xl border border-amber-400/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-100">
-                {authError ?? panelMessage}
-              </div>
-            )}
           </section>
         </div>
       </main>
     );
   }
 
+  const showAdmin = user.role === "admin" && showAdminPanel;
+
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(21,128,61,0.24),_transparent_30%),linear-gradient(180deg,#05080d_0%,#0c1724_100%)] px-4 py-4 text-slate-100 sm:px-6 sm:py-6">
-      <div className="mx-auto max-w-7xl space-y-4">
-        <header className={cardClassName("overflow-hidden bg-[linear-gradient(135deg,rgba(16,185,129,0.14),rgba(15,23,42,0.5))]")}>
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-[0.28em] text-emerald-200/80">ChatFlow control room</p>
-              <h1 className="mt-2 text-3xl font-semibold text-white">Operacao interna centralizada no backend novo</h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">Sessao autenticada, tickets no PostgreSQL, webhook da Evolution persistido pela API e painel pronto para GitHub e EasyPanel.</p>
+    <main className="min-h-screen bg-[#ebf1f4] text-slate-800">
+      <div className="flex min-h-screen flex-col">
+        <header className="flex h-[60px] items-center justify-between bg-[#1A1C32] px-5 text-white shadow-sm">
+          <div className="flex items-center gap-6">
+            <button type="button" className="text-white/90 transition hover:text-white">
+              <Menu className="h-6 w-6" />
+            </button>
+            <div className="flex items-center gap-3">
+              <span className="grid h-8 w-8 place-items-center rounded-full border border-white/20 bg-white/10">
+                <ShieldCheck className="h-4 w-4" />
+              </span>
+              <span className="text-[18px] font-semibold tracking-tight">CHATFLOW</span>
             </div>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm">
-                <div className="font-medium text-white">{user.name}</div>
-                <div className="text-slate-300">{user.email} · {user.role === "admin" ? "Administrador" : "Agente"}</div>
-              </div>
-              <button type="button" onClick={() => void refreshAll()} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 px-4 py-3 text-sm transition hover:border-emerald-300/30 hover:text-white">
-                <RefreshCw className={`h-4 w-4 ${ticketLoading || messageLoading ? "animate-spin" : ""}`} />
-                Atualizar
-              </button>
-              <button type="button" onClick={() => void handleLogout()} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white/10 px-4 py-3 text-sm transition hover:bg-white/15">
-                <LogIn className="h-4 w-4 rotate-180" />
-                Sair
-              </button>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void refreshAll()}
+              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm text-white transition hover:bg-white/15"
+            >
+              <RefreshCw className={`h-4 w-4 ${ticketLoading || messageLoading ? "animate-spin" : ""}`} />
+              Atualizar
+            </button>
+            <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-full border border-white/10 bg-white/10 text-sm font-semibold uppercase">
+              {initials(user.name) || "CF"}
             </div>
           </div>
         </header>
 
-        {panelMessage && <div className="rounded-2xl border border-emerald-300/15 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100">{panelMessage}</div>}
+        <div className="flex min-h-[calc(100vh-60px)]">
+          <aside className="hidden w-14 shrink-0 border-r border-slate-200 bg-white md:flex md:flex-col md:items-center md:justify-between md:py-4">
+            <div className="flex w-full flex-col items-center gap-1">
+              <RailButton icon={LayoutGrid} />
+              <RailButton icon={Phone} active />
+              <RailButton icon={Smartphone} />
+              <RailButton icon={Users} />
+              <RailButton icon={User} />
+              <RailButton icon={Clock} />
+              <RailButton icon={Calendar} />
+              <RailButton icon={Workflow} />
+            </div>
+            <div className="flex w-full flex-col items-center gap-1">
+              <RailButton icon={Settings} onClick={user.role === "admin" ? () => setShowAdminPanel((current) => !current) : undefined} />
+              <button
+                type="button"
+                onClick={() => void handleLogout()}
+                className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+              >
+                <LogIn className="h-5 w-5 rotate-180" />
+              </button>
+            </div>
+          </aside>
 
-        <section className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-          <div className={`${cardClassName()} min-h-[520px]`}>
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="flex items-center gap-2 text-lg font-semibold text-white"><MessageSquareText className="h-5 w-5 text-emerald-300" />Tickets</h2>
-                <p className="mt-1 text-sm text-slate-300">{tickets.length} conversa(s) carregada(s)</p>
+          <section className={`grid min-w-0 flex-1 ${showAdmin ? "xl:grid-cols-[380px_minmax(0,1fr)_360px]" : "xl:grid-cols-[380px_minmax(0,1fr)]"}`}>
+            <div className="flex h-full flex-col border-r border-slate-200 bg-white">
+              <div className="space-y-3 border-b border-slate-200 p-3">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Buscar atendimento e mensagens"
+                    className="h-11 w-full rounded-full border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50/60 p-1">
+                    <SidebarIconButton icon={Eye} />
+                    <SidebarIconButton icon={Plus} />
+                    <SidebarIconButton icon={LayoutList} />
+                    <SidebarIconButton icon={Monitor} active />
+                    <SidebarIconButton icon={CheckSquare} />
+                    <SidebarIconButton icon={EyeOff} />
+                  </div>
+                  <button type="button" className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-500 transition hover:bg-slate-100">
+                    Filas
+                    <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+                  </button>
+                </div>
               </div>
-              {ticketLoading && <RefreshCw className="h-4 w-4 animate-spin text-emerald-300" />}
-            </div>
-            <div className="space-y-3">
-              {tickets.length === 0 ? (
-                <EmptyState title="Nenhum ticket ainda" description="Quando a Evolution entregar mensagens no webhook, os tickets aparecem aqui." />
-              ) : (
-                tickets.map((ticket) => {
-                  const isSelected = ticket.id === selectedTicketId;
-                  return (
-                    <button
-                      key={ticket.id}
-                      type="button"
-                      onClick={() => setSelectedTicketId(ticket.id)}
-                      className={`w-full rounded-2xl border p-4 text-left transition ${isSelected ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10 bg-black/10 hover:border-white/20 hover:bg-white/5"}`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="font-medium text-white">{ticket.customerName}</div>
-                          <div className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-400">{ticket.status}</div>
-                        </div>
-                        {ticket.unreadCount > 0 && <span className="rounded-full bg-emerald-400 px-2 py-1 text-xs font-semibold text-slate-950">{ticket.unreadCount}</span>}
-                      </div>
-                      <p className="mt-3 line-clamp-2 text-sm text-slate-300">{ticket.lastMessagePreview ?? "Sem ultima mensagem registrada."}</p>
-                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
-                        <span>{ticket.whatsappInstance.name}</span>
-                        <span>{ticket.currentAgent?.name ?? "Sem agente"}</span>
-                        <span>{ticket.currentQueue?.name ?? "Sem fila"}</span>
-                        <span>{formatDate(ticket.updatedAt)}</span>
-                      </div>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </div>
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className={`${cardClassName()} min-h-[520px]`}>
+              <div className="flex items-center border-b border-slate-200 px-2">
+                <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => setActiveTab("atendendo")} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
+                <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => setActiveTab("aguardando")} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
+                <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => setActiveTab("grupos")} icon={<Users className="h-3 w-3" />} color="bg-blue-500" />
+              </div>
+
+              <div className="scrollbar-hide flex-1 overflow-y-auto bg-slate-50/30">
+                {filteredTickets.length === 0 ? (
+                  <div className="p-10 text-center text-xs font-medium text-slate-400">Nenhum atendimento nesta categoria.</div>
+                ) : (
+                  filteredTickets.map((ticket) => {
+                    const selected = ticket.id === selectedTicketId;
+                    return (
+                      <button
+                        key={ticket.id}
+                        type="button"
+                        onClick={() => setSelectedTicketId(ticket.id)}
+                        className={`group relative flex w-full items-start gap-3 border-b border-slate-200 p-3 text-left transition ${selected ? "bg-white shadow-[inset_4px_0_0_0_#1A1C32]" : "bg-white/50 hover:bg-slate-100"}`}
+                      >
+                        <div className="pt-1">
+                          <div className="grid h-12 w-12 place-items-center rounded-full border bg-[linear-gradient(135deg,#dbe6ef,#bfcbd8)] text-sm font-semibold text-slate-700 shadow-sm">
+                            {initials(ticket.customerName) || "C"}
+                          </div>
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <Phone className="h-3.5 w-3.5 shrink-0 text-green-500" />
+                                <p className="truncate text-[14px] font-bold text-slate-800">{ticket.customerName}</p>
+                                <Eye className="h-3.5 w-3.5 shrink-0 text-blue-500" />
+                              </div>
+                              <p className="mt-0.5 truncate text-[13px] font-bold text-slate-900">
+                                {ticket.lastMessagePreview ?? "Sem mensagem registrada"}
+                              </p>
+                            </div>
+                            <span className="whitespace-nowrap text-[11px] font-bold text-green-700">{formatHour(ticket.updatedAt)}</span>
+                          </div>
+
+                          <div className="mt-2 flex items-center justify-between gap-2">
+                            <div className="flex flex-wrap gap-1">
+                              <MiniBadge className="bg-[#00e676] text-white" text={ticket.externalChatId || "SEM INSTANCIA"} />
+                              {ticket.isGroup ? (
+                                <MiniBadge className="bg-blue-600 text-white" text="GRUPO" />
+                              ) : (
+                                <>
+                                  <MiniBadge className="bg-red-600 text-white" text={ticket.currentQueue?.name ?? "SEM FILA"} />
+                                  <MiniBadge className="bg-black text-white" text={ticket.currentAgent?.name ?? "SEM AGENTE"} />
+                                </>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              {ticket.unreadCount > 0 ? (
+                                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-[10px] font-bold text-white shadow-sm">
+                                  {ticket.unreadCount}
+                                </span>
+                              ) : null}
+                              <ArrowRightLeft className="h-4 w-4 text-blue-500 transition hover:text-blue-700" />
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <section className="flex min-w-0 flex-col bg-[#ebf1f4]">
+              {panelMessage ? (
+                <div className="border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-800">
+                  {panelMessage}
+                </div>
+              ) : null}
+
               {selectedTicket ? (
                 <>
-                  <div className="flex flex-col gap-4 border-b border-white/10 pb-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <h2 className="text-xl font-semibold text-white">{selectedTicket.customerName}</h2>
-                      <p className="mt-1 text-sm text-slate-300">{selectedTicket.externalChatId} · {selectedTicket.whatsappInstance.name}</p>
-                      <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-400">
-                        <span>Status: {selectedTicket.status}</span>
-                        <span>Agente: {selectedTicket.currentAgent?.name ?? "Nao atribuido"}</span>
-                        <span>Fila: {selectedTicket.currentQueue?.name ?? "Nao definida"}</span>
+                  <div className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6">
+                    <div className="flex items-center gap-3">
+                      <div className="grid h-10 w-10 place-items-center rounded-full border bg-slate-100 text-sm font-semibold text-slate-700">
+                        {initials(selectedTicket.customerName) || "C"}
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold uppercase leading-none text-[#1A1C32]">{selectedTicket.customerName}</h3>
+                        <span className="text-[10px] font-bold uppercase text-[#1A9C68]">
+                          {selectedTicket.currentAgent?.name ?? (selectedTicket.isGroup ? "Conversa de grupo" : "Aguardando atendente")}
+                        </span>
                       </div>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button type="button" onClick={() => void handleAcceptTicket()} className="rounded-2xl border border-white/10 px-4 py-2 text-sm transition hover:border-emerald-300/30 hover:text-white">Assumir</button>
-                      <button type="button" onClick={() => void handleCloseTicket()} className="rounded-2xl bg-rose-500/20 px-4 py-2 text-sm text-rose-100 transition hover:bg-rose-500/30">Encerrar</button>
+
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => void handleAcceptTicket()} className="inline-flex items-center gap-2 rounded-full bg-green-600 px-4 py-2 text-[11px] font-bold uppercase text-white shadow-sm transition hover:bg-green-700">
+                        <CheckSquare className="h-4 w-4" />
+                        Aceitar atendimento
+                      </button>
+                      <button type="button" onClick={() => void handleCloseTicket()} className="inline-flex items-center gap-1 text-[10px] font-bold uppercase text-red-500 transition hover:text-red-600">
+                        <X className="h-3.5 w-3.5" />
+                        Fechar
+                      </button>
+                      <button type="button" className="text-slate-400 transition hover:text-slate-600">
+                        <Info className="h-4 w-4" />
+                      </button>
                     </div>
                   </div>
 
-                  <div className="mt-4 space-y-3">
-                    {messageLoading ? (
-                      <div className="flex items-center gap-2 text-sm text-slate-300"><RefreshCw className="h-4 w-4 animate-spin" />Carregando mensagens...</div>
-                    ) : messages.length === 0 ? (
-                      <EmptyState title="Sem mensagens nesse ticket" description="Assim que o webhook gravar uma mensagem ou voce responder, o historico aparece aqui." />
-                    ) : (
-                      messages.map((message) => {
-                        const outgoing = message.direction === "outbound";
-                        return (
-                          <article
-                            key={message.id}
-                            className={`max-w-[85%] rounded-3xl px-4 py-3 text-sm ${outgoing ? "ml-auto bg-emerald-400 text-slate-950" : message.direction === "system" ? "mx-auto bg-white/10 text-slate-200" : "bg-white/8 text-slate-100"}`}
-                          >
-                            <div className="mb-1 text-xs opacity-75">{message.senderName ?? (outgoing ? "Equipe" : "Cliente")} · {formatDate(message.createdAt)}</div>
-                            <div className="leading-6">{message.body ?? `[${message.contentType}]`}</div>
-                          </article>
-                        );
-                      })
-                    )}
-                  </div>
+                  <div className="flex flex-1 flex-col overflow-hidden">
+                    <div className="scrollbar-hide flex-1 overflow-y-auto px-6 py-6">
+                      <div className="mx-auto flex max-w-4xl flex-col gap-4">
+                        {messageLoading ? (
+                          <div className="text-center text-sm text-slate-500">Carregando mensagens...</div>
+                        ) : messages.length === 0 ? (
+                          <EmptyCenter />
+                        ) : (
+                          messages.map((message) => {
+                            const outgoing = message.direction === "outbound";
+                            const system = message.direction === "system";
 
-                  <form onSubmit={handleSendMessage} className="mt-6 flex flex-col gap-3 border-t border-white/10 pt-4 sm:flex-row">
-                    <textarea
-                      value={messageInput}
-                      onChange={(event) => setMessageInput(event.target.value)}
-                      placeholder="Digite a resposta para este atendimento..."
-                      rows={3}
-                      className="min-h-24 flex-1 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-emerald-300/40"
-                    />
-                    <button type="submit" disabled={sendLoading || !messageInput.trim()} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-5 py-3 font-medium text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-emerald-500/40">
-                      <Send className="h-4 w-4" />
-                      {sendLoading ? "Enviando..." : "Enviar"}
-                    </button>
-                  </form>
+                            if (system) {
+                              return (
+                                <div key={message.id} className="self-center rounded-full bg-slate-200 px-4 py-2 text-[11px] font-bold uppercase text-slate-500">
+                                  {message.body ?? "Evento interno"}
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div key={message.id} className={`flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
+                                <article className={`max-w-[80%] rounded-2xl p-3 text-sm shadow-sm ${outgoing ? "border border-[#C6E9AD] bg-[#DCF8C6] text-slate-800" : "rounded-tl-none border border-slate-200 bg-white text-slate-800"}`}>
+                                  <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.06em] text-slate-400">
+                                    {message.senderName ?? (outgoing ? user.name : selectedTicket.customerName)}
+                                  </div>
+                                  <div className="whitespace-pre-wrap text-sm leading-6">{message.body ?? `[${message.contentType}]`}</div>
+                                  <div className="mt-2 text-right text-[10px] text-slate-400">{formatDateTime(message.createdAt)}</div>
+                                </article>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+
+                    <form onSubmit={handleSendMessage} className="border-t border-slate-200 bg-white px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <textarea
+                          value={messageInput}
+                          onChange={(event) => setMessageInput(event.target.value)}
+                          rows={2}
+                          placeholder="Digite uma mensagem"
+                          className="min-h-[52px] flex-1 resize-none rounded-full border border-slate-200 bg-slate-50 px-5 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white"
+                        />
+                        <button
+                          type="submit"
+                          disabled={sendLoading || !messageInput.trim()}
+                          className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[#1A1C32] px-5 text-sm font-bold uppercase text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
+                        >
+                          <Send className="h-4 w-4" />
+                          {sendLoading ? "Enviando" : "Enviar"}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
                 </>
               ) : (
-                <EmptyState title="Selecione um ticket" description="Quando houver conversas no sistema, escolha uma delas para visualizar o historico e responder." />
+                <EmptyCenter />
               )}
-            </div>
+            </section>
 
-            <aside className="space-y-4">
-              <section className={cardClassName()}>
-                <h2 className="text-lg font-semibold text-white">Resumo rapido</h2>
-                <div className="mt-4 grid gap-3">
-                  <MetricCard icon={MessageSquareText} label="Tickets ativos" value={`${tickets.filter((ticket) => ticket.status !== "closed").length}`} />
-                  <MetricCard icon={Users} label="Agentes" value={`${agents.length}`} />
-                  <MetricCard icon={Workflow} label="Filas" value={`${queues.length}`} />
-                  <MetricCard icon={PlugZap} label="Instancias" value={`${instances.length}`} />
+            {showAdmin ? (
+              <aside className="border-l border-slate-200 bg-white">
+                <div className="border-b border-slate-200 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">Admin</div>
+                      <div className="mt-1 text-lg font-semibold text-slate-900">Configurações</div>
+                    </div>
+                    <button type="button" onClick={() => setShowAdminPanel(false)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-500 transition hover:bg-slate-50">
+                      Ocultar
+                    </button>
+                  </div>
+                  <div className="mt-4 grid grid-cols-3 gap-2">
+                    <AdminTab label="Instancias" active={adminSection === "instances"} onClick={() => setAdminSection("instances")} />
+                    <AdminTab label="Agentes" active={adminSection === "agents"} onClick={() => setAdminSection("agents")} />
+                    <AdminTab label="Filas" active={adminSection === "queues"} onClick={() => setAdminSection("queues")} />
+                  </div>
                 </div>
-              </section>
 
-              {user.role === "admin" && (
-                <>
-                  <section className={cardClassName()}>
-                    <h2 className="flex items-center gap-2 text-lg font-semibold text-white"><PlugZap className="h-5 w-5 text-emerald-300" />Instancias Evolution</h2>
-                    <form onSubmit={handleCreateInstance} className="mt-4 space-y-3">
-                      <Field label="Nome interno" value={instanceForm.name} onChange={(value) => setInstanceForm((current) => ({ ...current, name: value }))} />
-                      <Field label="Nome da instancia na Evolution" value={instanceForm.evolutionInstanceName} onChange={(value) => setInstanceForm((current) => ({ ...current, evolutionInstanceName: value }))} />
-                      <Field label="Base URL" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder="https://evolution.suaempresa.com" />
-                      <Field label="API key" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} placeholder="apikey da Evolution" />
-                      <Field label="Webhook secret" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
-                      <button type="submit" disabled={instanceLoading} className="w-full rounded-2xl bg-emerald-500 px-4 py-3 font-medium text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-emerald-500/40">{instanceLoading ? "Salvando..." : "Salvar instancia"}</button>
-                    </form>
-                    <div className="mt-4 space-y-2">
-                      {instances.map((instance) => (
-                        <div key={instance.id} className="rounded-2xl border border-white/10 bg-black/10 px-4 py-3 text-sm">
-                          <div className="font-medium text-white">{instance.name}</div>
-                          <div className="text-slate-300">{instance.evolutionInstanceName}</div>
-                          <div className="mt-1 text-xs text-slate-400">{instance.status} · {instance.phoneNumber ?? "sem telefone"}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
+                <div className="scrollbar-hide max-h-[calc(100vh-124px)] space-y-4 overflow-y-auto p-4">
+                  {adminSection === "instances" ? (
+                    <AdminPanelCard title="Nova instancia" icon={Smartphone}>
+                      <form onSubmit={handleCreateInstance} className="space-y-3">
+                        <CompactField label="Nome interno" value={instanceForm.name} onChange={(value) => setInstanceForm((current) => ({ ...current, name: value }))} />
+                        <CompactField label="Nome na Evolution" value={instanceForm.evolutionInstanceName} onChange={(value) => setInstanceForm((current) => ({ ...current, evolutionInstanceName: value }))} />
+                        <CompactField label="Base URL" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder="https://evolution.seudominio.com" />
+                        <CompactField label="API key" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} />
+                        <CompactField label="Webhook secret" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
+                        <PrimaryAction disabled={instanceLoading}>{instanceLoading ? "Salvando..." : "Salvar instancia"}</PrimaryAction>
+                      </form>
+                      <div className="mt-4 space-y-3">
+                        {instances.map((instance) => (
+                          <InfoRow key={instance.id} title={instance.name} subtitle={instance.evolutionInstanceName} meta={`${instance.status} · ${instance.phoneNumber ?? "sem telefone"}`} />
+                        ))}
+                      </div>
+                    </AdminPanelCard>
+                  ) : null}
 
-                  <section className={cardClassName()}>
-                    <h2 className="flex items-center gap-2 text-lg font-semibold text-white"><UserPlus className="h-5 w-5 text-emerald-300" />Agentes</h2>
-                    <form onSubmit={handleCreateAgent} className="mt-4 space-y-3">
-                      <Field label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} />
-                      <Field label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} />
-                      <Field label="Senha" type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} />
-                      <label className="block text-sm text-slate-300">
-                        Perfil
-                        <select value={agentForm.role} onChange={(event) => setAgentForm((current) => ({ ...current, role: event.target.value as "admin" | "agent" }))} className="mt-2 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-100 outline-none">
-                          <option value="agent">Agente</option>
-                          <option value="admin">Administrador</option>
-                        </select>
-                      </label>
-                      <button type="submit" disabled={agentLoading} className="w-full rounded-2xl bg-emerald-500 px-4 py-3 font-medium text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-emerald-500/40">{agentLoading ? "Criando..." : "Criar agente"}</button>
-                    </form>
-                    <div className="mt-4 space-y-2">
-                      {agents.map((agent) => (
-                        <div key={agent.id} className="rounded-2xl border border-white/10 bg-black/10 px-4 py-3 text-sm">
-                          <div className="font-medium text-white">{agent.name}</div>
-                          <div className="text-slate-300">{agent.email}</div>
-                          <div className="mt-1 text-xs text-slate-400">{agent.role} · {agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
+                  {adminSection === "agents" ? (
+                    <AdminPanelCard title="Novo agente" icon={UserPlus}>
+                      <form onSubmit={handleCreateAgent} className="space-y-3">
+                        <CompactField label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} />
+                        <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} />
+                        <CompactField label="Senha" type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} />
+                        <label className="block text-sm font-medium text-slate-600">
+                          Perfil
+                          <select
+                            value={agentForm.role}
+                            onChange={(event) => setAgentForm((current) => ({ ...current, role: event.target.value as "admin" | "agent" }))}
+                            className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-700 outline-none"
+                          >
+                            <option value="agent">Agente</option>
+                            <option value="admin">Administrador</option>
+                          </select>
+                        </label>
+                        <PrimaryAction disabled={agentLoading}>{agentLoading ? "Criando..." : "Criar agente"}</PrimaryAction>
+                      </form>
+                      <div className="mt-4 space-y-3">
+                        {agents.map((agent) => (
+                          <InfoRow key={agent.id} title={agent.name} subtitle={agent.email} meta={`${agent.role} · ${agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}`} />
+                        ))}
+                      </div>
+                    </AdminPanelCard>
+                  ) : null}
 
-                  <section className={cardClassName()}>
-                    <h2 className="flex items-center gap-2 text-lg font-semibold text-white"><Workflow className="h-5 w-5 text-emerald-300" />Filas</h2>
-                    <form onSubmit={handleCreateQueue} className="mt-4 space-y-3">
-                      <Field label="Nome da fila" value={queueForm.name} onChange={(value) => setQueueForm((current) => ({ ...current, name: value }))} />
-                      <Field label="Cor" value={queueForm.color} onChange={(value) => setQueueForm((current) => ({ ...current, color: value }))} placeholder="#16a34a" />
-                      <button type="submit" disabled={queueLoading} className="w-full rounded-2xl bg-emerald-500 px-4 py-3 font-medium text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-emerald-500/40">{queueLoading ? "Criando..." : "Criar fila"}</button>
-                    </form>
-                    <div className="mt-4 space-y-3">
-                      {queues.map((queue) => (
-                        <QueueEditor key={queue.id} queue={queue} agents={agents} loading={assignmentLoading === queue.id} onChange={setQueues} onSave={handleAssignQueueAgents} />
-                      ))}
-                    </div>
-                  </section>
-                </>
-              )}
-            </aside>
-          </div>
-        </section>
+                  {adminSection === "queues" ? (
+                    <AdminPanelCard title="Filas e membros" icon={Users}>
+                      <form onSubmit={handleCreateQueue} className="space-y-3">
+                        <CompactField label="Nome da fila" value={queueForm.name} onChange={(value) => setQueueForm((current) => ({ ...current, name: value }))} />
+                        <CompactField label="Cor" value={queueForm.color} onChange={(value) => setQueueForm((current) => ({ ...current, color: value }))} placeholder="#1A1C32" />
+                        <PrimaryAction disabled={queueLoading}>{queueLoading ? "Criando..." : "Criar fila"}</PrimaryAction>
+                      </form>
+                      <div className="mt-4 space-y-3">
+                        {queues.map((queue) => (
+                          <QueueEditor key={queue.id} queue={queue} agents={agents} loading={assignmentLoading === queue.id} onSave={handleAssignQueueAgents} onChange={setQueues} />
+                        ))}
+                      </div>
+                    </AdminPanelCard>
+                  ) : null}
+                </div>
+              </aside>
+            ) : null}
+          </section>
+        </div>
       </div>
     </main>
   );
 }
 
-function Field(props: { label: string; value: string; onChange: (value: string) => void; type?: string; placeholder?: string }) {
+function FeatureCard(props: { icon: React.ComponentType<{ className?: string }>; title: string; description: string }) {
+  const Icon = props.icon;
   return (
-    <label className="block text-sm text-slate-300">
+    <article className="rounded-[22px] border border-white/12 bg-white/10 p-5 backdrop-blur-sm">
+      <Icon className="h-5 w-5 text-emerald-200" />
+      <h3 className="mt-4 text-lg font-semibold text-white">{props.title}</h3>
+      <p className="mt-2 text-sm leading-6 text-white/72">{props.description}</p>
+    </article>
+  );
+}
+
+function AuthField(props: { label: string; value: string; onChange: (value: string) => void; type?: string; placeholder?: string }) {
+  return (
+    <label className="block text-sm font-medium text-slate-600">
       {props.label}
       <input
         type={props.type ?? "text"}
         value={props.value}
         onChange={(event) => props.onChange(event.target.value)}
         placeholder={props.placeholder}
-        className="mt-2 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-emerald-300/40"
+        className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white"
       />
     </label>
   );
 }
 
-function EmptyState(props: { title: string; description: string }) {
+function RailButton(props: { icon: React.ComponentType<{ className?: string }>; active?: boolean; onClick?: () => void }) {
+  const Icon = props.icon;
   return (
-    <div className="flex min-h-[220px] flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 bg-black/10 px-6 py-10 text-center">
-      <div className="rounded-full border border-white/10 bg-white/5 p-3"><Database className="h-5 w-5 text-emerald-300" /></div>
-      <h3 className="mt-4 text-lg font-semibold text-white">{props.title}</h3>
-      <p className="mt-2 max-w-md text-sm leading-6 text-slate-300">{props.description}</p>
+    <button
+      type="button"
+      onClick={props.onClick}
+      className={`grid h-10 w-10 place-items-center rounded-lg transition ${props.active ? "border-l-2 border-[#1A1C32] bg-slate-100 text-[#1A1C32]" : "text-slate-400 hover:bg-slate-50 hover:text-slate-700"}`}
+    >
+      <Icon className="h-5 w-5" />
+    </button>
+  );
+}
+
+function SidebarIconButton(props: { icon: React.ComponentType<{ className?: string }>; active?: boolean }) {
+  const Icon = props.icon;
+  return (
+    <button
+      type="button"
+      className={`rounded p-1 transition ${props.active ? "border bg-white shadow-sm" : "hover:bg-slate-100"}`}
+    >
+      <Icon className="h-3.5 w-3.5 text-slate-500" />
+    </button>
+  );
+}
+
+function StatusTab(props: { label: string; count: number; active: boolean; onClick: () => void; icon: React.ReactNode; color: string }) {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      className={`relative flex flex-1 items-center justify-center gap-1.5 py-3 text-[10px] font-bold tracking-tight transition-colors ${props.active ? "text-[#1A1C32]" : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"}`}
+    >
+      <div className="relative">
+        {props.icon}
+        {props.count > 0 ? <span className={`absolute -right-2 -top-2 min-w-[14px] rounded-full px-1 text-[8px] text-white ${props.color}`}>{props.count}</span> : null}
+      </div>
+      {props.label}
+      {props.active ? <div className="absolute bottom-0 left-0 h-0.5 w-full bg-[#1A1C32]" /> : null}
+    </button>
+  );
+}
+
+function MiniBadge(props: { text: string; className: string }) {
+  return <span className={`rounded-sm px-1 py-0.5 text-[9px] font-bold uppercase ${props.className}`}>{props.text}</span>;
+}
+
+function EmptyCenter() {
+  return (
+    <div className="grid flex-1 place-items-center px-6 py-10 text-center">
+      <div>
+        <div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-slate-300 text-white">
+          <MessageSquare className="h-9 w-9" />
+        </div>
+        <h3 className="mt-6 text-4xl font-semibold uppercase tracking-[0.12em] text-slate-400">Aguardando selecao</h3>
+        <p className="mt-3 text-lg text-slate-400">Escolha um atendimento para comecar.</p>
+      </div>
     </div>
   );
 }
 
-function MetricCard(props: { icon: typeof Database; label: string; value: string }) {
+function AdminTab(props: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      className={`rounded-lg px-3 py-2 text-xs font-bold uppercase transition ${props.active ? "bg-[#1A1C32] text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+    >
+      {props.label}
+    </button>
+  );
+}
+
+function AdminPanelCard(props: { title: string; icon: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
   const Icon = props.icon;
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/10 px-4 py-4">
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-slate-300">{props.label}</span>
-        <Icon className="h-4 w-4 text-emerald-300" />
+    <section className="rounded-2xl border border-slate-200 bg-[#f8fafc] p-4 shadow-sm">
+      <div className="mb-4 flex items-center gap-3">
+        <span className="grid h-10 w-10 place-items-center rounded-xl bg-white text-[#1A1C32] shadow-sm">
+          <Icon className="h-5 w-5" />
+        </span>
+        <h3 className="text-sm font-semibold text-slate-900">{props.title}</h3>
       </div>
-      <div className="mt-3 text-2xl font-semibold text-white">{props.value}</div>
+      {props.children}
+    </section>
+  );
+}
+
+function CompactField(props: { label: string; value: string; onChange: (value: string) => void; type?: string; placeholder?: string }) {
+  return (
+    <label className="block text-sm font-medium text-slate-600">
+      {props.label}
+      <input
+        type={props.type ?? "text"}
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+        placeholder={props.placeholder}
+        className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+      />
+    </label>
+  );
+}
+
+function PrimaryAction(props: { disabled?: boolean; children: React.ReactNode }) {
+  return (
+    <button
+      type="submit"
+      disabled={props.disabled}
+      className="w-full rounded-2xl bg-[#1A1C32] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
+    >
+      {props.children}
+    </button>
+  );
+}
+
+function InfoRow(props: { title: string; subtitle: string; meta: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+      <div className="font-semibold text-slate-900">{props.title}</div>
+      <div className="mt-1 text-sm text-slate-500">{props.subtitle}</div>
+      <div className="mt-2 text-[11px] uppercase tracking-[0.05em] text-slate-400">{props.meta}</div>
     </div>
   );
 }
@@ -839,14 +1146,15 @@ function QueueEditor(props: {
   onChange: React.Dispatch<React.SetStateAction<QueueItem[]>>;
 }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/10 p-4 text-sm">
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="font-medium text-white">{props.queue.name}</div>
-          <div className="mt-1 text-xs text-slate-400">{props.queue.openTicketCount} ticket(s) aberto(s)</div>
+          <div className="font-semibold text-slate-900">{props.queue.name}</div>
+          <div className="mt-1 text-[11px] uppercase tracking-[0.05em] text-slate-400">{props.queue.openTicketCount} ticket(s) abertos</div>
         </div>
-        <span className="h-4 w-4 rounded-full border border-white/20" style={{ backgroundColor: props.queue.color ?? "#16a34a" }} />
+        <span className="h-4 w-4 rounded-full border border-white shadow" style={{ backgroundColor: props.queue.color ?? "#1A1C32" }} />
       </div>
+
       <div className="mt-4 grid gap-2">
         {props.agents.length === 0 ? (
           <p className="text-xs text-slate-400">Crie agentes para vincular a esta fila.</p>
@@ -855,15 +1163,26 @@ function QueueEditor(props: {
             const selectedIds = props.queue.agents.map((item) => item.id);
             const checked = selectedIds.includes(agent.id);
             return (
-              <label key={agent.id} className="flex items-center gap-3 rounded-2xl bg-white/5 px-3 py-2 text-sm text-slate-200">
+              <label key={agent.id} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
                 <input
                   type="checkbox"
                   checked={checked}
                   onChange={(event) => {
                     const next = event.target.checked ? [...selectedIds, agent.id] : selectedIds.filter((id) => id !== agent.id);
-                    props.onChange((current) => current.map((item) => item.id === props.queue.id ? { ...item, agents: props.agents.filter((candidate) => next.includes(candidate.id)).map((candidate) => ({ id: candidate.id, name: candidate.name })) } : item));
+                    props.onChange((current) =>
+                      current.map((item) =>
+                        item.id === props.queue.id
+                          ? {
+                              ...item,
+                              agents: props.agents
+                                .filter((candidate) => next.includes(candidate.id))
+                                .map((candidate) => ({ id: candidate.id, name: candidate.name })),
+                            }
+                          : item,
+                      ),
+                    );
                   }}
-                  className="h-4 w-4 rounded border-white/20 bg-transparent"
+                  className="h-4 w-4 rounded border-slate-300"
                 />
                 {agent.name}
               </label>
@@ -871,10 +1190,15 @@ function QueueEditor(props: {
           })
         )}
       </div>
-      <button type="button" onClick={() => void props.onSave(props.queue.id, props.queue.agents.map((agent) => agent.id))} disabled={props.loading} className="mt-4 w-full rounded-2xl border border-white/10 px-4 py-3 font-medium transition hover:border-emerald-300/30 hover:text-white disabled:cursor-not-allowed disabled:border-white/5 disabled:text-slate-500">
+
+      <button
+        type="button"
+        onClick={() => void props.onSave(props.queue.id, props.queue.agents.map((agent) => agent.id))}
+        disabled={props.loading}
+        className="mt-4 w-full rounded-2xl bg-[#1A1C32] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
+      >
         {props.loading ? "Salvando membros..." : "Salvar membros da fila"}
       </button>
     </div>
   );
 }
-
