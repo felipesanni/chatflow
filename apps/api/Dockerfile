@@ -10,6 +10,7 @@ FROM node:20-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+RUN npm --prefix packages/db run generate
 RUN npm --prefix apps/api run build
 
 FROM node:20-slim AS runner
