@@ -42,7 +42,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return {
-      items: items.map((ticket) => ({
+      items: items.map((ticket: any) => ({
         id: ticket.id,
         status: ticket.status,
         customerName: ticket.customerNameSnapshot,
@@ -146,13 +146,14 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     if (!session) return;
 
     const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
-    const body = z.object({ reason: z.string().min(1) }).parse(request.body);
+    const parsedBody = z.object({ reason: z.string().min(1).optional() }).parse(request.body ?? {});
+    const reason = parsedBody.reason ?? 'Encerrado pelo agente';
 
     const ticket = await app.prisma.ticket.update({
       where: { id: params.ticketId },
       data: {
         status: 'closed',
-        closedReason: body.reason,
+        closedReason: reason,
         closedAt: new Date(),
       },
     });
@@ -163,7 +164,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         ticketId: ticket.id,
         eventType: 'closed',
         actorUserId: session.userId,
-        metadata: { reason: body.reason },
+        metadata: { reason },
       },
     });
 

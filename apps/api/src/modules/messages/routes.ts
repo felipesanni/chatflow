@@ -22,7 +22,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return {
-      items: items.map((message) => ({
+      items: items.map((message: any) => ({
         id: message.id,
         ticketId: message.ticketId,
         direction: message.direction,
@@ -78,7 +78,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (!delivery.ok) {
-      return reply.badRequest({
+      return reply.code(400).send({
         message: 'Failed to send message to Evolution API.',
         status: delivery.status,
         payload: delivery.payload,

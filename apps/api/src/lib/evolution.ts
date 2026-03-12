@@ -10,6 +10,11 @@ interface EvolutionMessage {
   message?: Record<string, unknown>;
 }
 
+interface ParsedEvolutionContent {
+  body: string;
+  contentType: 'text' | 'image' | 'audio' | 'video' | 'document' | 'sticker' | 'other';
+}
+
 function pickMessage(payload: Record<string, unknown>): EvolutionMessage | null {
   const data = payload.data as Record<string, unknown> | EvolutionMessage[] | undefined;
 
@@ -33,11 +38,11 @@ function normalizePhone(jid: string | undefined) {
   return jid.split('@')[0]?.replace(/[^0-9]/g, '') || null;
 }
 
-function extractText(message: EvolutionMessage | null) {
+function extractText(message: EvolutionMessage | null): ParsedEvolutionContent {
   const content = message?.message as Record<string, any> | undefined;
 
   if (!content) {
-    return 'Mensagem vazia';
+    return { body: 'Mensagem vazia', contentType: 'other' };
   }
 
   const inner = content.ephemeralMessage?.message
@@ -47,15 +52,15 @@ function extractText(message: EvolutionMessage | null) {
     || content.documentWithCaptionMessage?.message
     || content;
 
-  if (inner.conversation) return { body: inner.conversation as string, contentType: 'text' as const };
-  if (inner.extendedTextMessage?.text) return { body: inner.extendedTextMessage.text as string, contentType: 'text' as const };
-  if (inner.imageMessage) return { body: (inner.imageMessage.caption as string) || 'Imagem recebida', contentType: 'image' as const };
-  if (inner.audioMessage) return { body: 'Audio recebido', contentType: 'audio' as const };
-  if (inner.videoMessage) return { body: (inner.videoMessage.caption as string) || 'Video recebido', contentType: 'video' as const };
-  if (inner.documentMessage) return { body: (inner.documentMessage.caption as string) || (inner.documentMessage.fileName as string) || 'Documento recebido', contentType: 'document' as const };
-  if (inner.stickerMessage) return { body: 'Sticker recebido', contentType: 'sticker' as const };
+  if (inner.conversation) return { body: inner.conversation as string, contentType: 'text' };
+  if (inner.extendedTextMessage?.text) return { body: inner.extendedTextMessage.text as string, contentType: 'text' };
+  if (inner.imageMessage) return { body: (inner.imageMessage.caption as string) || 'Imagem recebida', contentType: 'image' };
+  if (inner.audioMessage) return { body: 'Audio recebido', contentType: 'audio' };
+  if (inner.videoMessage) return { body: (inner.videoMessage.caption as string) || 'Video recebido', contentType: 'video' };
+  if (inner.documentMessage) return { body: (inner.documentMessage.caption as string) || (inner.documentMessage.fileName as string) || 'Documento recebido', contentType: 'document' };
+  if (inner.stickerMessage) return { body: 'Sticker recebido', contentType: 'sticker' };
 
-  return { body: 'Midia recebida', contentType: 'other' as const };
+  return { body: 'Midia recebida', contentType: 'other' };
 }
 
 export function parseEvolutionWebhook(payload: Record<string, unknown>) {
@@ -74,7 +79,8 @@ export function parseEvolutionWebhook(payload: Record<string, unknown>) {
     fromMe,
     phone,
     pushName: message?.pushName ?? null,
-    ...parsedContent,
+    body: parsedContent.body,
+    contentType: parsedContent.contentType,
     rawPayload: payload,
     isGroup: Boolean(remoteJid?.includes('@g.us')),
   };

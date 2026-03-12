@@ -30,13 +30,13 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return {
-      items: items.map((agent) => ({
+      items: items.map((agent: any) => ({
         id: agent.id,
         name: agent.name,
         email: agent.user.email,
         role: agent.user.role,
         presence: agent.presence,
-        queues: agent.queueLinks.map((link) => ({ id: link.queue.id, name: link.queue.name })),
+        queues: agent.queueLinks.map((link: any) => ({ id: link.queue.id, name: link.queue.name })),
         createdAt: agent.createdAt,
       })),
     };
@@ -90,7 +90,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         email: created.email,
         role: created.role,
         presence: created.agent?.presence ?? 'offline',
-        queues: created.agent?.queueLinks.map((link) => ({ id: link.queue.id, name: link.queue.name })) ?? [],
+        queues: created.agent?.queueLinks.map((link: any) => ({ id: link.queue.id, name: link.queue.name })) ?? [],
       },
     });
   });

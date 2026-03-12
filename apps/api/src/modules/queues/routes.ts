@@ -33,13 +33,13 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return {
-      items: items.map((queue) => ({
+      items: items.map((queue: any) => ({
         id: queue.id,
         name: queue.name,
         color: queue.color,
         isActive: queue.isActive,
         openTicketCount: queue.tickets.length,
-        agents: queue.queueAgents.map((link) => ({ id: link.agent.id, name: link.agent.name })),
+        agents: queue.queueAgents.map((link: any) => ({ id: link.agent.id, name: link.agent.name })),
       })),
     };
   });
