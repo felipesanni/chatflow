@@ -32,6 +32,7 @@ import {
   Send,
   Settings,
   ShieldCheck,
+  Smile,
   Smartphone,
   User,
   UserPlus,
@@ -256,6 +257,7 @@ const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL ?? null;
 const BRAND_LOGO_STORAGE_KEY = "chatflow.brand.logo";
 const CONFIGURED_PUBLIC_WEB_BASE_URL = process.env.NEXT_PUBLIC_WEB_BASE_URL ?? null;
 const CONFIGURED_PUBLIC_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? null;
+const EMOJI_LIBRARY = ["😀", "😂", "😊", "😍", "🙏", "👍", "👏", "🎉", "❤️", "🔥", "👀", "✅", "😉", "🤝", "😅", "🙌", "🤔", "😎", "📎", "📞"];
 
 function deriveApiBaseUrlFromWebOrigin(origin: string) {
   try {
@@ -437,6 +439,7 @@ export default function HomePage() {
   const [profileAvatarPreview, setProfileAvatarPreview] = React.useState<string | null>(null);
   const [brandLogoPreview, setBrandLogoPreview] = React.useState<string | null>(null);
   const [composerAttachment, setComposerAttachment] = React.useState<ComposerAttachment | null>(null);
+  const [showEmojiPicker, setShowEmojiPicker] = React.useState(false);
   const [publicUrls, setPublicUrls] = React.useState(resolvePublicUrls);
   const [profileSaving, setProfileSaving] = React.useState(false);
   const [transferLoading, setTransferLoading] = React.useState(false);
@@ -482,6 +485,8 @@ export default function HomePage() {
   const imageUploadRef = React.useRef<HTMLInputElement | null>(null);
   const documentUploadRef = React.useRef<HTMLInputElement | null>(null);
   const audioUploadRef = React.useRef<HTMLInputElement | null>(null);
+  const messagesViewportRef = React.useRef<HTMLDivElement | null>(null);
+  const shouldStickMessagesToBottomRef = React.useRef(true);
 
   const selectedTicket = React.useMemo(
     () => tickets.find((ticket) => ticket.id === selectedTicketId) ?? null,
@@ -803,16 +808,20 @@ export default function HomePage() {
     }
   }, [user]);
 
-  const refreshMessages = React.useCallback(async (ticketId: string) => {
+  const refreshMessages = React.useCallback(async (ticketId: string, options?: { silent?: boolean }) => {
     if (!user) return;
-    setMessageLoading(true);
+    if (!options?.silent) {
+      setMessageLoading(true);
+    }
     try {
       const payload = await apiFetch<{ items: MessageItem[] }>(`/tickets/${ticketId}/messages`, { method: "GET" });
       setMessages(payload.items);
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar mensagens.");
     } finally {
-      setMessageLoading(false);
+      if (!options?.silent) {
+        setMessageLoading(false);
+      }
     }
   }, [user]);
 
@@ -917,6 +926,7 @@ export default function HomePage() {
       return;
     }
 
+    shouldStickMessagesToBottomRef.current = true;
     void refreshMessages(selectedTicketId);
   }, [refreshMessages, selectedTicketId, user]);
 
@@ -933,7 +943,7 @@ export default function HomePage() {
     const refreshForTicket = (payload?: { ticketId?: string }) => {
       void refreshTickets();
       if (payload?.ticketId && payload.ticketId === selectedTicketId) {
-        void refreshMessages(payload.ticketId);
+        void refreshMessages(payload.ticketId, { silent: true });
       }
     };
 
@@ -958,8 +968,8 @@ export default function HomePage() {
 
     const interval = setInterval(() => {
       void refreshTickets();
-      if (selectedTicketId) {
-        void refreshMessages(selectedTicketId);
+      if (selectedTicketId && !socketRef.current?.connected) {
+        void refreshMessages(selectedTicketId, { silent: true });
       }
 
       if (user.role === "admin") {
@@ -971,6 +981,17 @@ export default function HomePage() {
 
     return () => clearInterval(interval);
   }, [refreshAgents, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
+
+  React.useEffect(() => {
+    if (!messagesViewportRef.current || !shouldStickMessagesToBottomRef.current) {
+      return;
+    }
+
+    messagesViewportRef.current.scrollTo({
+      top: messagesViewportRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [messages]);
 
   async function handleBootstrap(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1256,6 +1277,26 @@ export default function HomePage() {
 
   function applyQuickReply(item: QuickReplyItem) {
     setMessageInput((current) => current.replace(/(?:^|\s)\/([a-z0-9_-]*)$/i, (match) => match.replace(/\/([a-z0-9_-]*)$/i, item.content)));
+  }
+
+  function insertEmoji(emoji: string) {
+    setMessageInput((current) => `${current}${emoji}`);
+    setShowEmojiPicker(false);
+  }
+
+  function handleMessagesScroll(event: React.UIEvent<HTMLDivElement>) {
+    const element = event.currentTarget;
+    const distanceToBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    shouldStickMessagesToBottomRef.current = distanceToBottom < 80;
+  }
+
+  function handleComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (!sendLoading && canSendToSelectedTicket && (messageInput.trim() || composerAttachment)) {
+        void handleSendMessage(event as unknown as React.FormEvent<HTMLFormElement>);
+      }
+    }
   }
 
   function resetInstanceForm() {
@@ -2459,8 +2500,14 @@ export default function HomePage() {
                     {initials(selectedTicket.customerName) || "C"}
                   </div>
                   <div>
-                    <h3 className="text-[20px] font-semibold leading-none tracking-[-0.03em] text-[#1A1C32]">{selectedTicket.customerName}</h3>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
+                    <button
+                      type="button"
+                      onClick={() => setShowTicketDetails(true)}
+                      className="text-left transition hover:opacity-80"
+                    >
+                      <h3 className="text-[16px] font-semibold leading-tight tracking-[-0.02em] text-[#1A1C32]">{selectedTicket.customerName}</h3>
+                    </button>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12px] text-slate-500">
                       <span>{selectedTicket.whatsappInstance.name}</span>
                       <span className="text-slate-300">•</span>
                       <span>{selectedTicket.currentAgent?.name ?? (selectedTicket.isGroup ? "Conversa de grupo" : "Aguardando atendente")}</span>
@@ -2566,6 +2613,8 @@ export default function HomePage() {
             <div className="flex min-h-0 flex-1 overflow-hidden">
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <div
+                ref={messagesViewportRef}
+                onScroll={handleMessagesScroll}
                 className="scrollbar-hide flex-1 overflow-y-auto px-4 py-5 md:px-6"
                 style={{
                   backgroundColor: "#efe8dd",
@@ -2596,8 +2645,8 @@ export default function HomePage() {
                       return (
                         <div key={message.id} className={`flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
                           <article className={`max-w-[85%] rounded-[18px] px-4 py-3 text-sm shadow-sm md:max-w-[70%] ${outgoing ? "border border-[#cfe9ad] bg-[#dcf8c6] text-slate-800" : "rounded-tl-[8px] border border-[#ece4d8] bg-white text-slate-800"}`}>
-                            <div className={`mb-1 text-[10px] font-bold uppercase tracking-[0.08em] ${outgoing ? "text-slate-700/70" : "text-slate-400"}`}>
-                              {message.senderName ?? (outgoing ? currentUser.name : selectedTicket.customerName)}
+                            <div className={`mb-1 text-[12px] font-semibold leading-tight ${outgoing ? "text-slate-700/85" : "text-slate-500"}`}>
+                              {outgoing ? `${currentUser.name}:` : (message.senderName ?? selectedTicket.customerName)}
                             </div>
                             {message.attachments && message.attachments.length > 0 ? (
                               <div className="mb-3 space-y-3">
@@ -2628,8 +2677,8 @@ export default function HomePage() {
                                 ))}
                               </div>
                             ) : null}
-                            {message.body ? <div className="whitespace-pre-wrap text-[15px] leading-7">{message.body}</div> : null}
-                            {!message.body && (!message.attachments || message.attachments.length === 0) ? <div className="whitespace-pre-wrap text-[15px] leading-7">{`[${message.contentType}]`}</div> : null}
+                            {message.body ? <div className="whitespace-pre-wrap text-[15px] leading-6">{message.body}</div> : null}
+                            {!message.body && (!message.attachments || message.attachments.length === 0) ? <div className="whitespace-pre-wrap text-[15px] leading-6">{`[${message.contentType}]`}</div> : null}
                             <div className={`mt-2 text-right text-[11px] ${outgoing ? "text-slate-500" : "text-slate-400"}`}>{formatDateTime(message.createdAt)}</div>
                           </article>
                         </div>
@@ -2639,7 +2688,7 @@ export default function HomePage() {
                 </div>
               </div>
 
-              <form onSubmit={handleSendMessage} className="border-t border-slate-200 bg-white px-4 py-3 md:px-5">
+              <form onSubmit={handleSendMessage} className="border-t border-slate-200 bg-white px-4 py-2.5 md:px-5">
                 <input ref={imageUploadRef} type="file" accept="image/*" className="hidden" onChange={(event) => void handleComposerAttachmentChange("image", event)} />
                 <input ref={documentUploadRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.zip,application/*" className="hidden" onChange={(event) => void handleComposerAttachmentChange("document", event)} />
                 <input ref={audioUploadRef} type="file" accept="audio/*" className="hidden" onChange={(event) => void handleComposerAttachmentChange("audio", event)} />
@@ -2660,7 +2709,29 @@ export default function HomePage() {
                   </div>
                 ) : null}
                 <div className="flex items-end gap-3">
-                  <div className="flex items-center gap-2 pb-1">
+                  <div className="flex items-center gap-2 pb-0.5">
+                    <div className="relative">
+                      <button type="button" aria-label="Biblioteca de emoji" title="Emoji" onClick={() => setShowEmojiPicker((current) => !current)} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                        <Smile className="h-4 w-4" />
+                      </button>
+                      {showEmojiPicker && canSendToSelectedTicket ? (
+                        <div className="absolute bottom-[calc(100%+0.75rem)] left-0 z-30 w-64 rounded-[22px] border border-slate-200 bg-white p-3 shadow-[0_24px_60px_rgba(15,23,42,0.16)]">
+                          <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Emojis</div>
+                          <div className="grid grid-cols-5 gap-2">
+                            {EMOJI_LIBRARY.map((emoji) => (
+                              <button
+                                key={emoji}
+                                type="button"
+                                onClick={() => insertEmoji(emoji)}
+                                className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-50 text-xl transition hover:bg-slate-100"
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                     <button type="button" aria-label="Anexar imagem" title="Anexar imagem" onClick={() => imageUploadRef.current?.click()} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                       <FileImage className="h-4 w-4" />
                     </button>
@@ -2675,10 +2746,11 @@ export default function HomePage() {
                     <textarea
                       value={messageInput}
                       onChange={(event) => setMessageInput(event.target.value)}
-                      rows={2}
+                      onKeyDown={handleComposerKeyDown}
+                      rows={1}
                       placeholder={canSendToSelectedTicket ? "Digite uma mensagem ou use /atalho" : "Ticket fechado para envio"}
                       disabled={!canSendToSelectedTicket}
-                      className="min-h-[52px] w-full resize-none rounded-full border border-slate-200 bg-[#f8fafc] px-5 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                      className="min-h-[44px] max-h-28 w-full resize-none rounded-[24px] border border-slate-200 bg-[#f8fafc] px-5 py-2.5 text-sm leading-5 text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                     />
                     {quickReplyMatches.length > 0 && canSendToSelectedTicket ? (
                       <div className="absolute bottom-[calc(100%+0.75rem)] left-0 z-20 w-full overflow-hidden rounded-[26px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff,#f8fbfd)] shadow-[0_24px_60px_rgba(15,23,42,0.16)]">
@@ -2701,8 +2773,8 @@ export default function HomePage() {
                       </div>
                     ) : null}
                     {canViewQuickReplies && canSendToSelectedTicket ? (
-                      <div className="mt-2 pl-4 text-xs text-slate-500">
-                        Use <span className="font-semibold text-slate-500">/atalho</span> para aplicar uma resposta rápida.
+                      <div className="mt-1.5 pl-3 text-[11px] text-slate-500">
+                        `Enter` envia. `Shift + Enter` quebra linha. Use <span className="font-semibold text-slate-500">/atalho</span> para aplicar uma resposta rápida.
                       </div>
                     ) : null}
                   </div>
@@ -2710,7 +2782,7 @@ export default function HomePage() {
                     type="submit"
                     aria-label="Enviar mensagem"
                     disabled={sendLoading || (!messageInput.trim() && !composerAttachment) || !canSendToSelectedTicket}
-                    className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[#1A1C32] px-5 text-sm font-bold uppercase tracking-[0.12em] text-white transition hover:bg-[#252844] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                    className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#1A1C32] px-5 text-sm font-bold uppercase tracking-[0.12em] text-white transition hover:bg-[#252844] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
                   >
                     <Send className="h-4 w-4" />
                     {sendLoading ? "Enviando" : "Enviar"}
@@ -3294,7 +3366,7 @@ export default function HomePage() {
             </div>
           </aside>
 
-          <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[360px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
+          <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[320px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
             {ticketWorkspaceAtivo ? (
               <div className="flex h-full flex-col border-r border-slate-200 bg-white">
                 <div className="space-y-3 border-b border-slate-200 p-3">
@@ -3358,7 +3430,7 @@ export default function HomePage() {
                           key={ticket.id}
                           type="button"
                           onClick={() => { setSelectedTicketId(ticket.id); setActiveWorkspace("tickets"); setShowTicketDetails(false); }}
-                          className={`group relative mb-1.5 flex w-full items-start gap-3 rounded-[18px] border text-left transition ${selected ? "border-slate-300 bg-slate-50 shadow-sm" : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"} ${compact ? "p-3" : "p-3.5"}`}
+                          className={`group relative mb-1.5 flex w-full items-start gap-2.5 rounded-[18px] border text-left transition ${selected ? "border-slate-300 bg-slate-50 shadow-sm" : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"} ${compact ? "p-2.5" : "p-3"}`}
                         >
                           <div className={compact ? "pt-0.5" : "pt-1"}>
                             <div className={`grid place-items-center rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700 ${compact ? "h-11 w-11" : "h-12 w-12"}`}>
@@ -3371,19 +3443,19 @@ export default function HomePage() {
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5">
                                   <Phone className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-                                  <p className={`truncate font-bold text-slate-800 ${compact ? "text-[13px]" : "text-[14px]"}`}>{ticket.customerName}</p>
+                                  <p className={`truncate font-semibold text-slate-800 ${compact ? "text-[13px]" : "text-[14px]"}`}>{ticket.customerName}</p>
                                   {selected ? <span className="rounded-full bg-[#1A1C32] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-white">Ativo</span> : null}
                                 </div>
-                                <p className={`mt-1 truncate font-medium text-slate-600 ${compact ? "text-[12px]" : "text-[13px]"}`}>
+                                <p className={`mt-0.5 truncate font-medium leading-5 text-slate-600 ${compact ? "text-[12px]" : "text-[13px]"}`}>
                                   {ticket.lastMessagePreview ?? "Sem mensagem registrada"}
                                 </p>
                               </div>
                               <span className="whitespace-nowrap text-[11px] font-medium text-slate-400">{formatHour(ticket.updatedAt)}</span>
                             </div>
 
-                            <div className="mt-2.5 flex items-center justify-between gap-2">
+                            <div className="mt-2 flex items-center justify-between gap-2">
                               <div className="flex flex-wrap gap-1">
-                                <MiniBadge className="bg-emerald-500 text-white" text={ticket.externalChatId || "SEM INSTÂNCIA"} />
+                                <MiniBadge className="bg-emerald-500 text-white" text={ticket.whatsappInstance.name || "SEM INSTÂNCIA"} />
                                 {ticket.isGroup ? (
                                   <MiniBadge className="bg-blue-600 text-white" text="GRUPO" />
                                 ) : (

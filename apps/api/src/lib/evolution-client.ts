@@ -94,18 +94,13 @@ export async function sendEvolutionMedia(params: SendMediaParams) {
     },
     body: JSON.stringify({
       number: destination,
-      mediaMessage: {
-        mediaType: params.mediaType,
-        fileName: params.fileName,
-        caption: params.caption,
-        mimetype: params.mimeType,
-        media: params.base64,
-      },
-      options: {
-        delay: 300,
-        presence: 'composing',
-        quoted: params.quotedMessageId ? { key: { id: params.quotedMessageId } } : undefined,
-      },
+      mediatype: params.mediaType,
+      fileName: params.fileName,
+      caption: params.caption,
+      mimetype: params.mimeType,
+      media: params.base64,
+      delay: 300,
+      quoted: params.quotedMessageId ? { key: { id: params.quotedMessageId } } : undefined,
     }),
   });
 
@@ -136,15 +131,9 @@ export async function sendEvolutionAudio(params: SendAudioParams) {
     },
     body: JSON.stringify({
       number: destination,
-      audioMessage: {
-        audio: params.base64,
-      },
-      options: {
-        delay: 300,
-        presence: 'recording',
-        encoding: true,
-        quoted: params.quotedMessageId ? { key: { id: params.quotedMessageId } } : undefined,
-      },
+      audio: params.base64,
+      delay: 300,
+      quoted: params.quotedMessageId ? { key: { id: params.quotedMessageId } } : undefined,
     }),
   });
 

@@ -26,6 +26,24 @@ const transferTicketBodySchema = z.object({
   message: 'Informe um agente, uma fila ou ambos para transferir o ticket.',
 });
 
+const closeTicketBodySchema = z.preprocess((value) => {
+  if (value == null || value === '') {
+    return {};
+  }
+
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return {};
+    }
+  }
+
+  return value;
+}, z.object({
+  reason: z.string().trim().min(1).optional(),
+}));
+
 function normalizePhone(value: string) {
   return value.replace(/\D+/g, '');
 }
@@ -311,7 +329,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     const session = access.session;
 
     const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
-    const parsedBody = z.object({ reason: z.string().min(1).optional() }).parse(request.body ?? {});
+    const parsedBody = closeTicketBodySchema.parse(request.body);
     const reason = parsedBody.reason ?? 'Encerrado pelo agente';
 
     const ticket = await app.prisma.ticket.update({
