@@ -47,7 +47,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     const session = requireSession(request, reply);
     if (!session) return;
     if (session.role !== 'admin') {
-      return reply.forbidden('Only admins can create agents.');
+      return reply.forbidden('Somente administradores podem criar agentes.');
     }
 
     const body = createAgentSchema.parse(request.body);
@@ -86,7 +86,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (!created) {
-      return reply.internalServerError('Agent user was not persisted.');
+      return reply.internalServerError('Nao foi possivel persistir o usuario do agente.');
     }
 
     app.io.emit('agent.updated', { agentId: userId, action: 'created' });

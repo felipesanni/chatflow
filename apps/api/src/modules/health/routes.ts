@@ -9,16 +9,16 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
 
       return {
         status: 'ok',
-        service: 'chatflow-api',
-        database: 'connected',
-        timestamp: startedAt,
+        servico: 'chatflow-api',
+        banco: 'conectado',
+        dataHora: startedAt,
       };
     } catch {
       return {
-        status: 'degraded',
-        service: 'chatflow-api',
-        database: 'disconnected',
-        timestamp: startedAt,
+        status: 'degradado',
+        servico: 'chatflow-api',
+        banco: 'desconectado',
+        dataHora: startedAt,
       };
     }
   });

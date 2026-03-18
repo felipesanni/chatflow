@@ -75,16 +75,16 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
       ?? (typeof query.secret === 'string' ? query.secret : null);
 
     if (instance?.webhookSecret && incomingSecret !== instance.webhookSecret) {
-      await finalizeWebhookLog(webhookLog.id, 401, 'Invalid webhook secret.');
+      await finalizeWebhookLog(webhookLog.id, 401, 'Segredo do webhook invalido.');
       return reply.code(401).send({
-        message: 'Invalid webhook secret.',
+        message: 'Segredo do webhook invalido.',
       });
     }
 
     if (!instance || !parsed.remoteJid) {
-      await finalizeWebhookLog(webhookLog.id, 202, 'Webhook logged without ticket persistence.');
+      await finalizeWebhookLog(webhookLog.id, 202, 'Webhook registrado sem persistencia de ticket.');
       return reply.code(202).send({
-        message: 'Webhook logged without ticket persistence.',
+        message: 'Webhook registrado sem persistencia de ticket.',
         event: parsed.event,
         instance: parsed.instanceName,
       });
@@ -197,12 +197,12 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
       await finalizeWebhookLog(webhookLog.id, 202);
 
       return reply.code(202).send({
-        message: 'Evolution webhook processed.',
+        message: 'Webhook da Evolution processado.',
         event: parsed.event,
         ticketId: ticket.id,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unhandled webhook processing error.';
+      const message = error instanceof Error ? error.message : 'Erro nao tratado no processamento do webhook.';
       await finalizeWebhookLog(webhookLog.id, 500, message);
       throw error;
     }
@@ -233,7 +233,7 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
     const session = requireSession(request, reply);
     if (!session) return;
     if (session.role !== 'admin') {
-      return reply.forbidden('Only admins can create WhatsApp instances.');
+      return reply.forbidden('Somente administradores podem criar instancias do WhatsApp.');
     }
 
     const body = createInstanceSchema.parse(request.body);

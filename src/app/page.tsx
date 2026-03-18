@@ -119,7 +119,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(payload?.message ?? "Request failed");
+    throw new Error(payload?.message ?? "Falha na requisição.");
   }
 
   return payload as T;
@@ -156,6 +156,24 @@ function initials(name: string) {
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("");
+}
+
+function traduzirStatusTicket(status: "open" | "pending" | "closed") {
+  if (status === "open") return "Atendendo";
+  if (status === "pending") return "Aguardando";
+  return "Fechado";
+}
+
+function traduzirPerfil(role: "admin" | "agent") {
+  return role === "admin" ? "Administrador" : "Agente";
+}
+
+function traduzirStatusInstancia(status: string) {
+  if (status === "connected") return "Conectada";
+  if (status === "disconnected") return "Desconectada";
+  if (status === "pairing") return "Em pareamento";
+  if (status === "error") return "Com erro";
+  return status;
 }
 
 export default function HomePage() {
@@ -304,7 +322,7 @@ export default function HomePage() {
       setAuthError(null);
     } catch (error) {
       setUser(null);
-      setAuthError(error instanceof Error ? error.message : "Falha ao consultar sessao.");
+      setAuthError(error instanceof Error ? error.message : "Falha ao consultar sessão.");
     } finally {
       setLoadingAuth(false);
     }
@@ -348,7 +366,7 @@ export default function HomePage() {
       const payload = await apiFetch<{ items: InstanceItem[] }>("/whatsapp/instances", { method: "GET" });
       setInstances(payload.items);
     } catch (error) {
-      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar instancias.");
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar instâncias.");
     }
   }, [user]);
 
@@ -432,7 +450,7 @@ export default function HomePage() {
     };
 
     socket.on("connect_error", () => {
-      setPanelMessage("Conexao realtime indisponivel. O painel continua funcionando por requisicao.");
+      setPanelMessage("Conexão em tempo real indisponível. O painel continua funcionando por atualização periódica.");
     });
     socket.on("ticket.updated", refreshForTicket);
     socket.on("ticket.closed", refreshForTicket);
@@ -498,7 +516,7 @@ export default function HomePage() {
 
   async function handleLogout() {
     await apiFetch("/auth/logout", { method: "POST" });
-    setPanelMessage("Sessao encerrada.");
+      setPanelMessage("Sessão encerrada.");
     await refreshAuth();
   }
 
@@ -559,10 +577,10 @@ export default function HomePage() {
         apiKey: "",
         webhookSecret: "",
       });
-      setPanelMessage("Instancia Evolution cadastrada.");
+      setPanelMessage("Instância Evolution cadastrada.");
       await refreshInstances();
     } catch (error) {
-      setPanelMessage(error instanceof Error ? error.message : "Falha ao salvar instancia.");
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao salvar instância.");
     } finally {
       setInstanceLoading(false);
     }
@@ -621,7 +639,8 @@ export default function HomePage() {
     }
   }
 
-  const showAdmin = currentUser.role === "admin" && showAdminPanel && activeWorkspace === "tickets";
+  const ticketWorkspaceAtivo = activeWorkspace === "tickets";
+  const showAdmin = currentUser.role === "admin" && showAdminPanel && ticketWorkspaceAtivo;
 
   const workspaceTitle =
     activeWorkspace === "dashboard"
@@ -629,7 +648,7 @@ export default function HomePage() {
       : activeWorkspace === "tickets"
         ? "Atendimento"
         : activeWorkspace === "channels"
-          ? "Canais e instancias"
+      ? "Canais e instâncias"
           : activeWorkspace === "team"
             ? "Equipe e filas"
             : activeWorkspace === "profile"
@@ -639,38 +658,38 @@ export default function HomePage() {
                 : activeWorkspace === "calendar"
                   ? "Agenda operacional"
                   : activeWorkspace === "automations"
-                    ? "Automacoes"
-                    : "Configuracoes";
+                    ? "Automações"
+                    : "Configurações";
 
   const workspaceDescription =
     activeWorkspace === "dashboard"
-      ? "Resumo rapido do que esta acontecendo no atendimento."
+      ? "Resumo rápido do que está acontecendo no atendimento."
       : activeWorkspace === "tickets"
-        ? "Inbox de conversas com a operacao em tempo real."
+        ? "Caixa de entrada de conversas com a operação em tempo real."
         : activeWorkspace === "channels"
-          ? "Instancias Evolution e orientacoes de conexao."
+          ? "Instâncias Evolution e orientações de conexão."
           : activeWorkspace === "team"
-            ? "Gestao de agentes e distribuicao por filas."
+            ? "Gestão de agentes e distribuição por filas."
             : activeWorkspace === "profile"
-              ? "Dados da sessao e atalhos pessoais."
+              ? "Dados da sessão e atalhos pessoais."
               : activeWorkspace === "activity"
-                ? "Leitura operacional do volume e das pendencias."
+                ? "Leitura operacional do volume e das pendências."
                 : activeWorkspace === "calendar"
                   ? "Passos operacionais e rotinas de acompanhamento."
                   : activeWorkspace === "automations"
-                    ? "Webhook, realtime e fluxo da integracao."
-                    : "Ajustes administrativos e visao de ambiente.";
+                    ? "Webhook, tempo real e fluxo da integração."
+                    : "Ajustes administrativos e visão de ambiente.";
 
   const workspacePanel = (() => {
     if (activeWorkspace === "dashboard") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
           <div className="grid gap-4 md:grid-cols-3">
-            <WorkspaceStatCard title="Atendendo" value={String(counters.atendendo)} accent="emerald" description="Conversas com agente ativo." />
-            <WorkspaceStatCard title="Aguardando" value={String(counters.aguardando)} accent="amber" description="Tickets novos sem responsavel." />
+            <WorkspaceStatCard title="Atendendo" value={String(counters.atendendo)} accent="emerald" description="Conversas com agente responsável." />
+            <WorkspaceStatCard title="Aguardando" value={String(counters.aguardando)} accent="amber" description="Tickets novos sem responsável." />
             <WorkspaceStatCard title="Grupos" value={String(counters.grupos)} accent="blue" description="Conversas coletivas monitoradas." />
           </div>
-          <WorkspaceSection title="Ultimos tickets" description="Atalhos rapidos para voltar ao inbox.">
+          <WorkspaceSection title="Últimos tickets" description="Atalhos rápidos para voltar à caixa de entrada.">
             <div className="grid gap-3 xl:grid-cols-2">
               {tickets.slice(0, 6).map((ticket) => (
                 <button
@@ -685,7 +704,7 @@ export default function HomePage() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-sm font-semibold text-slate-900">{ticket.customerName}</div>
-                    <span className="text-[11px] font-bold uppercase text-slate-400">{ticket.status}</span>
+                    <span className="text-[11px] font-bold uppercase text-slate-400">{traduzirStatusTicket(ticket.status)}</span>
                   </div>
                   <div className="mt-2 text-sm text-slate-500">{ticket.lastMessagePreview ?? "Sem mensagem registrada."}</div>
                   <div className="mt-3 text-[11px] uppercase tracking-[0.05em] text-slate-400">{ticket.currentQueue?.name ?? "Sem fila"} | {formatHour(ticket.updatedAt)}</div>
@@ -700,26 +719,26 @@ export default function HomePage() {
     if (activeWorkspace === "channels") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Instancias Evolution" description="Cadastro e consulta das instancias conectadas.">
+          <WorkspaceSection title="Instâncias Evolution" description="Cadastro e consulta das instâncias conectadas.">
             {currentUser.role === "admin" ? (
               <form onSubmit={handleCreateInstance} className="grid gap-3 lg:grid-cols-2">
                 <CompactField label="Nome interno" value={instanceForm.name} onChange={(value) => setInstanceForm((current) => ({ ...current, name: value }))} />
                 <CompactField label="Nome na Evolution" value={instanceForm.evolutionInstanceName} onChange={(value) => setInstanceForm((current) => ({ ...current, evolutionInstanceName: value }))} />
-                <CompactField label="Base URL" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder="https://evolution.seudominio.com" />
-                <CompactField label="API key" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} />
-                <CompactField label="Webhook secret" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
+                <CompactField label="URL base" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder="https://evolution.seudominio.com" />
+                <CompactField label="Chave da API" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} />
+                <CompactField label="Segredo do webhook" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
                 <div className="lg:col-span-2">
-                  <PrimaryAction disabled={instanceLoading}>{instanceLoading ? "Salvando..." : "Salvar instancia"}</PrimaryAction>
+                  <PrimaryAction disabled={instanceLoading}>{instanceLoading ? "Salvando..." : "Salvar instância"}</PrimaryAction>
                 </div>
               </form>
             ) : (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Somente administradores podem cadastrar instancias.</div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Somente administradores podem cadastrar instâncias.</div>
             )}
           </WorkspaceSection>
-          <WorkspaceSection title="Instancias publicadas" description="Base atual usada pelo envio e pelos webhooks.">
+          <WorkspaceSection title="Instâncias publicadas" description="Base atual usada pelo envio e pelos webhooks.">
             <div className="grid gap-3 xl:grid-cols-2">
               {instances.map((instance) => (
-                <InfoRow key={instance.id} title={instance.name} subtitle={instance.evolutionInstanceName} meta={`${instance.status} | ${instance.phoneNumber ?? "sem telefone"}`} />
+                <InfoRow key={instance.id} title={instance.name} subtitle={instance.evolutionInstanceName} meta={`${traduzirStatusInstancia(instance.status)} | ${instance.phoneNumber ?? "sem telefone"}`} />
               ))}
             </div>
             <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-500">
@@ -738,7 +757,7 @@ export default function HomePage() {
             <AdminTab label="Filas" active={adminSection === "queues"} onClick={() => setAdminSection("queues")} />
           </div>
           {adminSection === "agents" ? (
-            <WorkspaceSection title="Equipe" description="Criacao e leitura dos agentes do sistema.">
+            <WorkspaceSection title="Equipe" description="Criação e leitura dos agentes do sistema.">
               {currentUser.role === "admin" ? (
                 <form onSubmit={handleCreateAgent} className="grid gap-3 lg:grid-cols-2">
                   <CompactField label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} />
@@ -750,12 +769,12 @@ export default function HomePage() {
               ) : null}
               <div className="grid gap-3 xl:grid-cols-2">
                 {agents.map((agent) => (
-                  <InfoRow key={agent.id} title={agent.name} subtitle={agent.email} meta={`${agent.role} | ${agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}`} />
+                  <InfoRow key={agent.id} title={agent.name} subtitle={agent.email} meta={`${traduzirPerfil(agent.role)} | ${agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}`} />
                 ))}
               </div>
             </WorkspaceSection>
           ) : (
-            <WorkspaceSection title="Filas e membros" description="Distribuicao de agentes e leitura do volume atual.">
+            <WorkspaceSection title="Filas e membros" description="Distribuição de agentes e leitura do volume atual.">
               {currentUser.role === "admin" ? (
                 <form onSubmit={handleCreateQueue} className="grid gap-3 md:grid-cols-[1fr_220px]">
                   <CompactField label="Nome da fila" value={queueForm.name} onChange={(value) => setQueueForm((current) => ({ ...current, name: value }))} />
@@ -777,19 +796,19 @@ export default function HomePage() {
     if (activeWorkspace === "profile") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Meu perfil" description="Informacoes da sessao atual e atalhos pessoais.">
+          <WorkspaceSection title="Meu perfil" description="Informações da sessão atual e atalhos pessoais.">
             <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
               <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                 <div className="grid h-20 w-20 place-items-center rounded-full bg-[#1A1C32] text-2xl font-bold text-white">{initials(currentUser.name) || "CF"}</div>
                 <div className="mt-4 text-xl font-semibold text-slate-900">{currentUser.name}</div>
                 <div className="mt-1 text-sm text-slate-500">{currentUser.email}</div>
-                <div className="mt-4 inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase text-slate-600">{currentUser.role}</div>
+                <div className="mt-4 inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase text-slate-600">{traduzirPerfil(currentUser.role)}</div>
               </div>
               <div className="grid gap-3 md:grid-cols-2">
-                <InfoRow title="Sessao" subtitle="Autenticacao ativa" meta="cookie httpOnly + backend proprio" />
-                <InfoRow title="Realtime" subtitle={SOCKET_URL ? "Socket configurado" : "Socket nao configurado"} meta={SOCKET_URL ?? "fallback por polling"} />
-                <button type="button" onClick={() => setActiveWorkspace("tickets")} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Voltar ao inbox</div><div className="mt-1 text-sm text-slate-500">Abrir conversas e continuar o atendimento.</div></button>
-                <button type="button" onClick={() => void handleLogout()} className="rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-left shadow-sm transition hover:bg-red-100"><div className="font-semibold text-red-700">Encerrar sessao</div><div className="mt-1 text-sm text-red-500">Sair do painel com seguranca.</div></button>
+                <InfoRow title="Sessão" subtitle="Autenticação ativa" meta="cookie httpOnly + backend próprio" />
+                <InfoRow title="Tempo real" subtitle={SOCKET_URL ? "Tempo real configurado" : "Tempo real não configurado"} meta={SOCKET_URL ?? "atualização por consulta periódica"} />
+                <button type="button" onClick={() => setActiveWorkspace("tickets")} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Voltar à caixa de entrada</div><div className="mt-1 text-sm text-slate-500">Abrir conversas e continuar o atendimento.</div></button>
+                <button type="button" onClick={() => void handleLogout()} className="rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-left shadow-sm transition hover:bg-red-100"><div className="font-semibold text-red-700">Encerrar sessão</div><div className="mt-1 text-sm text-red-500">Sair do painel com segurança.</div></button>
               </div>
             </div>
           </WorkspaceSection>
@@ -801,15 +820,15 @@ export default function HomePage() {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <WorkspaceStatCard title="Tickets visiveis" value={String(visibleTickets.length)} accent="slate" description="Resultado da busca e dos filtros atuais." />
-            <WorkspaceStatCard title="Nao lidos" value={String(tickets.filter((ticket) => ticket.unreadCount > 0).length)} accent="emerald" description="Conversas pedindo resposta rapida." />
-            <WorkspaceStatCard title="Com agente" value={String(tickets.filter((ticket) => ticket.currentAgent).length)} accent="blue" description="Atendimentos ja distribuidos." />
-            <WorkspaceStatCard title="Sem fila" value={String(tickets.filter((ticket) => !ticket.currentQueue).length)} accent="amber" description="Conversas ainda sem classificacao." />
+            <WorkspaceStatCard title="Tickets visíveis" value={String(visibleTickets.length)} accent="slate" description="Resultado da busca e dos filtros atuais." />
+            <WorkspaceStatCard title="Não lidos" value={String(tickets.filter((ticket) => ticket.unreadCount > 0).length)} accent="emerald" description="Conversas pedindo resposta rápida." />
+            <WorkspaceStatCard title="Com agente" value={String(tickets.filter((ticket) => ticket.currentAgent).length)} accent="blue" description="Atendimentos já distribuídos." />
+            <WorkspaceStatCard title="Sem fila" value={String(tickets.filter((ticket) => !ticket.currentQueue).length)} accent="amber" description="Conversas ainda sem classificação." />
           </div>
-          <WorkspaceSection title="Leitura operacional" description="Ultimos movimentos do atendimento.">
+          <WorkspaceSection title="Leitura operacional" description="Últimos movimentos do atendimento.">
             <div className="space-y-3">
               {tickets.slice(0, 8).map((ticket) => (
-                <InfoRow key={ticket.id} title={ticket.customerName} subtitle={ticket.lastMessagePreview ?? "Sem mensagem registrada"} meta={`${ticket.status} | ${ticket.currentAgent?.name ?? "sem agente"} | ${formatDateTime(ticket.updatedAt)}`} />
+                <InfoRow key={ticket.id} title={ticket.customerName} subtitle={ticket.lastMessagePreview ?? "Sem mensagem registrada"} meta={`${traduzirStatusTicket(ticket.status)} | ${ticket.currentAgent?.name ?? "sem agente"} | ${formatDateTime(ticket.updatedAt)}`} />
               ))}
             </div>
           </WorkspaceSection>
@@ -822,9 +841,9 @@ export default function HomePage() {
         <div className="flex h-full flex-col gap-4 p-6">
           <WorkspaceSection title="Rotina operacional" description="Checklist simples para o uso interno do sistema.">
             <div className="grid gap-3 md:grid-cols-2">
-              <InfoRow title="Inicio do turno" subtitle="Conferir login, socket e instancias" meta="1. abrir painel | 2. validar health | 3. conferir instancias" />
-              <InfoRow title="Durante o atendimento" subtitle="Monitorar aguardando e nao lidos" meta="1. assumir tickets | 2. responder | 3. encerrar quando concluir" />
-              <InfoRow title="Evolution" subtitle="Validar webhook e telefone vinculado" meta="URL publica + secret opcional" />
+              <InfoRow title="Início do turno" subtitle="Conferir login, socket e instâncias" meta="1. abrir painel | 2. validar saúde da API | 3. conferir instâncias" />
+              <InfoRow title="Durante o atendimento" subtitle="Monitorar aguardando e não lidos" meta="1. assumir tickets | 2. responder | 3. encerrar quando concluir" />
+              <InfoRow title="Evolution" subtitle="Validar webhook e telefone vinculado" meta="URL pública + segredo opcional" />
               <InfoRow title="Encerramento" subtitle="Revisar tickets fechados e pendentes" meta="registrar ajustes ou incidentes" />
             </div>
           </WorkspaceSection>
@@ -835,11 +854,11 @@ export default function HomePage() {
     if (activeWorkspace === "automations") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Fluxo da integracao" description="Como a operacao conversa com a API e com a Evolution.">
+          <WorkspaceSection title="Fluxo da integração" description="Como a operação conversa com a API e com a Evolution.">
             <div className="grid gap-3 md:grid-cols-2">
               <InfoRow title="Entrada" subtitle="Webhook da Evolution" meta="POST /api/webhooks/evolution" />
-              <InfoRow title="Saida" subtitle="Envio via API propria" meta="POST /api/tickets/:ticketId/messages" />
-              <InfoRow title="Realtime" subtitle="Atualizacao por Socket.IO" meta={SOCKET_URL ?? "configure NEXT_PUBLIC_SOCKET_URL"} />
+              <InfoRow title="Saída" subtitle="Envio via API própria" meta="POST /api/tickets/:ticketId/messages" />
+                <InfoRow title="Tempo real" subtitle="Atualização por Socket.IO" meta={SOCKET_URL ?? "Configure a variável NEXT_PUBLIC_SOCKET_URL"} />
               <InfoRow title="Proxy" subtitle="Frontend fala com /api-proxy" meta="segredos ficam no backend" />
             </div>
           </WorkspaceSection>
@@ -850,12 +869,12 @@ export default function HomePage() {
     if (activeWorkspace === "settings") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Configuracoes do sistema" description="Atalhos administrativos e estado da publicacao.">
+          <WorkspaceSection title="Configurações do sistema" description="Atalhos administrativos e estado da publicação.">
             <div className="grid gap-3 md:grid-cols-2">
-              <button type="button" onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Gerenciar instancias</div><div className="mt-1 text-sm text-slate-500">Abrir canais e revisar Evolution.</div></button>
+              <button type="button" onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Gerenciar instâncias</div><div className="mt-1 text-sm text-slate-500">Abrir canais e revisar Evolution.</div></button>
               <button type="button" onClick={() => { setActiveWorkspace("team"); setAdminSection("agents"); }} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Gerenciar equipe</div><div className="mt-1 text-sm text-slate-500">Abrir agentes e filas.</div></button>
-              <button type="button" onClick={() => setShowAdminPanel((current) => !current)} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Painel lateral</div><div className="mt-1 text-sm text-slate-500">{showAdminPanel ? "Ocultar painel admin no inbox" : "Mostrar painel admin no inbox"}</div></button>
-              <button type="button" onClick={() => void refreshAll()} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Recarregar tudo</div><div className="mt-1 text-sm text-slate-500">Forcar sincronizacao manual dos dados.</div></button>
+              <button type="button" onClick={() => setShowAdminPanel((current) => !current)} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Painel lateral</div><div className="mt-1 text-sm text-slate-500">{showAdminPanel ? "Ocultar painel admin na caixa de entrada" : "Mostrar painel admin na caixa de entrada"}</div></button>
+              <button type="button" onClick={() => void refreshAll()} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Recarregar tudo</div><div className="mt-1 text-sm text-slate-500">Forçar sincronização manual dos dados.</div></button>
             </div>
           </WorkspaceSection>
         </div>
@@ -880,15 +899,15 @@ export default function HomePage() {
               </div>
 
               <div className="flex items-center gap-2">
-                <button type="button" onClick={() => void handleAcceptTicket()} disabled={!canAcceptSelectedTicket} className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-[11px] font-bold uppercase text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 bg-green-600 hover:bg-green-700">
+                <button type="button" aria-label="Assumir atendimento selecionado" title="Assumir atendimento" onClick={() => void handleAcceptTicket()} disabled={!canAcceptSelectedTicket} className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-[11px] font-bold uppercase text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 bg-green-600 hover:bg-green-700">
                   <CheckSquare className="h-4 w-4" />
-                  {selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Ticket fechado" : "Aceitar atendimento"}
+                  {selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Atendimento fechado" : "Aceitar atendimento"}
                 </button>
-                <button type="button" onClick={() => void handleCloseTicket()} disabled={!canCloseSelectedTicket} className="inline-flex items-center gap-1 text-[10px] font-bold uppercase text-red-500 transition hover:text-red-600 disabled:cursor-not-allowed disabled:text-slate-400">
+                <button type="button" aria-label="Fechar atendimento selecionado" title="Fechar atendimento" onClick={() => void handleCloseTicket()} disabled={!canCloseSelectedTicket} className="inline-flex items-center gap-1 text-[10px] font-bold uppercase text-red-500 transition hover:text-red-600 disabled:cursor-not-allowed disabled:text-slate-400">
                   <X className="h-3.5 w-3.5" />
                   {selectedTicket.status === "closed" ? "Fechado" : "Fechar"}
                 </button>
-                <button type="button" onClick={() => setShowTicketDetails((current) => !current)} className="text-slate-400 transition hover:text-slate-600">
+                <button type="button" aria-label={showTicketDetails ? "Ocultar detalhes do atendimento" : "Mostrar detalhes do atendimento"} title={showTicketDetails ? "Ocultar detalhes" : "Mostrar detalhes"} onClick={() => setShowTicketDetails((current) => !current)} className="text-slate-400 transition hover:text-slate-600">
                   <Info className="h-4 w-4" />
                 </button>
               </div>
@@ -897,9 +916,9 @@ export default function HomePage() {
             {showTicketDetails ? (
               <div className="border-b border-slate-200 bg-slate-50 px-6 py-4">
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <InfoRow title="Status" subtitle={selectedTicket.status} meta={`nao lidos: ${selectedTicket.unreadCount}`} />
+                  <InfoRow title="Status" subtitle={traduzirStatusTicket(selectedTicket.status)} meta={`não lidos: ${selectedTicket.unreadCount}`} />
                   <InfoRow title="Fila" subtitle={selectedTicket.currentQueue?.name ?? "Sem fila"} meta={selectedTicket.isGroup ? "conversa em grupo" : "conversa individual"} />
-                  <InfoRow title="Responsavel" subtitle={selectedTicket.currentAgent?.name ?? "Sem agente"} meta={selectedTicket.externalChatId} />
+                  <InfoRow title="Responsável" subtitle={selectedTicket.currentAgent?.name ?? "Sem agente"} meta={selectedTicket.externalChatId} />
                   <InfoRow title="Canal" subtitle={selectedTicket.whatsappInstance.name} meta={formatDateTime(selectedTicket.updatedAt)} />
                 </div>
               </div>
@@ -911,7 +930,7 @@ export default function HomePage() {
                   {messageLoading ? (
                     <div className="text-center text-sm text-slate-500">Carregando mensagens...</div>
                   ) : messages.length === 0 ? (
-                    <EmptyCenter />
+                    <EmptyMessages />
                   ) : (
                     messages.map((message) => {
                       const outgoing = message.direction === "outbound";
@@ -953,6 +972,7 @@ export default function HomePage() {
                   />
                   <button
                     type="submit"
+                    aria-label="Enviar mensagem"
                     disabled={sendLoading || !messageInput.trim() || !canSendToSelectedTicket}
                     className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[#1A1C32] px-5 text-sm font-bold uppercase text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
                   >
@@ -975,7 +995,7 @@ export default function HomePage() {
       <main className="flex min-h-screen items-center justify-center bg-[#ebf1f4] p-6">
         <div className="flex items-center gap-3 rounded-xl border bg-white px-5 py-4 text-sm text-slate-600 shadow-sm">
           <RefreshCw className="h-4 w-4 animate-spin" />
-          Carregando sessao...
+          Carregando sessão...
         </div>
       </main>
     );
@@ -995,16 +1015,16 @@ export default function HomePage() {
             <div className="mt-12 max-w-xl space-y-5">
               <p className="text-xs font-bold uppercase tracking-[0.28em] text-white/60">Painel interno</p>
               <h1 className="text-5xl font-semibold leading-[1.02] tracking-[-0.04em]">
-                Atendimento com cara de operacao real.
+                Atendimento com cara de operação real.
               </h1>
               <p className="text-base leading-8 text-white/72">
-                Backend proprio, PostgreSQL e Evolution com uma interface mais proxima do sistema original, mas sem voltar Firebase nem dependencias antigas.
+                Backend próprio, PostgreSQL e Evolution com uma interface mais próxima do sistema original, mas sem voltar Firebase nem dependências antigas.
               </p>
             </div>
             <div className="mt-12 grid gap-4 md:grid-cols-3">
               <FeatureCard icon={Database} title="Banco novo" description="Tickets, mensagens e filas agora vivem no PostgreSQL." />
-              <FeatureCard icon={Zap} title="Evolution" description="Webhook e envio centralizados pela API propria." />
-              <FeatureCard icon={Workflow} title="Operacao" description="Layout administrativo inspirado no sistema anterior." />
+              <FeatureCard icon={Zap} title="Evolution" description="Webhook e envio centralizados pela API própria." />
+              <FeatureCard icon={Workflow} title="Operação" description="Layout administrativo inspirado no sistema anterior." />
             </div>
           </section>
 
@@ -1019,6 +1039,7 @@ export default function HomePage() {
                 </div>
                 <button
                   type="button"
+                  aria-label={mode === "login" ? "Abrir primeiro acesso" : "Voltar para login"}
                   onClick={() => setMode((current) => (current === "login" ? "bootstrap" : "login"))}
                   className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-white"
                 >
@@ -1064,7 +1085,7 @@ export default function HomePage() {
       <div className="flex min-h-screen flex-col">
         <header className="flex h-[60px] items-center justify-between bg-[#1A1C32] px-5 text-white shadow-sm">
           <div className="flex items-center gap-6">
-            <button type="button" onClick={() => setShowRail((current) => !current)} className="text-white/90 transition hover:text-white">
+            <button type="button" aria-label={showRail ? "Ocultar menu lateral" : "Mostrar menu lateral"} title={showRail ? "Ocultar menu lateral" : "Mostrar menu lateral"} onClick={() => setShowRail((current) => !current)} className="text-white/90 transition hover:text-white">
               <Menu className="h-6 w-6" />
             </button>
             <div className="flex items-center gap-3">
@@ -1081,13 +1102,15 @@ export default function HomePage() {
           <div className="flex items-center gap-3">
             <button
               type="button"
+              aria-label="Atualizar dados do painel"
+              title="Atualizar dados do painel"
               onClick={() => void refreshAll()}
               className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm text-white transition hover:bg-white/15"
             >
               <RefreshCw className={`h-4 w-4 ${ticketLoading || messageLoading ? "animate-spin" : ""}`} />
               Atualizar
             </button>
-            <button type="button" onClick={() => setActiveWorkspace("profile")} className="grid h-10 w-10 place-items-center overflow-hidden rounded-full border border-white/10 bg-white/10 text-sm font-semibold uppercase transition hover:bg-white/15">
+            <button type="button" aria-label="Abrir perfil" title="Abrir perfil" onClick={() => setActiveWorkspace("profile")} className="grid h-10 w-10 place-items-center overflow-hidden rounded-full border border-white/10 bg-white/10 text-sm font-semibold uppercase transition hover:bg-white/15">
               {initials(currentUser.name) || "CF"}
             </button>
           </div>
@@ -1097,19 +1120,21 @@ export default function HomePage() {
           {showRail ? (
             <aside className="hidden w-14 shrink-0 border-r border-slate-200 bg-white md:flex md:flex-col md:items-center md:justify-between md:py-4">
               <div className="flex w-full flex-col items-center gap-1">
-                <RailButton icon={LayoutGrid} active={activeWorkspace === "dashboard"} onClick={() => setActiveWorkspace("dashboard")} />
-                <RailButton icon={Phone} active={activeWorkspace === "tickets"} onClick={() => setActiveWorkspace("tickets")} />
-                <RailButton icon={Smartphone} active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} />
-                <RailButton icon={Users} active={activeWorkspace === "team"} onClick={() => { setActiveWorkspace("team"); setAdminSection("agents"); }} />
-                <RailButton icon={User} active={activeWorkspace === "profile"} onClick={() => setActiveWorkspace("profile")} />
-                <RailButton icon={Clock} active={activeWorkspace === "activity"} onClick={() => setActiveWorkspace("activity")} />
-                <RailButton icon={Calendar} active={activeWorkspace === "calendar"} onClick={() => setActiveWorkspace("calendar")} />
-                <RailButton icon={Workflow} active={activeWorkspace === "automations"} onClick={() => setActiveWorkspace("automations")} />
+                <RailButton icon={LayoutGrid} label="Abrir painel geral" active={activeWorkspace === "dashboard"} onClick={() => setActiveWorkspace("dashboard")} />
+                <RailButton icon={Phone} label="Abrir atendimento" active={activeWorkspace === "tickets"} onClick={() => setActiveWorkspace("tickets")} />
+                <RailButton icon={Smartphone} label="Abrir canais e instâncias" active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} />
+                <RailButton icon={Users} label="Abrir equipe e filas" active={activeWorkspace === "team"} onClick={() => { setActiveWorkspace("team"); setAdminSection("agents"); }} />
+                <RailButton icon={User} label="Abrir perfil" active={activeWorkspace === "profile"} onClick={() => setActiveWorkspace("profile")} />
+                <RailButton icon={Clock} label="Abrir atividade operacional" active={activeWorkspace === "activity"} onClick={() => setActiveWorkspace("activity")} />
+                <RailButton icon={Calendar} label="Abrir agenda operacional" active={activeWorkspace === "calendar"} onClick={() => setActiveWorkspace("calendar")} />
+                <RailButton icon={Workflow} label="Abrir automações" active={activeWorkspace === "automations"} onClick={() => setActiveWorkspace("automations")} />
               </div>
               <div className="flex w-full flex-col items-center gap-1">
-                <RailButton icon={Settings} active={activeWorkspace === "settings"} onClick={() => setActiveWorkspace("settings")} />
+                <RailButton icon={Settings} label="Abrir configurações" active={activeWorkspace === "settings"} onClick={() => setActiveWorkspace("settings")} />
                 <button
                   type="button"
+                  aria-label="Encerrar sessão"
+                  title="Encerrar sessão"
                   onClick={() => void handleLogout()}
                   className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
                 >
@@ -1130,30 +1155,32 @@ export default function HomePage() {
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input
+                    aria-label="Buscar atendimentos"
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
-                    placeholder={activeWorkspace === "tickets" ? "Buscar atendimento e mensagens" : "Buscar dentro da tela atual"}
-                    className="h-11 w-full rounded-full border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white"
+                    placeholder="Buscar atendimento e mensagens"
+                    disabled={!ticketWorkspaceAtivo}
+                    className="h-11 w-full rounded-full border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                   />
                 </div>
 
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50/60 p-1">
-                    <SidebarIconButton icon={Eye} active={!showOnlyUnread && !showOnlyMine} onClick={() => { setShowOnlyUnread(false); setShowOnlyMine(false); setSearchQuery(""); setActiveWorkspace("tickets"); }} />
-                    <SidebarIconButton icon={Plus} active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace(currentUser.role === "admin" ? "channels" : "tickets"); if (currentUser.role === "admin") setAdminSection("instances"); }} />
-                    <SidebarIconButton icon={LayoutList} active={ticketDensity === "compact"} onClick={() => setTicketDensity("compact")} />
-                    <SidebarIconButton icon={Monitor} active={ticketDensity === "comfortable"} onClick={() => setTicketDensity("comfortable")} />
-                    <SidebarIconButton icon={CheckSquare} active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
-                    <SidebarIconButton icon={EyeOff} active={showOnlyUnread} onClick={() => setShowOnlyUnread((current) => !current)} />
+                    <SidebarIconButton icon={Eye} label="Limpar filtros e voltar à caixa de entrada" active={!showOnlyUnread && !showOnlyMine} onClick={() => { setShowOnlyUnread(false); setShowOnlyMine(false); setSearchQuery(""); setActiveWorkspace("tickets"); }} />
+                    <SidebarIconButton icon={Plus} label="Abrir canais e instâncias" active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace(currentUser.role === "admin" ? "channels" : "tickets"); if (currentUser.role === "admin") setAdminSection("instances"); }} />
+                    <SidebarIconButton icon={LayoutList} label="Usar lista compacta" active={ticketDensity === "compact"} onClick={() => setTicketDensity("compact")} />
+                    <SidebarIconButton icon={Monitor} label="Usar lista confortável" active={ticketDensity === "comfortable"} onClick={() => setTicketDensity("comfortable")} />
+                    <SidebarIconButton icon={CheckSquare} label="Mostrar apenas meus atendimentos" active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
+                    <SidebarIconButton icon={EyeOff} label="Mostrar apenas não lidos" active={showOnlyUnread} onClick={() => setShowOnlyUnread((current) => !current)} />
                   </div>
-                  <button type="button" onClick={() => { setActiveWorkspace("team"); setAdminSection("queues"); }} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-500 transition hover:bg-slate-100">
+                  <button type="button" aria-label="Abrir gestão de filas" title="Abrir gestão de filas" onClick={() => { setActiveWorkspace("team"); setAdminSection("queues"); }} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-500 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60" disabled={!ticketWorkspaceAtivo}>
                     Filas
                     <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
                   </button>
                 </div>
               </div>
 
-              <div className="flex items-center border-b border-slate-200 px-2">
+              <div className={`flex items-center border-b border-slate-200 px-2 ${ticketWorkspaceAtivo ? "" : "pointer-events-none opacity-55"}`}>
                 <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
                 <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
                 <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" />
@@ -1196,7 +1223,7 @@ export default function HomePage() {
 
                           <div className="mt-2 flex items-center justify-between gap-2">
                             <div className="flex flex-wrap gap-1">
-                              <MiniBadge className="bg-[#00e676] text-white" text={ticket.externalChatId || "SEM INSTANCIA"} />
+                          <MiniBadge className="bg-[#00e676] text-white" text={ticket.externalChatId || "SEM INSTÂNCIA"} />
                               {ticket.isGroup ? (
                                 <MiniBadge className="bg-blue-600 text-white" text="GRUPO" />
                               ) : (
@@ -1226,8 +1253,17 @@ export default function HomePage() {
 
             <section className="flex min-w-0 flex-col bg-[#ebf1f4]">
               {panelMessage ? (
-                <div className="border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-800">
-                  {panelMessage}
+                <div className="flex items-start justify-between gap-3 border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-800">
+                  <div>{panelMessage}</div>
+                  <button
+                    type="button"
+                    aria-label="Fechar aviso"
+                    title="Fechar aviso"
+                    onClick={() => setPanelMessage(null)}
+                    className="rounded-md p-1 text-amber-700 transition hover:bg-amber-100 hover:text-amber-900"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                 </div>
               ) : null}
               {workspacePanel}
@@ -1238,15 +1274,15 @@ export default function HomePage() {
                 <div className="border-b border-slate-200 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">Admin</div>
-                      <div className="mt-1 text-lg font-semibold text-slate-900">Configuracoes</div>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">Administração</div>
+                      <div className="mt-1 text-lg font-semibold text-slate-900">Configurações</div>
                     </div>
-                    <button type="button" onClick={() => setShowAdminPanel(false)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-500 transition hover:bg-slate-50">
+                    <button type="button" aria-label="Ocultar painel administrativo" title="Ocultar painel administrativo" onClick={() => setShowAdminPanel(false)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-500 transition hover:bg-slate-50">
                       Ocultar
                     </button>
                   </div>
                   <div className="mt-4 grid grid-cols-3 gap-2">
-                    <AdminTab label="Instancias" active={adminSection === "instances"} onClick={() => setAdminSection("instances")} />
+                    <AdminTab label="Instâncias" active={adminSection === "instances"} onClick={() => setAdminSection("instances")} />
                     <AdminTab label="Agentes" active={adminSection === "agents"} onClick={() => setAdminSection("agents")} />
                     <AdminTab label="Filas" active={adminSection === "queues"} onClick={() => setAdminSection("queues")} />
                   </div>
@@ -1254,18 +1290,18 @@ export default function HomePage() {
 
                 <div className="scrollbar-hide max-h-[calc(100vh-124px)] space-y-4 overflow-y-auto p-4">
                   {adminSection === "instances" ? (
-                    <AdminPanelCard title="Nova instancia" icon={Smartphone}>
+                    <AdminPanelCard title="Nova instância" icon={Smartphone}>
                       <form onSubmit={handleCreateInstance} className="space-y-3">
                         <CompactField label="Nome interno" value={instanceForm.name} onChange={(value) => setInstanceForm((current) => ({ ...current, name: value }))} />
                         <CompactField label="Nome na Evolution" value={instanceForm.evolutionInstanceName} onChange={(value) => setInstanceForm((current) => ({ ...current, evolutionInstanceName: value }))} />
-                        <CompactField label="Base URL" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder="https://evolution.seudominio.com" />
-                        <CompactField label="API key" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} />
-                        <CompactField label="Webhook secret" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
-                        <PrimaryAction disabled={instanceLoading}>{instanceLoading ? "Salvando..." : "Salvar instancia"}</PrimaryAction>
+                        <CompactField label="URL base" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder="https://evolution.seudominio.com" />
+                        <CompactField label="Chave da API" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} />
+                        <CompactField label="Segredo do webhook" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
+                        <PrimaryAction disabled={instanceLoading}>{instanceLoading ? "Salvando..." : "Salvar instância"}</PrimaryAction>
                       </form>
                       <div className="mt-4 space-y-3">
                         {instances.map((instance) => (
-                          <InfoRow key={instance.id} title={instance.name} subtitle={instance.evolutionInstanceName} meta={`${instance.status} | ${instance.phoneNumber ?? "sem telefone"}`} />
+                          <InfoRow key={instance.id} title={instance.name} subtitle={instance.evolutionInstanceName} meta={`${traduzirStatusInstancia(instance.status)} | ${instance.phoneNumber ?? "sem telefone"}`} />
                         ))}
                       </div>
                     </AdminPanelCard>
@@ -1292,7 +1328,7 @@ export default function HomePage() {
                       </form>
                       <div className="mt-4 space-y-3">
                         {agents.map((agent) => (
-                          <InfoRow key={agent.id} title={agent.name} subtitle={agent.email} meta={`${agent.role} | ${agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}`} />
+                          <InfoRow key={agent.id} title={agent.name} subtitle={agent.email} meta={`${traduzirPerfil(agent.role)} | ${agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}`} />
                         ))}
                       </div>
                     </AdminPanelCard>
@@ -1348,12 +1384,14 @@ function AuthField(props: { label: string; value: string; onChange: (value: stri
   );
 }
 
-function RailButton(props: { icon: React.ComponentType<{ className?: string }>; active?: boolean; onClick?: () => void }) {
+function RailButton(props: { icon: React.ComponentType<{ className?: string }>; label: string; active?: boolean; onClick?: () => void }) {
   const Icon = props.icon;
   return (
     <button
       type="button"
       onClick={props.onClick}
+      aria-label={props.label}
+      title={props.label}
       className={`grid h-10 w-10 place-items-center rounded-lg transition ${props.active ? "border-l-2 border-[#1A1C32] bg-slate-100 text-[#1A1C32]" : "text-slate-400 hover:bg-slate-50 hover:text-slate-700"}`}
     >
       <Icon className="h-5 w-5" />
@@ -1361,12 +1399,15 @@ function RailButton(props: { icon: React.ComponentType<{ className?: string }>; 
   );
 }
 
-function SidebarIconButton(props: { icon: React.ComponentType<{ className?: string }>; active?: boolean; onClick?: () => void }) {
+function SidebarIconButton(props: { icon: React.ComponentType<{ className?: string }>; label: string; active?: boolean; onClick?: () => void }) {
   const Icon = props.icon;
   return (
     <button
       type="button"
       onClick={props.onClick}
+      aria-label={props.label}
+      title={props.label}
+      aria-pressed={props.active ? "true" : "false"}
       className={`rounded p-1 transition ${props.active ? "border bg-white shadow-sm" : "hover:bg-slate-100"}`}
     >
       <Icon className="h-3.5 w-3.5 text-slate-500" />
@@ -1402,8 +1443,22 @@ function EmptyCenter() {
         <div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-slate-300 text-white">
           <MessageSquare className="h-9 w-9" />
         </div>
-        <h3 className="mt-6 text-4xl font-semibold uppercase tracking-[0.12em] text-slate-400">Aguardando selecao</h3>
-        <p className="mt-3 text-lg text-slate-400">Escolha um atendimento para comecar.</p>
+        <h3 className="mt-6 text-4xl font-semibold uppercase tracking-[0.12em] text-slate-400">Aguardando seleção</h3>
+        <p className="mt-3 text-lg text-slate-400">Escolha um atendimento para começar.</p>
+      </div>
+    </div>
+  );
+}
+
+function EmptyMessages() {
+  return (
+    <div className="grid flex-1 place-items-center px-6 py-10 text-center">
+      <div>
+        <div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-slate-200 text-slate-500">
+          <MessageSquare className="h-9 w-9" />
+        </div>
+        <h3 className="mt-6 text-3xl font-semibold uppercase tracking-[0.12em] text-slate-400">Sem mensagens ainda</h3>
+        <p className="mt-3 text-lg text-slate-400">Este atendimento ainda não possui histórico de conversa.</p>
       </div>
     </div>
   );

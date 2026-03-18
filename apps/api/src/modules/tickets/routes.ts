@@ -79,7 +79,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (!ticket) {
-      return reply.notFound('Ticket not found.');
+      return reply.notFound('Ticket nao encontrado.');
     }
 
     return {

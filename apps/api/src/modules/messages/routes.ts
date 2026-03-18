@@ -61,11 +61,11 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (!ticket) {
-      return reply.notFound('Ticket not found.');
+      return reply.notFound('Ticket nao encontrado.');
     }
 
     if (!ticket.externalChatId) {
-      return reply.badRequest('Ticket does not have a WhatsApp destination.');
+      return reply.badRequest('O ticket nao possui um destino do WhatsApp configurado.');
     }
 
     const quotedMessage = body.replyToMessageId
@@ -94,7 +94,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
 
     if (!delivery.ok) {
       return reply.code(400).send({
-        message: 'Failed to send message to Evolution API.',
+        message: 'Falha ao enviar a mensagem para a Evolution API.',
         status: delivery.status,
         payload: delivery.payload,
       });

@@ -24,7 +24,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const totalUsers = await app.prisma.user.count();
 
     if (totalUsers > 0) {
-      return reply.conflict('Bootstrap is only available before the first user is created.');
+      return reply.conflict('A criacao inicial so esta disponivel antes do primeiro usuario ser cadastrado.');
     }
 
     const userId = randomUUID();
@@ -52,7 +52,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (!user) {
-      return reply.internalServerError('Bootstrap user was not persisted.');
+      return reply.internalServerError('Nao foi possivel persistir o usuario inicial.');
     }
 
     const token = createSessionToken({
@@ -81,7 +81,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (!user || !verifyPassword(body.password, user.passwordHash)) {
-      return reply.unauthorized('Invalid credentials.');
+      return reply.unauthorized('Credenciais invalidas.');
     }
 
     const token = createSessionToken({

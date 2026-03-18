@@ -48,7 +48,7 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
     const session = requireSession(request, reply);
     if (!session) return;
     if (session.role !== 'admin') {
-      return reply.forbidden('Only admins can create queues.');
+      return reply.forbidden('Somente administradores podem criar filas.');
     }
 
     const body = createQueueSchema.parse(request.body);
@@ -69,7 +69,7 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
     const session = requireSession(request, reply);
     if (!session) return;
     if (session.role !== 'admin') {
-      return reply.forbidden('Only admins can update queue members.');
+      return reply.forbidden('Somente administradores podem atualizar os membros da fila.');
     }
 
     const params = z.object({ queueId: z.string().uuid() }).parse(request.params);
