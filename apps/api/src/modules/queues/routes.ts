@@ -8,6 +8,11 @@ const createQueueSchema = z.object({
   color: z.string().min(4).optional(),
 });
 
+const updateQueueSchema = z.object({
+  name: z.string().min(2),
+  color: z.string().min(4).optional(),
+});
+
 const assignQueueAgentsSchema = z.object({
   agentIds: z.array(z.string().uuid()),
 });
@@ -63,6 +68,41 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
     app.io.emit('queue.updated', { queueId: item.id, action: 'created' });
 
     return reply.code(201).send({ item });
+  });
+
+  app.put('/queues/:queueId', async (request, reply) => {
+    const session = requireSession(request, reply);
+    if (!session) return;
+    if (session.role !== 'admin') {
+      return reply.forbidden('Somente administradores podem editar filas.');
+    }
+
+    const params = z.object({ queueId: z.string().uuid() }).parse(request.params);
+    const body = updateQueueSchema.parse(request.body);
+
+    const existing = await app.prisma.queue.findUnique({
+      where: { id: params.queueId },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      return reply.notFound('Fila não encontrada.');
+    }
+
+    const item = await app.prisma.queue.update({
+      where: { id: params.queueId },
+      data: {
+        name: body.name,
+        color: body.color,
+      },
+    });
+
+    app.io.emit('queue.updated', { queueId: item.id, action: 'updated' });
+
+    return reply.code(200).send({
+      message: 'Fila atualizada com sucesso.',
+      item,
+    });
   });
 
   app.post('/queues/:queueId/agents', async (request, reply) => {

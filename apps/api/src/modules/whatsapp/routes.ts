@@ -12,12 +12,25 @@ const webhookBodySchema = z.object({
   instance: z.string().optional(),
 }).passthrough();
 
+const optionalWebhookSecretSchema = z.string().trim().optional().transform((value) => {
+  if (!value) return undefined;
+  return value;
+});
+
 const createInstanceSchema = z.object({
   name: z.string().min(2),
   evolutionInstanceName: z.string().min(2),
   baseUrl: z.string().url(),
   apiKey: z.string().min(1),
-  webhookSecret: z.string().min(1).optional(),
+  webhookSecret: optionalWebhookSecretSchema,
+});
+
+const updateInstanceSchema = z.object({
+  name: z.string().min(2),
+  evolutionInstanceName: z.string().min(2),
+  baseUrl: z.string().url(),
+  apiKey: z.string().min(1).optional().or(z.literal('')),
+  webhookSecret: optionalWebhookSecretSchema,
 });
 
 const env = loadEnv();
@@ -262,5 +275,53 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
     app.io.emit('instance.updated', { instanceId: item.id, status: item.status });
 
     return reply.code(201).send({ item });
+  });
+
+  app.put('/whatsapp/instances/:instanceId', async (request, reply) => {
+    const session = requireSession(request, reply);
+    if (!session) return;
+    if (session.role !== 'admin') {
+      return reply.forbidden('Somente administradores podem editar instâncias do WhatsApp.');
+    }
+
+    const params = z.object({ instanceId: z.string().uuid() }).parse(request.params);
+    const body = updateInstanceSchema.parse(request.body);
+
+    const existing = await app.prisma.whatsAppInstance.findUnique({
+      where: { id: params.instanceId },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      return reply.notFound('Instância não encontrada.');
+    }
+
+    const item = await app.prisma.whatsAppInstance.update({
+      where: { id: params.instanceId },
+      data: {
+        name: body.name,
+        evolutionInstanceName: body.evolutionInstanceName,
+        baseUrl: body.baseUrl,
+        ...(body.apiKey ? { apiKeyEncrypted: encryptSecret(body.apiKey, env.SESSION_SECRET) } : {}),
+        webhookSecret: body.webhookSecret || null,
+      },
+      select: {
+        id: true,
+        name: true,
+        evolutionInstanceName: true,
+        baseUrl: true,
+        status: true,
+        phoneNumber: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    app.io.emit('instance.updated', { instanceId: item.id, status: item.status, action: 'updated' });
+
+    return reply.code(200).send({
+      message: 'Instância atualizada com sucesso.',
+      item,
+    });
   });
 };

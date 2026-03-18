@@ -3,11 +3,14 @@
 import * as React from "react";
 import { io, type Socket } from "socket.io-client";
 import {
+  Activity,
   ArrowRightLeft,
+  Cable,
   Calendar,
   CheckSquare,
   ChevronDown,
   Clock,
+  Code2,
   Database,
   Eye,
   EyeOff,
@@ -18,6 +21,7 @@ import {
   Menu,
   MessageSquare,
   Monitor,
+  Pencil,
   Phone,
   Plus,
   RefreshCw,
@@ -27,6 +31,7 @@ import {
   ShieldCheck,
   Smartphone,
   User,
+  UserCog,
   UserPlus,
   Users,
   Workflow,
@@ -206,11 +211,14 @@ export default function HomePage() {
   const [agentLoading, setAgentLoading] = React.useState(false);
   const [queueLoading, setQueueLoading] = React.useState(false);
   const [assignmentLoading, setAssignmentLoading] = React.useState<string | null>(null);
+  const [editingInstanceId, setEditingInstanceId] = React.useState<string | null>(null);
+  const [editingAgentId, setEditingAgentId] = React.useState<string | null>(null);
+  const [editingQueueId, setEditingQueueId] = React.useState<string | null>(null);
 
   const [messageInput, setMessageInput] = React.useState("");
   const [searchQuery, setSearchQuery] = React.useState("");
   const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "grupos">("atendendo");
-  const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "channels" | "team" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
+  const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "channels" | "team" | "api" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
   const [adminSection, setAdminSection] = React.useState<"instances" | "agents" | "queues">("instances");
   const [showRail, setShowRail] = React.useState(false);
   const [ticketDensity, setTicketDensity] = React.useState<"comfortable" | "compact">("comfortable");
@@ -300,6 +308,38 @@ export default function HomePage() {
     }),
     [tickets],
   );
+
+  const managementSearch = searchQuery.trim().toLowerCase();
+
+  const filteredInstances = React.useMemo(() => {
+    if (!managementSearch) return instances;
+    return instances.filter((instance) =>
+      [instance.name, instance.evolutionInstanceName, instance.baseUrl, instance.phoneNumber ?? "", traduzirStatusInstancia(instance.status)]
+        .join(" ")
+        .toLowerCase()
+        .includes(managementSearch),
+    );
+  }, [instances, managementSearch]);
+
+  const filteredAgents = React.useMemo(() => {
+    if (!managementSearch) return agents;
+    return agents.filter((agent) =>
+      [agent.name, agent.email, traduzirPerfil(agent.role), agent.queues.map((queue) => queue.name).join(" ")]
+        .join(" ")
+        .toLowerCase()
+        .includes(managementSearch),
+    );
+  }, [agents, managementSearch]);
+
+  const filteredQueues = React.useMemo(() => {
+    if (!managementSearch) return queues;
+    return queues.filter((queue) =>
+      [queue.name, queue.color ?? "", queue.agents.map((agent) => agent.name).join(" ")]
+        .join(" ")
+        .toLowerCase()
+        .includes(managementSearch),
+    );
+  }, [managementSearch, queues]);
 
   React.useEffect(() => {
     if (visibleTickets.length === 0) {
@@ -570,22 +610,71 @@ export default function HomePage() {
     }
   }
 
+  function resetInstanceForm() {
+    setEditingInstanceId(null);
+    setInstanceForm({
+      name: "",
+      evolutionInstanceName: "",
+      baseUrl: "",
+      apiKey: "",
+      webhookSecret: "",
+    });
+  }
+
+  function resetAgentForm() {
+    setEditingAgentId(null);
+    setAgentForm({ name: "", email: "", password: "", role: "agent" });
+  }
+
+  function resetQueueForm() {
+    setEditingQueueId(null);
+    setQueueForm({ name: "", color: "#1A1C32" });
+  }
+
+  function startEditInstance(instance: InstanceItem) {
+    setEditingInstanceId(instance.id);
+    setInstanceForm({
+      name: instance.name,
+      evolutionInstanceName: instance.evolutionInstanceName,
+      baseUrl: instance.baseUrl,
+      apiKey: "",
+      webhookSecret: "",
+    });
+    setActiveWorkspace("channels");
+  }
+
+  function startEditAgent(agent: AgentItem) {
+    setEditingAgentId(agent.id);
+    setAgentForm({
+      name: agent.name,
+      email: agent.email,
+      password: "",
+      role: agent.role,
+    });
+    setActiveWorkspace("team");
+    setAdminSection("agents");
+  }
+
+  function startEditQueue(queue: QueueItem) {
+    setEditingQueueId(queue.id);
+    setQueueForm({
+      name: queue.name,
+      color: queue.color ?? "#1A1C32",
+    });
+    setActiveWorkspace("team");
+    setAdminSection("queues");
+  }
+
   async function handleCreateInstance(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setInstanceLoading(true);
     try {
-      await apiFetch("/whatsapp/instances", {
-        method: "POST",
+      await apiFetch(editingInstanceId ? `/whatsapp/instances/${editingInstanceId}` : "/whatsapp/instances", {
+        method: editingInstanceId ? "PUT" : "POST",
         body: JSON.stringify(instanceForm),
       });
-      setInstanceForm({
-        name: "",
-        evolutionInstanceName: "",
-        baseUrl: "",
-        apiKey: "",
-        webhookSecret: "",
-      });
-      setPanelMessage("Instância Evolution cadastrada.");
+      resetInstanceForm();
+      setPanelMessage(editingInstanceId ? "Instância Evolution atualizada." : "Instância Evolution cadastrada.");
       await refreshInstances();
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao salvar instância.");
@@ -598,12 +687,12 @@ export default function HomePage() {
     event.preventDefault();
     setAgentLoading(true);
     try {
-      await apiFetch("/agents", {
-        method: "POST",
+      await apiFetch(editingAgentId ? `/agents/${editingAgentId}` : "/agents", {
+        method: editingAgentId ? "PUT" : "POST",
         body: JSON.stringify({ ...agentForm, queueIds: [] }),
       });
-      setAgentForm({ name: "", email: "", password: "", role: "agent" });
-      setPanelMessage("Agente criado.");
+      resetAgentForm();
+      setPanelMessage(editingAgentId ? "Agente atualizado." : "Agente criado.");
       await refreshAgents();
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao criar agente.");
@@ -616,12 +705,12 @@ export default function HomePage() {
     event.preventDefault();
     setQueueLoading(true);
     try {
-      await apiFetch("/queues", {
-        method: "POST",
+      await apiFetch(editingQueueId ? `/queues/${editingQueueId}` : "/queues", {
+        method: editingQueueId ? "PUT" : "POST",
         body: JSON.stringify(queueForm),
       });
-      setQueueForm({ name: "", color: "#1A1C32" });
-      setPanelMessage("Fila criada.");
+      resetQueueForm();
+      setPanelMessage(editingQueueId ? "Fila atualizada." : "Fila criada.");
       await refreshQueues();
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao criar fila.");
@@ -655,9 +744,11 @@ export default function HomePage() {
       : activeWorkspace === "tickets"
         ? "Atendimento"
         : activeWorkspace === "channels"
-      ? "Canais e instâncias"
+          ? "Canais e instâncias"
           : activeWorkspace === "team"
             ? "Equipe e filas"
+            : activeWorkspace === "api"
+              ? "API"
             : activeWorkspace === "profile"
               ? "Perfil"
               : activeWorkspace === "activity"
@@ -677,6 +768,8 @@ export default function HomePage() {
           ? "Instâncias Evolution e orientações de conexão."
           : activeWorkspace === "team"
             ? "Gestão de agentes e distribuição por filas."
+            : activeWorkspace === "api"
+              ? "Endpoints, autenticação e testes rápidos da API própria."
             : activeWorkspace === "profile"
               ? "Dados da sessão e atalhos pessoais."
               : activeWorkspace === "activity"
@@ -691,13 +784,13 @@ export default function HomePage() {
     if (activeWorkspace === "dashboard") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4">
             <WorkspaceStatCard title="Atendendo" value={String(counters.atendendo)} accent="emerald" description="Conversas com agente responsável." />
             <WorkspaceStatCard title="Aguardando" value={String(counters.aguardando)} accent="amber" description="Tickets novos sem responsável." />
             <WorkspaceStatCard title="Grupos" value={String(counters.grupos)} accent="blue" description="Conversas coletivas monitoradas." />
           </div>
           <WorkspaceSection title="Últimos tickets" description="Atalhos rápidos para voltar à caixa de entrada.">
-            <div className="grid gap-3 xl:grid-cols-2">
+            <div className="grid gap-3">
               {tickets.slice(0, 6).map((ticket) => (
                 <button
                   key={ticket.id}
@@ -726,53 +819,75 @@ export default function HomePage() {
     if (activeWorkspace === "channels") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Canais e instâncias" description="Gerencie as conexões com a Evolution e valide o ambiente publicado.">
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-              <AdminPanelCard title="Cadastrar instância" icon={Smartphone}>
-                {currentUser.role === "admin" ? (
-                  <form onSubmit={handleCreateInstance} className="grid gap-3 lg:grid-cols-2">
-                    <CompactField label="Nome interno" value={instanceForm.name} onChange={(value) => setInstanceForm((current) => ({ ...current, name: value }))} />
-                    <CompactField label="Nome na Evolution" value={instanceForm.evolutionInstanceName} onChange={(value) => setInstanceForm((current) => ({ ...current, evolutionInstanceName: value }))} />
-                    <CompactField label="URL base" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder="https://evolution.seudominio.com" />
-                    <CompactField label="Chave da API" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} />
-                    <CompactField label="Segredo do webhook" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
-                    <div className="lg:col-span-2">
-                      <PrimaryAction disabled={instanceLoading}>{instanceLoading ? "Salvando..." : "Salvar instância"}</PrimaryAction>
-                    </div>
-                  </form>
-                ) : (
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Somente administradores podem cadastrar instâncias.</div>
-                )}
-              </AdminPanelCard>
+          <WorkspaceSection title="Canais e instâncias" description="Gerencie as conexões com a Evolution em visualização de lista.">
+            <ModuleToolbar
+              title="Conexões"
+              count={filteredInstances.length}
+              searchValue={searchQuery}
+              searchPlaceholder="Pesquisar instância, telefone ou status"
+              onSearchChange={setSearchQuery}
+              actionLabel={currentUser.role === "admin" ? "Nova conexão" : undefined}
+              onActionClick={currentUser.role === "admin" ? resetInstanceForm : undefined}
+              actionIcon={Plus}
+            />
 
-              <div className="grid gap-4">
-                <AdminPanelCard title="Ambiente público" icon={ShieldCheck}>
-                  <div className="space-y-3">
-                    <InfoRow title="Webhook sugerido" subtitle="Endpoint público para eventos da Evolution" meta="https://chatflow-api.qqruew.easypanel.host/api/webhooks/evolution" />
-                    <InfoRow title="API publicada" subtitle="Base usada pelo frontend e pelos sockets" meta="https://chatflow-api.qqruew.easypanel.host" />
-                    <InfoRow title="Frontend publicado" subtitle="URL operacional do painel" meta="https://chatflow-web.qqruew.easypanel.host" />
+            {currentUser.role === "admin" ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-4 text-sm font-semibold uppercase tracking-[0.08em] text-slate-500">Cadastro rápido</div>
+                <form onSubmit={handleCreateInstance} className="grid gap-3 xl:grid-cols-[1.1fr_1.1fr_1.2fr_1fr_1fr_auto] xl:items-end">
+                  <CompactField label="Nome interno" value={instanceForm.name} onChange={(value) => setInstanceForm((current) => ({ ...current, name: value }))} />
+                  <CompactField label="Nome na Evolution" value={instanceForm.evolutionInstanceName} onChange={(value) => setInstanceForm((current) => ({ ...current, evolutionInstanceName: value }))} />
+                  <CompactField label="URL base" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder="https://evolution.seudominio.com" />
+                  <CompactField label="Chave da API" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} />
+                  <CompactField label="Segredo do webhook" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
+                  <div className="xl:w-[180px]">
+                    <PrimaryAction disabled={instanceLoading}>{instanceLoading ? "Salvando..." : editingInstanceId ? "Salvar edição" : "Adicionar"}</PrimaryAction>
                   </div>
-                </AdminPanelCard>
-                <AdminPanelCard title="Resumo das instâncias" icon={Database}>
-                  <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-1">
-                    <WorkspaceStatCard title="Instâncias" value={String(instances.length)} accent="blue" description="Conexões cadastradas no backend." />
-                    <WorkspaceStatCard title="Conectadas" value={String(instances.filter((instance) => instance.status === "connected").length)} accent="emerald" description="Prontas para uso operacional." />
-                    <WorkspaceStatCard title="Com erro" value={String(instances.filter((instance) => instance.status === "error").length)} accent="amber" description="Exigem revisão manual." />
-                  </div>
-                </AdminPanelCard>
+                </form>
+                {editingInstanceId ? (
+                  <button type="button" onClick={resetInstanceForm} className="mt-3 text-sm font-medium text-slate-500 transition hover:text-slate-800">
+                    Cancelar edição
+                  </button>
+                ) : null}
               </div>
-            </div>
-          </WorkspaceSection>
+            ) : null}
 
-          <WorkspaceSection title="Instâncias publicadas" description="Leitura rápida das conexões já configuradas.">
-            <div className="grid gap-3 xl:grid-cols-2">
-              {instances.length === 0 ? (
-                <InfoRow title="Nenhuma instância cadastrada" subtitle="Cadastre a primeira conexão com a Evolution" meta="O envio e os webhooks dependem dessa etapa" />
+            <DataTable columns={["Nome", "Evolution", "Status", "Telefone", "URL base", "Criado em", "Ações"]} emptyMessage="Nenhuma instância cadastrada.">
+              {filteredInstances.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-5 py-8 text-sm text-slate-500">
+                    Nenhuma instância cadastrada.
+                  </td>
+                </tr>
               ) : (
-                instances.map((instance) => (
-                  <InfoRow key={instance.id} title={instance.name} subtitle={instance.evolutionInstanceName} meta={`${traduzirStatusInstancia(instance.status)} | ${instance.phoneNumber ?? "sem telefone"}`} />
+                filteredInstances.map((instance) => (
+                  <DataRow key={instance.id}>
+                    <DataCell>{instance.name}</DataCell>
+                    <DataCell subtle>{instance.evolutionInstanceName}</DataCell>
+                    <DataCell>
+                      <StatusChip tone={instance.status === "connected" ? "success" : instance.status === "error" ? "danger" : "warning"}>
+                        {traduzirStatusInstancia(instance.status)}
+                      </StatusChip>
+                    </DataCell>
+                    <DataCell subtle>{instance.phoneNumber ?? "Sem número"}</DataCell>
+                    <DataCell subtle>{instance.baseUrl}</DataCell>
+                    <DataCell subtle>{formatDateTime(instance.createdAt)}</DataCell>
+                    <DataCell>
+                      {currentUser.role === "admin" ? (
+                        <button type="button" onClick={() => startEditInstance(instance)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                          <Pencil className="h-4 w-4" />
+                          Editar
+                        </button>
+                      ) : null}
+                    </DataCell>
+                  </DataRow>
                 ))
               )}
+            </DataTable>
+
+            <div className="grid gap-3">
+              <InfoRow title="Webhook sugerido" subtitle="Endpoint público para eventos da Evolution" meta="https://chatflow-api.qqruew.easypanel.host/api/webhooks/evolution" />
+              <InfoRow title="Frontend publicado" subtitle="URL operacional do painel" meta="https://chatflow-web.qqruew.easypanel.host" />
             </div>
           </WorkspaceSection>
         </div>
@@ -788,61 +903,205 @@ export default function HomePage() {
           </div>
           {adminSection === "agents" ? (
             <WorkspaceSection title="Equipe" description="Criação, leitura e distribuição dos agentes do sistema.">
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-                <AdminPanelCard title="Novo agente" icon={UserPlus}>
-                  {currentUser.role === "admin" ? (
-                    <form onSubmit={handleCreateAgent} className="grid gap-3 lg:grid-cols-2">
-                      <CompactField label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} />
-                      <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} />
-                      <CompactField label="Senha" type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} />
-                      <label className="block text-sm font-medium text-slate-600">Perfil<select value={agentForm.role} onChange={(event) => setAgentForm((current) => ({ ...current, role: event.target.value as "admin" | "agent" }))} className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none"><option value="agent">Agente</option><option value="admin">Administrador</option></select></label>
-                      <div className="lg:col-span-2"><PrimaryAction disabled={agentLoading}>{agentLoading ? "Criando..." : "Criar agente"}</PrimaryAction></div>
-                    </form>
-                  ) : (
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Somente administradores podem criar agentes.</div>
-                  )}
-                </AdminPanelCard>
+              <ModuleToolbar
+                title="Usuários"
+                count={filteredAgents.length}
+                searchValue={searchQuery}
+                searchPlaceholder="Pesquisar nome, e-mail ou fila"
+                onSearchChange={setSearchQuery}
+                actionLabel={currentUser.role === "admin" ? "Adicionar usuário" : undefined}
+                onActionClick={currentUser.role === "admin" ? resetAgentForm : undefined}
+                actionIcon={UserPlus}
+              />
 
-                <AdminPanelCard title="Agentes ativos" icon={Users}>
-                  <div className="grid gap-3">
-                    {agents.length === 0 ? (
-                      <InfoRow title="Nenhum agente cadastrado" subtitle="Crie o primeiro usuário operacional" meta="A equipe aparecerá aqui após o cadastro" />
-                    ) : (
-                      agents.map((agent) => (
-                        <InfoRow key={agent.id} title={agent.name} subtitle={agent.email} meta={`${traduzirPerfil(agent.role)} | ${agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}`} />
-                      ))
-                    )}
-                  </div>
-                </AdminPanelCard>
-              </div>
+              {currentUser.role === "admin" ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <form onSubmit={handleCreateAgent} className="grid gap-3 xl:grid-cols-[1.1fr_1.2fr_1fr_220px_auto] xl:items-end">
+                    <CompactField label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} />
+                    <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} />
+                    <CompactField label="Senha" type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} />
+                    <label className="block text-sm font-medium text-slate-600">
+                      Perfil
+                      <select value={agentForm.role} onChange={(event) => setAgentForm((current) => ({ ...current, role: event.target.value as "admin" | "agent" }))} className="mt-2 h-11 w-full rounded-md border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none">
+                        <option value="agent">Agente</option>
+                        <option value="admin">Administrador</option>
+                      </select>
+                    </label>
+                    <div className="xl:w-[180px]">
+                      <PrimaryAction disabled={agentLoading}>{agentLoading ? "Salvando..." : editingAgentId ? "Salvar edição" : "Adicionar"}</PrimaryAction>
+                    </div>
+                  </form>
+                  {editingAgentId ? (
+                    <button type="button" onClick={resetAgentForm} className="mt-3 text-sm font-medium text-slate-500 transition hover:text-slate-800">
+                      Cancelar edição
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <DataTable columns={["Nome", "E-mail", "Perfil", "Presença", "Filas", "Ações"]} emptyMessage="Nenhum agente cadastrado.">
+                {filteredAgents.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-5 py-8 text-sm text-slate-500">
+                      Nenhum agente cadastrado.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredAgents.map((agent) => (
+                    <DataRow key={agent.id}>
+                      <DataCell>{agent.name}</DataCell>
+                      <DataCell subtle>{agent.email}</DataCell>
+                      <DataCell>
+                        <StatusChip tone={agent.role === "admin" ? "default" : "success"}>{traduzirPerfil(agent.role)}</StatusChip>
+                      </DataCell>
+                      <DataCell subtle>{agent.presence}</DataCell>
+                      <DataCell subtle>{agent.queues.map((queue) => queue.name).join(", ") || "Sem filas"}</DataCell>
+                      <DataCell>
+                        {currentUser.role === "admin" ? (
+                          <button type="button" onClick={() => startEditAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                            <Pencil className="h-4 w-4" />
+                            Editar
+                          </button>
+                        ) : null}
+                      </DataCell>
+                    </DataRow>
+                  ))
+                )}
+              </DataTable>
             </WorkspaceSection>
           ) : (
             <WorkspaceSection title="Filas e membros" description="Distribuição de agentes e leitura do volume atual.">
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-                <AdminPanelCard title="Nova fila" icon={Workflow}>
-                  {currentUser.role === "admin" ? (
-                    <form onSubmit={handleCreateQueue} className="grid gap-3 md:grid-cols-[1fr_220px]">
-                      <CompactField label="Nome da fila" value={queueForm.name} onChange={(value) => setQueueForm((current) => ({ ...current, name: value }))} />
-                      <CompactField label="Cor" value={queueForm.color} onChange={(value) => setQueueForm((current) => ({ ...current, color: value }))} placeholder="#1A1C32" />
-                      <div className="md:col-span-2"><PrimaryAction disabled={queueLoading}>{queueLoading ? "Criando..." : "Criar fila"}</PrimaryAction></div>
-                    </form>
-                  ) : (
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Somente administradores podem criar filas.</div>
-                  )}
-                </AdminPanelCard>
+              <ModuleToolbar
+                title="Filas"
+                count={filteredQueues.length}
+                searchValue={searchQuery}
+                searchPlaceholder="Pesquisar fila ou membro"
+                onSearchChange={setSearchQuery}
+                actionLabel={currentUser.role === "admin" ? "Adicionar fila" : undefined}
+                onActionClick={currentUser.role === "admin" ? resetQueueForm : undefined}
+                actionIcon={Workflow}
+              />
 
-                <div className="grid gap-3">
-                  {queues.length === 0 ? (
-                    <InfoRow title="Nenhuma fila cadastrada" subtitle="Crie a primeira fila para organizar a operação" meta="Os agentes poderão ser distribuídos após a criação" />
-                  ) : (
-                    queues.map((queue) => (
-                      <QueueEditor key={queue.id} queue={queue} agents={agents} loading={assignmentLoading === queue.id} onSave={handleAssignQueueAgents} onChange={setQueues} />
-                    ))
-                  )}
+              {currentUser.role === "admin" ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <form onSubmit={handleCreateQueue} className="grid gap-3 xl:grid-cols-[1fr_220px_auto] xl:items-end">
+                    <CompactField label="Nome da fila" value={queueForm.name} onChange={(value) => setQueueForm((current) => ({ ...current, name: value }))} />
+                    <CompactField label="Cor" value={queueForm.color} onChange={(value) => setQueueForm((current) => ({ ...current, color: value }))} placeholder="#1A1C32" />
+                    <div className="xl:w-[180px]">
+                      <PrimaryAction disabled={queueLoading}>{queueLoading ? "Salvando..." : editingQueueId ? "Salvar edição" : "Adicionar"}</PrimaryAction>
+                    </div>
+                  </form>
+                  {editingQueueId ? (
+                    <button type="button" onClick={resetQueueForm} className="mt-3 text-sm font-medium text-slate-500 transition hover:text-slate-800">
+                      Cancelar edição
+                    </button>
+                  ) : null}
                 </div>
+              ) : null}
+
+              <DataTable columns={["Fila", "Cor", "Agentes", "Tickets abertos", "Ações"]} emptyMessage="Nenhuma fila cadastrada.">
+                {filteredQueues.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-8 text-sm text-slate-500">
+                      Nenhuma fila cadastrada.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredQueues.map((queue) => (
+                    <DataRow key={queue.id}>
+                      <DataCell>{queue.name}</DataCell>
+                      <DataCell>
+                        <div className="flex items-center gap-2">
+                          <span className="h-4 w-10 rounded-sm border border-slate-200" style={{ backgroundColor: queue.color ?? "#1A1C32" }} />
+                          <span className="text-sm text-slate-500">{queue.color ?? "#1A1C32"}</span>
+                        </div>
+                      </DataCell>
+                      <DataCell subtle>{queue.agents.map((agent) => agent.name).join(", ") || "Sem membros"}</DataCell>
+                      <DataCell subtle>{queue.openTicketCount}</DataCell>
+                      <DataCell>
+                        {currentUser.role === "admin" ? (
+                          <button type="button" onClick={() => startEditQueue(queue)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                            <Pencil className="h-4 w-4" />
+                            Editar
+                          </button>
+                        ) : null}
+                      </DataCell>
+                    </DataRow>
+                  ))
+                )}
+              </DataTable>
+
+              <div className="grid gap-3">
+                {filteredQueues.map((queue) => (
+                  <QueueEditor key={queue.id} queue={queue} agents={agents} loading={assignmentLoading === queue.id} onSave={handleAssignQueueAgents} onChange={setQueues} />
+                ))}
               </div>
             </WorkspaceSection>
           )}
+        </div>
+      );
+    }
+
+    if (activeWorkspace === "api") {
+      const apiRows = [
+        ["GET", "/api/health", "Saúde do backend", "Usado no monitoramento e verificação de deploy"],
+        ["POST", "/api/auth/login", "Entrar no painel", "Autenticação com cookie seguro"],
+        ["GET", "/api/tickets", "Listar atendimentos", "Base da caixa de entrada do módulo Atendimento"],
+        ["POST", "/api/tickets/:ticketId/messages", "Enviar resposta", "Usa a instância vinculada ao ticket"],
+        ["POST", "/api/webhooks/evolution", "Receber eventos", "Webhook público da Evolution"],
+      ].filter((row) => row.join(" ").toLowerCase().includes(managementSearch || row.join(" ").toLowerCase()));
+
+      return (
+        <div className="flex h-full flex-col gap-4 p-6">
+          <WorkspaceSection title="API própria" description="Consulta rápida dos endpoints operacionais e parâmetros principais.">
+            <ModuleToolbar
+              title="Referência da API"
+              count={apiRows.length}
+              searchValue={searchQuery}
+              searchPlaceholder="Pesquisar rota, método ou uso"
+              onSearchChange={setSearchQuery}
+            />
+
+            <DataTable columns={["Método", "Rota", "Uso", "Observação"]} emptyMessage="Nenhum endpoint disponível.">
+              {apiRows.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-5 py-8 text-sm text-slate-500">
+                    Nenhum endpoint disponível.
+                  </td>
+                </tr>
+              ) : (
+                apiRows.map(([method, route, usage, note]) => (
+                  <DataRow key={route}>
+                    <DataCell>
+                      <StatusChip tone={method === "GET" ? "success" : "default"}>{method}</StatusChip>
+                    </DataCell>
+                    <DataCell subtle>{route}</DataCell>
+                    <DataCell>{usage}</DataCell>
+                    <DataCell subtle>{note}</DataCell>
+                  </DataRow>
+                ))
+              )}
+            </DataTable>
+
+            <DataTable columns={["Item", "Valor"]} emptyMessage="Sem dados de ambiente.">
+              <DataRow>
+                <DataCell>Base pública da API</DataCell>
+                <DataCell subtle>https://chatflow-api.qqruew.easypanel.host</DataCell>
+              </DataRow>
+              <DataRow>
+                <DataCell>Webhook Evolution</DataCell>
+                <DataCell subtle>https://chatflow-api.qqruew.easypanel.host/api/webhooks/evolution</DataCell>
+              </DataRow>
+              <DataRow>
+                <DataCell>Frontend publicado</DataCell>
+                <DataCell subtle>https://chatflow-web.qqruew.easypanel.host</DataCell>
+              </DataRow>
+              <DataRow>
+                <DataCell>Tempo real</DataCell>
+                <DataCell subtle>{SOCKET_URL ?? "NEXT_PUBLIC_SOCKET_URL não configurada"}</DataCell>
+              </DataRow>
+            </DataTable>
+          </WorkspaceSection>
         </div>
       );
     }
@@ -851,14 +1110,14 @@ export default function HomePage() {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
           <WorkspaceSection title="Meu perfil" description="Informações da sessão atual e atalhos pessoais.">
-            <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+            <div className="grid gap-4">
               <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                 <div className="grid h-20 w-20 place-items-center rounded-full bg-[#1A1C32] text-2xl font-bold text-white">{initials(currentUser.name) || "CF"}</div>
                 <div className="mt-4 text-xl font-semibold text-slate-900">{currentUser.name}</div>
                 <div className="mt-1 text-sm text-slate-500">{currentUser.email}</div>
                 <div className="mt-4 inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase text-slate-600">{traduzirPerfil(currentUser.role)}</div>
               </div>
-              <div className="grid gap-3 md:grid-cols-2">
+              <div className="grid gap-3">
                 <InfoRow title="Sessão" subtitle="Autenticação ativa" meta="cookie httpOnly + backend próprio" />
                 <InfoRow title="Tempo real" subtitle={SOCKET_URL ? "Tempo real configurado" : "Tempo real não configurado"} meta={SOCKET_URL ?? "atualização por consulta periódica"} />
                 <button type="button" onClick={() => setActiveWorkspace("tickets")} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Voltar à caixa de entrada</div><div className="mt-1 text-sm text-slate-500">Abrir conversas e continuar o atendimento.</div></button>
@@ -873,18 +1132,27 @@ export default function HomePage() {
     if (activeWorkspace === "activity") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4">
             <WorkspaceStatCard title="Tickets visíveis" value={String(visibleTickets.length)} accent="slate" description="Resultado da busca e dos filtros atuais." />
             <WorkspaceStatCard title="Não lidos" value={String(tickets.filter((ticket) => ticket.unreadCount > 0).length)} accent="emerald" description="Conversas pedindo resposta rápida." />
             <WorkspaceStatCard title="Com agente" value={String(tickets.filter((ticket) => ticket.currentAgent).length)} accent="blue" description="Atendimentos já distribuídos." />
             <WorkspaceStatCard title="Sem fila" value={String(tickets.filter((ticket) => !ticket.currentQueue).length)} accent="amber" description="Conversas ainda sem classificação." />
           </div>
           <WorkspaceSection title="Leitura operacional" description="Últimos movimentos do atendimento.">
-            <div className="space-y-3">
+            <DataTable columns={["Cliente", "Status", "Responsável", "Atualização"]} emptyMessage="Nenhum movimento recente.">
               {tickets.slice(0, 8).map((ticket) => (
-                <InfoRow key={ticket.id} title={ticket.customerName} subtitle={ticket.lastMessagePreview ?? "Sem mensagem registrada"} meta={`${traduzirStatusTicket(ticket.status)} | ${ticket.currentAgent?.name ?? "sem agente"} | ${formatDateTime(ticket.updatedAt)}`} />
+                <DataRow key={ticket.id}>
+                  <DataCell>{ticket.customerName}</DataCell>
+                  <DataCell>
+                    <StatusChip tone={ticket.status === "open" ? "success" : ticket.status === "pending" ? "warning" : "default"}>
+                      {traduzirStatusTicket(ticket.status)}
+                    </StatusChip>
+                  </DataCell>
+                  <DataCell subtle>{ticket.currentAgent?.name ?? "Sem agente"}</DataCell>
+                  <DataCell subtle>{formatDateTime(ticket.updatedAt)}</DataCell>
+                </DataRow>
               ))}
-            </div>
+            </DataTable>
           </WorkspaceSection>
         </div>
       );
@@ -894,12 +1162,28 @@ export default function HomePage() {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
           <WorkspaceSection title="Rotina operacional" description="Checklist simples para o uso interno do sistema.">
-            <div className="grid gap-3 md:grid-cols-2">
-              <InfoRow title="Início do turno" subtitle="Conferir login, socket e instâncias" meta="1. abrir painel | 2. validar saúde da API | 3. conferir instâncias" />
-              <InfoRow title="Durante o atendimento" subtitle="Monitorar aguardando e não lidos" meta="1. assumir tickets | 2. responder | 3. encerrar quando concluir" />
-              <InfoRow title="Evolution" subtitle="Validar webhook e telefone vinculado" meta="URL pública + segredo opcional" />
-              <InfoRow title="Encerramento" subtitle="Revisar tickets fechados e pendentes" meta="registrar ajustes ou incidentes" />
-            </div>
+            <DataTable columns={["Etapa", "Objetivo", "Checklist"]} emptyMessage="Nenhuma rotina cadastrada.">
+              <DataRow>
+                <DataCell>Início do turno</DataCell>
+                <DataCell subtle>Conferir login, socket e instâncias</DataCell>
+                <DataCell subtle>1. abrir painel | 2. validar saúde da API | 3. conferir instâncias</DataCell>
+              </DataRow>
+              <DataRow>
+                <DataCell>Durante o atendimento</DataCell>
+                <DataCell subtle>Monitorar aguardando e não lidos</DataCell>
+                <DataCell subtle>1. assumir tickets | 2. responder | 3. encerrar quando concluir</DataCell>
+              </DataRow>
+              <DataRow>
+                <DataCell>Evolution</DataCell>
+                <DataCell subtle>Validar webhook e telefone vinculado</DataCell>
+                <DataCell subtle>URL pública + segredo opcional</DataCell>
+              </DataRow>
+              <DataRow>
+                <DataCell>Encerramento</DataCell>
+                <DataCell subtle>Revisar tickets fechados e pendentes</DataCell>
+                <DataCell subtle>Registrar ajustes ou incidentes</DataCell>
+              </DataRow>
+            </DataTable>
           </WorkspaceSection>
         </div>
       );
@@ -909,12 +1193,28 @@ export default function HomePage() {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
           <WorkspaceSection title="Fluxo da integração" description="Como a operação conversa com a API e com a Evolution.">
-            <div className="grid gap-3 md:grid-cols-2">
-              <InfoRow title="Entrada" subtitle="Webhook da Evolution" meta="POST /api/webhooks/evolution" />
-              <InfoRow title="Saída" subtitle="Envio via API própria" meta="POST /api/tickets/:ticketId/messages" />
-                <InfoRow title="Tempo real" subtitle="Atualização por Socket.IO" meta={SOCKET_URL ?? "Configure a variável NEXT_PUBLIC_SOCKET_URL"} />
-              <InfoRow title="Proxy" subtitle="Frontend fala com /api-proxy" meta="segredos ficam no backend" />
-            </div>
+            <DataTable columns={["Etapa", "Canal", "Detalhe"]} emptyMessage="Nenhum fluxo configurado.">
+              <DataRow>
+                <DataCell>Entrada</DataCell>
+                <DataCell subtle>Webhook da Evolution</DataCell>
+                <DataCell subtle>POST /api/webhooks/evolution</DataCell>
+              </DataRow>
+              <DataRow>
+                <DataCell>Saída</DataCell>
+                <DataCell subtle>Envio via API própria</DataCell>
+                <DataCell subtle>POST /api/tickets/:ticketId/messages</DataCell>
+              </DataRow>
+              <DataRow>
+                <DataCell>Tempo real</DataCell>
+                <DataCell subtle>Socket.IO</DataCell>
+                <DataCell subtle>{SOCKET_URL ?? "Configure a variável NEXT_PUBLIC_SOCKET_URL"}</DataCell>
+              </DataRow>
+              <DataRow>
+                <DataCell>Proxy</DataCell>
+                <DataCell subtle>Frontend</DataCell>
+                <DataCell subtle>/api-proxy mantendo segredos no backend</DataCell>
+              </DataRow>
+            </DataTable>
           </WorkspaceSection>
         </div>
       );
@@ -930,70 +1230,50 @@ export default function HomePage() {
           </div>
 
           <WorkspaceSection title="Central administrativa" description="Módulo dedicado para configuração operacional e manutenção do ambiente.">
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
-              <div className="grid gap-4">
-                {adminSection === "instances" ? (
-                  <AdminPanelCard title="Instâncias publicadas" icon={Smartphone}>
-                    <div className="grid gap-3">
-                      {instances.length === 0 ? (
-                        <InfoRow title="Nenhuma instância cadastrada" subtitle="Cadastre uma conexão na tela de canais" meta="Sem instância não há webhook nem envio" />
-                      ) : (
-                        instances.map((instance) => (
-                          <InfoRow key={instance.id} title={instance.name} subtitle={instance.evolutionInstanceName} meta={`${traduzirStatusInstancia(instance.status)} | ${instance.phoneNumber ?? "sem telefone"}`} />
-                        ))
-                      )}
-                    </div>
-                  </AdminPanelCard>
-                ) : null}
+            <DataTable columns={["Área", "Resumo", "Detalhe"]} emptyMessage="Sem dados administrativos.">
+              {adminSection === "instances"
+                ? filteredInstances.map((instance) => (
+                    <DataRow key={instance.id}>
+                      <DataCell>{instance.name}</DataCell>
+                      <DataCell subtle>{instance.evolutionInstanceName}</DataCell>
+                      <DataCell subtle>{`${traduzirStatusInstancia(instance.status)} | ${instance.phoneNumber ?? "Sem telefone"}`}</DataCell>
+                    </DataRow>
+                  ))
+                : adminSection === "agents"
+                  ? filteredAgents.map((agent) => (
+                      <DataRow key={agent.id}>
+                        <DataCell>{agent.name}</DataCell>
+                        <DataCell subtle>{agent.email}</DataCell>
+                        <DataCell subtle>{`${traduzirPerfil(agent.role)} | ${agent.queues.map((queue) => queue.name).join(", ") || "Sem filas"}`}</DataCell>
+                      </DataRow>
+                    ))
+                  : filteredQueues.map((queue) => (
+                      <DataRow key={queue.id}>
+                        <DataCell>{queue.name}</DataCell>
+                        <DataCell subtle>{`${queue.agents.length} agente(s)`}</DataCell>
+                        <DataCell subtle>{`${queue.openTicketCount} ticket(s) abertos | ${queue.color ?? "#1A1C32"}`}</DataCell>
+                      </DataRow>
+                    ))}
+            </DataTable>
 
-                {adminSection === "agents" ? (
-                  <AdminPanelCard title="Equipe cadastrada" icon={UserPlus}>
-                    <div className="grid gap-3">
-                      {agents.length === 0 ? (
-                        <InfoRow title="Nenhum agente cadastrado" subtitle="Crie usuários na área de equipe" meta="Os perfis aparecem aqui para conferência" />
-                      ) : (
-                        agents.map((agent) => (
-                          <InfoRow key={agent.id} title={agent.name} subtitle={agent.email} meta={`${traduzirPerfil(agent.role)} | ${agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}`} />
-                        ))
-                      )}
-                    </div>
-                  </AdminPanelCard>
-                ) : null}
-
-                {adminSection === "queues" ? (
-                  <AdminPanelCard title="Filas cadastradas" icon={Users}>
-                    <div className="grid gap-3">
-                      {queues.length === 0 ? (
-                        <InfoRow title="Nenhuma fila cadastrada" subtitle="Crie filas na área de equipe" meta="A distribuição operacional aparecerá aqui" />
-                      ) : (
-                        queues.map((queue) => (
-                          <InfoRow key={queue.id} title={queue.name} subtitle={`${queue.agents.length} agente(s)`} meta={`${queue.openTicketCount} ticket(s) abertos | ${queue.color ?? "#1A1C32"}`} />
-                        ))
-                      )}
-                    </div>
-                  </AdminPanelCard>
-                ) : null}
-              </div>
-
-              <div className="grid gap-4">
-                <AdminPanelCard title="Ações rápidas" icon={Settings}>
-                  <div className="grid gap-3">
-                    <button type="button" onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Gerenciar instâncias</div><div className="mt-1 text-sm text-slate-500">Abrir canais e revisar Evolution.</div></button>
-                    <button type="button" onClick={() => { setActiveWorkspace("team"); setAdminSection("agents"); }} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Gerenciar equipe</div><div className="mt-1 text-sm text-slate-500">Abrir agentes e filas.</div></button>
-                    <button type="button" onClick={() => { setActiveWorkspace("team"); setAdminSection("queues"); }} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Revisar distribuição</div><div className="mt-1 text-sm text-slate-500">Validar membros das filas e volume atual.</div></button>
-                    <button type="button" onClick={() => void refreshAll()} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Recarregar tudo</div><div className="mt-1 text-sm text-slate-500">Forçar sincronização manual dos dados.</div></button>
-                  </div>
-                </AdminPanelCard>
-
-                <AdminPanelCard title="Saúde do ambiente" icon={Monitor}>
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1">
-                    <InfoRow title="Frontend" subtitle="Painel publicado" meta="chatflow-web.qqruew.easypanel.host" />
-                    <InfoRow title="API" subtitle="Backend publicado" meta="chatflow-api.qqruew.easypanel.host" />
-                    <InfoRow title="Tempo real" subtitle={SOCKET_URL ? "Socket configurado" : "Socket pendente"} meta={SOCKET_URL ?? "Configure NEXT_PUBLIC_SOCKET_URL"} />
-                  </div>
-                </AdminPanelCard>
-              </div>
-            </div>
+            <DataTable columns={["Ação", "Destino"]} emptyMessage="Sem atalhos disponíveis.">
+              <DataRow>
+                <DataCell>Gerenciar instâncias</DataCell>
+                <DataCell subtle>Abrir canais e revisar Evolution</DataCell>
+              </DataRow>
+              <DataRow>
+                <DataCell>Gerenciar equipe</DataCell>
+                <DataCell subtle>Abrir agentes e filas</DataCell>
+              </DataRow>
+              <DataRow>
+                <DataCell>API publicada</DataCell>
+                <DataCell subtle>chatflow-api.qqruew.easypanel.host</DataCell>
+              </DataRow>
+              <DataRow>
+                <DataCell>Frontend publicado</DataCell>
+                <DataCell subtle>chatflow-web.qqruew.easypanel.host</DataCell>
+              </DataRow>
+            </DataTable>
           </WorkspaceSection>
         </div>
       );
@@ -1239,10 +1519,11 @@ export default function HomePage() {
             <div className="flex w-full flex-col gap-1 px-2">
               <RailButton icon={LayoutGrid} label="Painel geral" expanded={showRail} active={activeWorkspace === "dashboard"} onClick={() => setActiveWorkspace("dashboard")} />
               <RailButton icon={Phone} label="Atendimento" expanded={showRail} active={activeWorkspace === "tickets"} onClick={() => setActiveWorkspace("tickets")} />
-              <RailButton icon={Smartphone} label="Canais e instâncias" expanded={showRail} active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} />
-              <RailButton icon={Users} label="Equipe e filas" expanded={showRail} active={activeWorkspace === "team"} onClick={() => { setActiveWorkspace("team"); setAdminSection("agents"); }} />
+              <RailButton icon={Cable} label="Canais e instâncias" expanded={showRail} active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} />
+              <RailButton icon={UserCog} label="Equipe e filas" expanded={showRail} active={activeWorkspace === "team"} onClick={() => { setActiveWorkspace("team"); setAdminSection("agents"); }} />
+              <RailButton icon={Code2} label="API" expanded={showRail} active={activeWorkspace === "api"} onClick={() => setActiveWorkspace("api")} />
               <RailButton icon={User} label="Perfil" expanded={showRail} active={activeWorkspace === "profile"} onClick={() => setActiveWorkspace("profile")} />
-              <RailButton icon={Clock} label="Atividade operacional" expanded={showRail} active={activeWorkspace === "activity"} onClick={() => setActiveWorkspace("activity")} />
+              <RailButton icon={Activity} label="Atividade operacional" expanded={showRail} active={activeWorkspace === "activity"} onClick={() => setActiveWorkspace("activity")} />
               <RailButton icon={Calendar} label="Agenda operacional" expanded={showRail} active={activeWorkspace === "calendar"} onClick={() => setActiveWorkspace("calendar")} />
               <RailButton icon={Workflow} label="Automações" expanded={showRail} active={activeWorkspace === "automations"} onClick={() => setActiveWorkspace("automations")} />
             </div>
@@ -1590,6 +1871,94 @@ function WorkspaceStatCard(props: { title: string; value: string; description: s
       <div className="mt-2 text-sm text-slate-500">{props.description}</div>
     </article>
   );
+}
+
+function ModuleToolbar(props: {
+  title: string;
+  count?: number;
+  searchValue: string;
+  searchPlaceholder: string;
+  onSearchChange: (value: string) => void;
+  actionLabel?: string;
+  onActionClick?: () => void;
+  actionIcon?: React.ComponentType<{ className?: string }>;
+}) {
+  const ActionIcon = props.actionIcon;
+
+  return (
+    <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
+      <div>
+        <h3 className="text-[30px] font-semibold leading-tight text-slate-900">
+          {props.title}
+          {typeof props.count === "number" ? <span className="text-slate-500"> ({props.count})</span> : null}
+        </h3>
+      </div>
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <label className="relative block min-w-[280px]">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            value={props.searchValue}
+            onChange={(event) => props.onSearchChange(event.target.value)}
+            placeholder={props.searchPlaceholder}
+            className="h-11 w-full rounded-md border border-slate-200 bg-white pl-10 pr-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+          />
+        </label>
+
+        {props.actionLabel && props.onActionClick ? (
+          <button
+            type="button"
+            onClick={props.onActionClick}
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-[#1A1C32] px-5 text-sm font-semibold uppercase tracking-[0.04em] text-white transition hover:bg-[#111426]"
+          >
+            {ActionIcon ? <ActionIcon className="h-4 w-4" /> : null}
+            {props.actionLabel}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function DataTable(props: { columns: string[]; emptyMessage: string; children: React.ReactNode; compact?: boolean }) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <table className="min-w-full border-collapse">
+        <thead className="bg-slate-50">
+          <tr>
+            {props.columns.map((column) => (
+              <th key={column} className="border-b border-slate-200 px-5 py-4 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
+                {column}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className={props.compact ? "text-sm" : "text-[15px]"}>{props.children}</tbody>
+      </table>
+      {!props.children ? <div className="px-5 py-8 text-sm text-slate-500">{props.emptyMessage}</div> : null}
+    </div>
+  );
+}
+
+function DataRow(props: { children: React.ReactNode }) {
+  return <tr className="border-b border-slate-200 last:border-b-0">{props.children}</tr>;
+}
+
+function DataCell(props: { children: React.ReactNode; subtle?: boolean }) {
+  return <td className={`px-5 py-4 align-middle ${props.subtle ? "text-sm text-slate-500" : "text-slate-800"}`}>{props.children}</td>;
+}
+
+function StatusChip(props: { children: React.ReactNode; tone?: "default" | "success" | "warning" | "danger" }) {
+  const toneClass =
+    props.tone === "success"
+      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+      : props.tone === "warning"
+        ? "bg-amber-50 text-amber-700 border-amber-200"
+        : props.tone === "danger"
+          ? "bg-red-50 text-red-700 border-red-200"
+          : "bg-slate-100 text-slate-700 border-slate-200";
+
+  return <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${toneClass}`}>{props.children}</span>;
 }
 
 function QueueEditor(props: {
