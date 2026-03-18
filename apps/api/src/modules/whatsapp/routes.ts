@@ -50,6 +50,18 @@ function resolvePublicApiBase(request: { headers: Record<string, unknown> }) {
     return env.API_PUBLIC_URL.replace(/\/$/, '');
   }
 
+  function normalizePublicHost(value: string | null) {
+    if (!value) return null;
+
+    const normalized = value.replace(/\/$/, '');
+
+    if (normalized.includes('chatflow-web.')) {
+      return normalized.replace('chatflow-web.', 'chatflow-api.');
+    }
+
+    return normalized;
+  }
+
   const forwardedProto = pickHeaderSecret(request.headers['x-forwarded-proto']) ?? 'https';
   const forwardedHost = pickHeaderSecret(request.headers['x-forwarded-host']);
   const host = pickHeaderSecret(request.headers.host);
@@ -57,19 +69,16 @@ function resolvePublicApiBase(request: { headers: Record<string, unknown> }) {
   const referer = pickHeaderSecret(request.headers.referer);
 
   if (forwardedHost && !forwardedHost.includes(':3333') && !forwardedHost.includes('api:')) {
-    return `${forwardedProto}://${forwardedHost}`.replace(/\/$/, '');
+    return normalizePublicHost(`${forwardedProto}://${forwardedHost}`);
   }
 
   if (host && !host.includes(':3333') && !host.includes('api:')) {
-    return `${forwardedProto}://${host}`.replace(/\/$/, '');
+    return normalizePublicHost(`${forwardedProto}://${host}`);
   }
 
   const candidate = origin ?? referer;
   if (candidate) {
-    const parsed = candidate.replace(/\/$/, '');
-    if (parsed.includes('chatflow-web.')) {
-      return parsed.replace('chatflow-web.', 'chatflow-api.');
-    }
+    return normalizePublicHost(candidate);
   }
 
   return null;

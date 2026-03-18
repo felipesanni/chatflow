@@ -16,6 +16,8 @@ interface ConfigureWebhookParams {
   webhookUrl: string;
 }
 
+const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'];
+
 function normalizeDestination(remoteJid: string) {
   if (remoteJid.includes('@g.us')) {
     return remoteJid;
@@ -59,33 +61,51 @@ export async function sendEvolutionText(params: SendTextParams) {
 
 export async function configureEvolutionWebhook(params: ConfigureWebhookParams) {
   const cleanUrl = params.baseUrl.replace(/\/$/, '');
+  const requestBody = {
+    enabled: true,
+    url: params.webhookUrl,
+    webhookByEvents: false,
+    webhookBase64: false,
+    events: WEBHOOK_EVENTS,
+  };
 
-  const response = await fetch(`${cleanUrl}/webhook/set/${params.instanceName}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: params.apiKey,
-    },
-    body: JSON.stringify({
-      enabled: true,
-      url: params.webhookUrl,
-      webhookByEvents: false,
-      webhookBase64: false,
-      events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'],
-    }),
-  });
+  async function execute(body: Record<string, unknown>) {
+    const response = await fetch(`${cleanUrl}/webhook/set/${params.instanceName}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: params.apiKey,
+      },
+      body: JSON.stringify(body),
+    });
 
-  let payload: any = null;
-  try {
-    const raw = await response.text();
-    payload = raw ? JSON.parse(raw) : null;
-  } catch {
-    payload = null;
+    let payload: any = null;
+    try {
+      const raw = await response.text();
+      payload = raw ? JSON.parse(raw) : null;
+    } catch {
+      payload = null;
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      payload,
+    };
   }
 
-  return {
-    ok: response.ok,
-    status: response.status,
-    payload,
-  };
+  const firstAttempt = await execute(requestBody);
+  const validationMessages = JSON.stringify(firstAttempt.payload ?? {});
+
+  if (
+    !firstAttempt.ok
+    && firstAttempt.status === 400
+    && validationMessages.includes('instance requires property "webhook"')
+  ) {
+    return execute({
+      webhook: requestBody,
+    });
+  }
+
+  return firstAttempt;
 }
