@@ -144,6 +144,14 @@ export const evolutionSocketsPlugin = fp(async (app: FastifyInstance) => {
       for (const eventName of SOCKET_EVENTS) {
         socket.on(eventName, async (payload: Record<string, unknown>) => {
           try {
+            app.log.info({
+              action: 'evolution_socket_event_received',
+              event: eventName,
+              baseUrl: group.baseUrl,
+              instances: group.instanceNames,
+              payloadInstance: typeof payload?.instance === 'string' ? payload.instance : null,
+            }, 'Evento recebido da Evolution via websocket.');
+
             await processEvolutionEvent(app, {
               source: 'evolution_ws',
               event: eventName,

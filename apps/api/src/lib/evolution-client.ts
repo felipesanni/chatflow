@@ -222,29 +222,55 @@ export async function configureEvolutionWebhook(params: ConfigureWebhookParams) 
 
 export async function configureEvolutionWebSocket(params: Omit<ConfigureWebhookParams, 'webhookUrl'>) {
   const cleanUrl = params.baseUrl.replace(/\/$/, '');
-  const response = await fetch(`${cleanUrl}/websocket/set/${params.instanceName}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: params.apiKey,
-    },
-    body: JSON.stringify({
-      enabled: true,
-      events: WEBSOCKET_EVENTS,
-    }),
-  });
+  const requestBody = {
+    enabled: true,
+    events: WEBSOCKET_EVENTS,
+  };
 
-  let payload: any = null;
-  try {
-    const raw = await response.text();
-    payload = raw ? JSON.parse(raw) : null;
-  } catch {
-    payload = null;
+  async function execute(body: Record<string, unknown>) {
+    const response = await fetch(`${cleanUrl}/websocket/set/${params.instanceName}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: params.apiKey,
+      },
+      body: JSON.stringify(body),
+    });
+
+    let payload: any = null;
+    try {
+      const raw = await response.text();
+      payload = raw ? JSON.parse(raw) : null;
+    } catch {
+      payload = null;
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      payload,
+    };
   }
 
-  return {
-    ok: response.ok,
-    status: response.status,
-    payload,
+  const attempts = [
+    { body: { websocket: requestBody } },
+    { body: { websocket: { enabled: true } } },
+    { body: requestBody },
+  ];
+
+  let lastAttempt = null as Awaited<ReturnType<typeof execute>> | null;
+
+  for (const attempt of attempts) {
+    lastAttempt = await execute(attempt.body);
+
+    if (lastAttempt.ok) {
+      return lastAttempt;
+    }
+  }
+
+  return lastAttempt ?? {
+    ok: false,
+    status: 500,
+    payload: null,
   };
 }

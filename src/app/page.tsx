@@ -254,6 +254,50 @@ function normalizePermissions(role: "admin" | "agent", raw?: Partial<Record<Perm
 const API_URL = "/api-proxy";
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL ?? null;
 const BRAND_LOGO_STORAGE_KEY = "chatflow.brand.logo";
+const CONFIGURED_PUBLIC_WEB_BASE_URL = process.env.NEXT_PUBLIC_WEB_BASE_URL ?? null;
+const CONFIGURED_PUBLIC_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? null;
+
+function deriveApiBaseUrlFromWebOrigin(origin: string) {
+  try {
+    const url = new URL(origin);
+    const hostname = url.hostname;
+
+    if (hostname.startsWith("chatflow.")) {
+      url.hostname = `apiflow.${hostname.slice("chatflow.".length)}`;
+      return url.origin;
+    }
+
+    if (hostname.startsWith("web.")) {
+      url.hostname = `api.${hostname.slice("web.".length)}`;
+      return url.origin;
+    }
+
+    if (hostname.includes("-web.")) {
+      url.hostname = hostname.replace("-web.", "-api.");
+      return url.origin;
+    }
+
+    return origin;
+  } catch {
+    return origin;
+  }
+}
+
+function resolvePublicUrls() {
+  const detectedWebBaseUrl =
+    CONFIGURED_PUBLIC_WEB_BASE_URL
+    ?? (typeof window !== "undefined" ? window.location.origin : "https://chatflow.local");
+
+  const detectedApiBaseUrl =
+    CONFIGURED_PUBLIC_API_BASE_URL
+    ?? deriveApiBaseUrlFromWebOrigin(detectedWebBaseUrl);
+
+  return {
+    webBaseUrl: detectedWebBaseUrl,
+    apiBaseUrl: detectedApiBaseUrl,
+    webhookUrl: `${detectedApiBaseUrl}/api/webhooks/evolution`,
+  };
+}
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? {});
@@ -393,6 +437,7 @@ export default function HomePage() {
   const [profileAvatarPreview, setProfileAvatarPreview] = React.useState<string | null>(null);
   const [brandLogoPreview, setBrandLogoPreview] = React.useState<string | null>(null);
   const [composerAttachment, setComposerAttachment] = React.useState<ComposerAttachment | null>(null);
+  const [publicUrls, setPublicUrls] = React.useState(resolvePublicUrls);
   const [profileSaving, setProfileSaving] = React.useState(false);
   const [transferLoading, setTransferLoading] = React.useState(false);
 
@@ -676,6 +721,10 @@ export default function HomePage() {
     if (storedLogo) {
       setBrandLogoPreview(storedLogo);
     }
+  }, []);
+
+  React.useEffect(() => {
+    setPublicUrls(resolvePublicUrls());
   }, []);
 
   React.useEffect(() => {
@@ -1719,8 +1768,8 @@ export default function HomePage() {
             </DataTable>
 
             <div className="grid gap-3">
-              <InfoRow title="Webhook sugerido" subtitle="Endpoint público para eventos da Evolution" meta="https://chatflow-api.qqruew.easypanel.host/api/webhooks/evolution" />
-              <InfoRow title="Frontend publicado" subtitle="URL operacional do painel" meta="https://chatflow-web.qqruew.easypanel.host" />
+              <InfoRow title="Webhook sugerido" subtitle="Endpoint público para eventos da Evolution" meta={publicUrls.webhookUrl} />
+              <InfoRow title="Frontend publicado" subtitle="URL operacional do painel" meta={publicUrls.webBaseUrl} />
             </div>
           </WorkspaceSection>
         </div>
@@ -1938,15 +1987,15 @@ export default function HomePage() {
             <DataTable columns={["Item", "Valor"]} emptyMessage="Sem dados de ambiente.">
               <DataRow>
                 <DataCell>Base pública da API</DataCell>
-                <DataCell subtle>https://chatflow-api.qqruew.easypanel.host</DataCell>
+                <DataCell subtle>{publicUrls.apiBaseUrl}</DataCell>
               </DataRow>
               <DataRow>
                 <DataCell>Webhook Evolution</DataCell>
-                <DataCell subtle>https://chatflow-api.qqruew.easypanel.host/api/webhooks/evolution</DataCell>
+                <DataCell subtle>{publicUrls.webhookUrl}</DataCell>
               </DataRow>
               <DataRow>
                 <DataCell>Frontend publicado</DataCell>
-                <DataCell subtle>https://chatflow-web.qqruew.easypanel.host</DataCell>
+                <DataCell subtle>{publicUrls.webBaseUrl}</DataCell>
               </DataRow>
               <DataRow>
                 <DataCell>Tempo real</DataCell>
@@ -2296,8 +2345,8 @@ export default function HomePage() {
               </DataTable>
 
               <div className="grid gap-3">
-                <InfoRow title="Webhook sugerido" subtitle="Endpoint público para eventos da Evolution" meta="https://chatflow-api.qqruew.easypanel.host/api/webhooks/evolution" />
-                <InfoRow title="Frontend publicado" subtitle="URL operacional do painel" meta="https://chatflow-web.qqruew.easypanel.host" />
+                <InfoRow title="Webhook sugerido" subtitle="Endpoint público para eventos da Evolution" meta={publicUrls.webhookUrl} />
+                <InfoRow title="Frontend publicado" subtitle="URL operacional do painel" meta={publicUrls.webBaseUrl} />
               </div>
             </WorkspaceSection>
           ) : adminSection === "agents" ? (
@@ -2403,26 +2452,26 @@ export default function HomePage() {
       <>
         {selectedTicket ? (
           <>
-            <div className="border-b border-slate-200/70 bg-[linear-gradient(180deg,#ffffff,#f5f8fb)] px-6 py-4">
-              <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="border-b border-slate-200 bg-white px-5 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
-                  <div className="grid h-12 w-12 place-items-center rounded-[20px] border border-white/70 bg-[radial-gradient(circle_at_top,#ffffff,#d8e3ed)] text-sm font-semibold text-slate-700 shadow-[0_16px_32px_rgba(148,163,184,0.24)]">
-                  {initials(selectedTicket.customerName) || "C"}
-                </div>
+                  <div className="grid h-12 w-12 place-items-center rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700">
+                    {initials(selectedTicket.customerName) || "C"}
+                  </div>
                   <div>
-                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">{selectedTicket.whatsappInstance.name}</div>
-                    <h3 className="mt-1 text-lg font-semibold leading-none tracking-[-0.03em] text-[#1A1C32]">{selectedTicket.customerName}</h3>
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-[0.12em]">
-                      <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">
-                        {selectedTicket.currentAgent?.name ?? (selectedTicket.isGroup ? "Conversa de grupo" : "Aguardando atendente")}
-                      </span>
-                      <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-500">{selectedTicket.externalChatId}</span>
+                    <h3 className="text-[20px] font-semibold leading-none tracking-[-0.03em] text-[#1A1C32]">{selectedTicket.customerName}</h3>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
+                      <span>{selectedTicket.whatsappInstance.name}</span>
+                      <span className="text-slate-300">•</span>
+                      <span>{selectedTicket.currentAgent?.name ?? (selectedTicket.isGroup ? "Conversa de grupo" : "Aguardando atendente")}</span>
+                      <span className="text-slate-300">•</span>
+                      <span>{selectedTicket.externalChatId}</span>
                     </div>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button type="button" aria-label="Assumir atendimento selecionado" title="Assumir atendimento" onClick={() => void handleAcceptTicket()} disabled={!canAcceptSelectedTicket} className="inline-flex h-11 items-center gap-2 rounded-full bg-[#1c8f5c] px-5 text-[11px] font-bold uppercase tracking-[0.12em] text-white shadow-[0_16px_32px_rgba(28,143,92,0.28)] transition hover:bg-[#16734a] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none">
+                  <button type="button" aria-label="Assumir atendimento selecionado" title="Assumir atendimento" onClick={() => void handleAcceptTicket()} disabled={!canAcceptSelectedTicket} className="inline-flex h-10 items-center gap-2 rounded-full bg-[#e7eff8] px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-[#385a7a] transition hover:bg-[#dbe7f3] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
                     <CheckSquare className="h-4 w-4" />
                     {selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Atendimento fechado" : "Aceitar atendimento"}
                   </button>
@@ -2432,17 +2481,17 @@ export default function HomePage() {
                       aria-label={showTransferPanel ? "Ocultar painel de transferência" : "Transferir atendimento"}
                       title="Transferir atendimento"
                       onClick={() => setShowTransferPanel((current) => !current)}
-                      className={`inline-flex h-11 items-center gap-2 rounded-full border px-4 text-[11px] font-bold uppercase tracking-[0.12em] transition ${showTransferPanel ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+                      className={`inline-flex h-10 items-center gap-2 rounded-full border px-4 text-[11px] font-bold uppercase tracking-[0.12em] transition ${showTransferPanel ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
                     >
                       <ArrowRightLeft className="h-3.5 w-3.5" />
                       Transferir
                     </button>
                   ) : null}
-                  <button type="button" aria-label="Fechar atendimento selecionado" title="Fechar atendimento" onClick={() => void handleCloseTicket()} disabled={!canCloseSelectedTicket} className="inline-flex h-11 items-center gap-2 rounded-full border border-red-200 bg-white px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
+                  <button type="button" aria-label="Fechar atendimento selecionado" title="Fechar atendimento" onClick={() => void handleCloseTicket()} disabled={!canCloseSelectedTicket} className="inline-flex h-10 items-center gap-2 rounded-full border border-red-200 bg-white px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
                     <X className="h-3.5 w-3.5" />
                     {selectedTicket.status === "closed" ? "Fechado" : "Fechar"}
                   </button>
-                  <button type="button" aria-label={showTicketDetails ? "Ocultar detalhes do atendimento" : "Mostrar detalhes do atendimento"} title={showTicketDetails ? "Ocultar detalhes" : "Mostrar detalhes"} onClick={() => setShowTicketDetails((current) => !current)} className="grid h-11 w-11 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700">
+                  <button type="button" aria-label={showTicketDetails ? "Ocultar detalhes do atendimento" : "Mostrar detalhes do atendimento"} title={showTicketDetails ? "Ocultar detalhes" : "Mostrar detalhes"} onClick={() => setShowTicketDetails((current) => !current)} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700">
                     <Info className="h-4 w-4" />
                   </button>
                 </div>
@@ -2514,19 +2563,18 @@ export default function HomePage() {
               </div>
             ) : null}
 
-            {showTicketDetails ? (
-              <div className="border-b border-slate-200/70 bg-[linear-gradient(180deg,#f8fbfd,#eef4f8)] px-6 py-4">
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <InfoRow title="Status" subtitle={traduzirStatusTicket(selectedTicket.status)} meta={`não lidos: ${selectedTicket.unreadCount}`} />
-                  <InfoRow title="Fila" subtitle={selectedTicket.currentQueue?.name ?? "Sem fila"} meta={selectedTicket.isGroup ? "conversa em grupo" : "conversa individual"} />
-                  <InfoRow title="Responsável" subtitle={selectedTicket.currentAgent?.name ?? "Sem agente"} meta={selectedTicket.externalChatId} />
-                  <InfoRow title="Canal" subtitle={selectedTicket.whatsappInstance.name} meta={formatDateTime(selectedTicket.updatedAt)} />
-                </div>
-              </div>
-            ) : null}
-
-            <div className="flex flex-1 flex-col overflow-hidden">
-              <div className="scrollbar-hide flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,#eef5f8,transparent_30%),linear-gradient(180deg,#e7eef3,#dce7ee)] px-4 py-5 md:px-6">
+            <div className="flex min-h-0 flex-1 overflow-hidden">
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <div
+                className="scrollbar-hide flex-1 overflow-y-auto px-4 py-5 md:px-6"
+                style={{
+                  backgroundColor: "#efe8dd",
+                  backgroundImage:
+                    "radial-gradient(rgba(140,120,90,0.06) 1px, transparent 1px), radial-gradient(rgba(140,120,90,0.04) 1px, transparent 1px)",
+                  backgroundPosition: "0 0, 12px 12px",
+                  backgroundSize: "24px 24px",
+                }}
+              >
                 <div className="mx-auto flex max-w-5xl flex-col gap-4">
                   {messageLoading ? (
                     <div className="text-center text-sm text-slate-500">Carregando mensagens...</div>
@@ -2547,8 +2595,8 @@ export default function HomePage() {
 
                       return (
                         <div key={message.id} className={`flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
-                          <article className={`max-w-[85%] rounded-[26px] px-4 py-3 text-sm shadow-[0_18px_40px_rgba(15,23,42,0.08)] md:max-w-[70%] ${outgoing ? "border border-emerald-200/70 bg-[linear-gradient(135deg,#ecffd8,#d5f7b8)] text-slate-800" : "rounded-tl-[10px] border border-white/70 bg-[linear-gradient(180deg,#ffffff,#f8fbfd)] text-slate-800"}`}>
-                            <div className={`mb-1 text-[10px] font-bold uppercase tracking-[0.12em] ${outgoing ? "text-emerald-700/70" : "text-slate-400"}`}>
+                          <article className={`max-w-[85%] rounded-[18px] px-4 py-3 text-sm shadow-sm md:max-w-[70%] ${outgoing ? "border border-[#cfe9ad] bg-[#dcf8c6] text-slate-800" : "rounded-tl-[8px] border border-[#ece4d8] bg-white text-slate-800"}`}>
+                            <div className={`mb-1 text-[10px] font-bold uppercase tracking-[0.08em] ${outgoing ? "text-slate-700/70" : "text-slate-400"}`}>
                               {message.senderName ?? (outgoing ? currentUser.name : selectedTicket.customerName)}
                             </div>
                             {message.attachments && message.attachments.length > 0 ? (
@@ -2582,7 +2630,7 @@ export default function HomePage() {
                             ) : null}
                             {message.body ? <div className="whitespace-pre-wrap text-[15px] leading-7">{message.body}</div> : null}
                             {!message.body && (!message.attachments || message.attachments.length === 0) ? <div className="whitespace-pre-wrap text-[15px] leading-7">{`[${message.contentType}]`}</div> : null}
-                            <div className={`mt-3 text-right text-[10px] uppercase tracking-[0.08em] ${outgoing ? "text-emerald-800/50" : "text-slate-400"}`}>{formatDateTime(message.createdAt)}</div>
+                            <div className={`mt-2 text-right text-[11px] ${outgoing ? "text-slate-500" : "text-slate-400"}`}>{formatDateTime(message.createdAt)}</div>
                           </article>
                         </div>
                       );
@@ -2591,7 +2639,7 @@ export default function HomePage() {
                 </div>
               </div>
 
-              <form onSubmit={handleSendMessage} className="border-t border-slate-200/70 bg-[linear-gradient(180deg,#fdfefe,#f2f6f9)] px-4 py-4 md:px-6">
+              <form onSubmit={handleSendMessage} className="border-t border-slate-200 bg-white px-4 py-3 md:px-5">
                 <input ref={imageUploadRef} type="file" accept="image/*" className="hidden" onChange={(event) => void handleComposerAttachmentChange("image", event)} />
                 <input ref={documentUploadRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.zip,application/*" className="hidden" onChange={(event) => void handleComposerAttachmentChange("document", event)} />
                 <input ref={audioUploadRef} type="file" accept="audio/*" className="hidden" onChange={(event) => void handleComposerAttachmentChange("audio", event)} />
@@ -2613,13 +2661,13 @@ export default function HomePage() {
                 ) : null}
                 <div className="flex items-end gap-3">
                   <div className="flex items-center gap-2 pb-1">
-                    <button type="button" aria-label="Anexar imagem" title="Anexar imagem" onClick={() => imageUploadRef.current?.click()} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-12 w-12 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-[0_10px_24px_rgba(148,163,184,0.14)] transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    <button type="button" aria-label="Anexar imagem" title="Anexar imagem" onClick={() => imageUploadRef.current?.click()} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                       <FileImage className="h-4 w-4" />
                     </button>
-                    <button type="button" aria-label="Anexar áudio" title="Anexar áudio" onClick={() => audioUploadRef.current?.click()} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-12 w-12 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-[0_10px_24px_rgba(148,163,184,0.14)] transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    <button type="button" aria-label="Anexar áudio" title="Anexar áudio" onClick={() => audioUploadRef.current?.click()} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                       <FileAudio className="h-4 w-4" />
                     </button>
-                    <button type="button" aria-label="Anexar arquivo" title="Anexar arquivo" onClick={() => documentUploadRef.current?.click()} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-12 w-12 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-[0_10px_24px_rgba(148,163,184,0.14)] transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    <button type="button" aria-label="Anexar arquivo" title="Anexar arquivo" onClick={() => documentUploadRef.current?.click()} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                       <Paperclip className="h-4 w-4" />
                     </button>
                   </div>
@@ -2630,7 +2678,7 @@ export default function HomePage() {
                       rows={2}
                       placeholder={canSendToSelectedTicket ? "Digite uma mensagem ou use /atalho" : "Ticket fechado para envio"}
                       disabled={!canSendToSelectedTicket}
-                      className="min-h-[58px] w-full resize-none rounded-[30px] border border-white/80 bg-white/90 px-5 py-4 text-sm text-slate-700 shadow-[0_14px_40px_rgba(148,163,184,0.16)] outline-none transition focus:border-slate-300 focus:bg-white disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                      className="min-h-[52px] w-full resize-none rounded-full border border-slate-200 bg-[#f8fafc] px-5 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                     />
                     {quickReplyMatches.length > 0 && canSendToSelectedTicket ? (
                       <div className="absolute bottom-[calc(100%+0.75rem)] left-0 z-20 w-full overflow-hidden rounded-[26px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff,#f8fbfd)] shadow-[0_24px_60px_rgba(15,23,42,0.16)]">
@@ -2662,13 +2710,43 @@ export default function HomePage() {
                     type="submit"
                     aria-label="Enviar mensagem"
                     disabled={sendLoading || (!messageInput.trim() && !composerAttachment) || !canSendToSelectedTicket}
-                    className="inline-flex h-14 items-center justify-center gap-2 rounded-full bg-[linear-gradient(135deg,#1A1C32,#2c3f67)] px-6 text-sm font-bold uppercase tracking-[0.12em] text-white shadow-[0_18px_36px_rgba(26,28,50,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                    className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[#1A1C32] px-5 text-sm font-bold uppercase tracking-[0.12em] text-white transition hover:bg-[#252844] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
                   >
                     <Send className="h-4 w-4" />
                     {sendLoading ? "Enviando" : "Enviar"}
                   </button>
                 </div>
               </form>
+              </div>
+
+              {showTicketDetails ? (
+                <aside className="hidden w-[320px] shrink-0 border-l border-slate-200 bg-white xl:flex xl:flex-col">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+                    <div className="text-lg font-semibold text-[#1A1C32]">Dados do contato</div>
+                    <button type="button" onClick={() => setShowTicketDetails(false)} className="text-slate-400 transition hover:text-slate-700">
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+                  <div className="space-y-5 overflow-y-auto px-5 py-5">
+                    <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-5">
+                      <div className="mx-auto grid h-24 w-24 place-items-center rounded-full bg-slate-200 text-2xl font-semibold text-slate-600">
+                        {initials(selectedTicket.customerName) || "C"}
+                      </div>
+                      <div className="mt-4 text-center">
+                        <div className="text-xl font-semibold text-slate-900">{selectedTicket.customerName}</div>
+                        <div className="mt-1 text-sm text-slate-500">{selectedTicket.externalChatId}</div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <InfoRow title="Status" subtitle={traduzirStatusTicket(selectedTicket.status)} meta={`não lidos: ${selectedTicket.unreadCount}`} />
+                      <InfoRow title="Fila" subtitle={selectedTicket.currentQueue?.name ?? "Sem fila"} meta={selectedTicket.isGroup ? "conversa em grupo" : "conversa individual"} />
+                      <InfoRow title="Responsável" subtitle={selectedTicket.currentAgent?.name ?? "Sem agente"} meta={selectedTicket.whatsappInstance.name} />
+                      <InfoRow title="Atualizado em" subtitle={formatDateTime(selectedTicket.updatedAt)} meta={selectedTicket.externalChatId} />
+                    </div>
+                  </div>
+                </aside>
+              ) : null}
             </div>
           </>
         ) : (
@@ -2885,7 +2963,7 @@ export default function HomePage() {
             <div className="grid gap-4 md:grid-cols-2">
               <CompactField label="Nome interno" value={instanceForm.name} onChange={(value) => setInstanceForm((current) => ({ ...current, name: value }))} placeholder="Comercial" />
               <CompactField label="Nome na Evolution" value={instanceForm.evolutionInstanceName} onChange={(value) => setInstanceForm((current) => ({ ...current, evolutionInstanceName: value }))} placeholder="1519-0000" />
-              <CompactField label="URL base" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder="https://api.projeto.app.br/" />
+              <CompactField label="URL base" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder={publicUrls.apiBaseUrl} />
               <CompactField label="Chave da API" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} placeholder="Token da Evolution" />
             </div>
             <CompactField label="Segredo do webhook" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
@@ -3216,10 +3294,10 @@ export default function HomePage() {
             </div>
           </aside>
 
-          <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[380px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
+          <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[360px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
             {ticketWorkspaceAtivo ? (
-              <div className="flex h-full flex-col border-r border-slate-200/80 bg-[linear-gradient(180deg,#fbfdff,#f3f7fb)]">
-                <div className="space-y-4 border-b border-slate-200/80 p-4">
+              <div className="flex h-full flex-col border-r border-slate-200 bg-white">
+                <div className="space-y-3 border-b border-slate-200 p-3">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                     <input
@@ -3227,12 +3305,12 @@ export default function HomePage() {
                       value={searchQuery}
                       onChange={(event) => setSearchQuery(event.target.value)}
                       placeholder="Buscar atendimento e mensagens"
-                      className="h-11 w-full rounded-full border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white"
+                      className="h-11 w-full rounded-full border border-slate-300 bg-white pl-10 pr-4 text-sm text-slate-700 outline-none transition focus:border-slate-400"
                     />
                   </div>
 
                   <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-1 rounded-[20px] border border-slate-200/80 bg-white/80 p-1.5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+                    <div className="flex items-center gap-1 rounded-[16px] border border-slate-200 bg-slate-50 p-1">
                       <SidebarIconButton icon={Eye} label="Limpar filtros e voltar à caixa de entrada" active={!showOnlyUnread && !showOnlyMine && selectedQueueFilter === "all"} onClick={() => { setShowOnlyUnread(false); setShowOnlyMine(false); setSelectedQueueFilter("all"); setSearchQuery(""); setActiveWorkspace("tickets"); }} />
                       {canStartConversation ? <SidebarIconButton icon={Plus} label="Iniciar nova conversa" active={false} onClick={openCreateConversationModal} /> : null}
                       <SidebarIconButton icon={LayoutList} label="Usar lista compacta" active={ticketDensity === "compact"} onClick={() => setTicketDensity("compact")} />
@@ -3240,7 +3318,7 @@ export default function HomePage() {
                       <SidebarIconButton icon={CheckSquare} label="Mostrar apenas meus atendimentos" active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
                       <SidebarIconButton icon={EyeOff} label="Mostrar apenas não lidos" active={showOnlyUnread} onClick={() => setShowOnlyUnread((current) => !current)} />
                     </div>
-                    <label className="inline-flex items-center gap-1 rounded-[18px] border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-500 shadow-[0_12px_28px_rgba(15,23,42,0.05)] transition hover:bg-slate-50">
+                    <label className="inline-flex items-center gap-1 rounded-[16px] border border-slate-300 bg-white px-3 py-2 text-[11px] text-slate-500 transition hover:bg-slate-50">
                       <select
                         aria-label="Filtrar atendimentos por fila"
                         value={selectedQueueFilter}
@@ -3260,15 +3338,15 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                <div className="border-b border-slate-200/80 px-3 py-3">
-                  <div className="flex items-center gap-2 rounded-[24px] bg-slate-100/80 p-1.5">
+                <div className="border-b border-slate-200 px-3 py-2">
+                  <div className="flex items-center gap-2">
                   <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
                   <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
                   {canViewGroups ? <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" /> : null}
                   </div>
                 </div>
 
-                <div className="scrollbar-hide flex-1 overflow-y-auto px-3 py-3">
+                <div className="scrollbar-hide flex-1 overflow-y-auto bg-white px-2 py-2">
                   {visibleTickets.length === 0 ? (
                     <div className="p-10 text-center text-xs font-medium text-slate-400">Nenhum atendimento nesta categoria.</div>
                   ) : (
@@ -3280,10 +3358,10 @@ export default function HomePage() {
                           key={ticket.id}
                           type="button"
                           onClick={() => { setSelectedTicketId(ticket.id); setActiveWorkspace("tickets"); setShowTicketDetails(false); }}
-                          className={`group relative mb-2 flex w-full items-start gap-3 rounded-[28px] border text-left transition ${selected ? "border-slate-300 bg-white shadow-[0_20px_42px_rgba(15,23,42,0.12)]" : "border-transparent bg-white/55 hover:border-slate-200 hover:bg-white"} ${compact ? "p-3" : "p-4"}`}
+                          className={`group relative mb-1.5 flex w-full items-start gap-3 rounded-[18px] border text-left transition ${selected ? "border-slate-300 bg-slate-50 shadow-sm" : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"} ${compact ? "p-3" : "p-3.5"}`}
                         >
                           <div className={compact ? "pt-0.5" : "pt-1"}>
-                            <div className={`grid place-items-center rounded-[20px] border border-white/70 bg-[linear-gradient(135deg,#edf4fa,#ccd9e5)] text-sm font-semibold text-slate-700 shadow-[0_16px_32px_rgba(148,163,184,0.2)] ${compact ? "h-11 w-11" : "h-12 w-12"}`}>
+                            <div className={`grid place-items-center rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700 ${compact ? "h-11 w-11" : "h-12 w-12"}`}>
                               {initials(ticket.customerName) || "C"}
                             </div>
                           </div>
@@ -3294,16 +3372,16 @@ export default function HomePage() {
                                 <div className="flex items-center gap-1.5">
                                   <Phone className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
                                   <p className={`truncate font-bold text-slate-800 ${compact ? "text-[13px]" : "text-[14px]"}`}>{ticket.customerName}</p>
-                                  {selected ? <span className="rounded-full bg-slate-950 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-white">Ativo</span> : null}
+                                  {selected ? <span className="rounded-full bg-[#1A1C32] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-white">Ativo</span> : null}
                                 </div>
                                 <p className={`mt-1 truncate font-medium text-slate-600 ${compact ? "text-[12px]" : "text-[13px]"}`}>
                                   {ticket.lastMessagePreview ?? "Sem mensagem registrada"}
                                 </p>
                               </div>
-                              <span className="whitespace-nowrap rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">{formatHour(ticket.updatedAt)}</span>
+                              <span className="whitespace-nowrap text-[11px] font-medium text-slate-400">{formatHour(ticket.updatedAt)}</span>
                             </div>
 
-                            <div className="mt-3 flex items-center justify-between gap-2">
+                            <div className="mt-2.5 flex items-center justify-between gap-2">
                               <div className="flex flex-wrap gap-1">
                                 <MiniBadge className="bg-emerald-500 text-white" text={ticket.externalChatId || "SEM INSTÂNCIA"} />
                                 {ticket.isGroup ? (
@@ -3450,7 +3528,7 @@ function SidebarIconButton(props: { icon: React.ComponentType<{ className?: stri
       aria-label={props.label}
       title={props.label}
       aria-pressed={props.active ? "true" : "false"}
-      className={`grid h-8 w-8 place-items-center rounded-2xl border transition ${props.active ? "border-slate-300 bg-white text-slate-900 shadow-[0_8px_24px_rgba(15,23,42,0.08)]" : "border-transparent bg-white/60 text-slate-500 hover:border-slate-200 hover:bg-white"}`}
+      className={`grid h-9 w-9 place-items-center rounded-xl border transition ${props.active ? "border-[#1A1C32] bg-white text-[#1A1C32]" : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700"}`}
     >
       <Icon className="h-3.5 w-3.5" />
     </button>
@@ -3462,7 +3540,7 @@ function StatusTab(props: { label: string; count: number; active: boolean; onCli
     <button
       type="button"
       onClick={props.onClick}
-      className={`relative flex flex-1 items-center justify-center gap-2 rounded-[18px] px-3 py-3 text-[10px] font-bold uppercase tracking-[0.14em] transition-all ${props.active ? "bg-slate-950 text-white shadow-[0_16px_32px_rgba(15,23,42,0.18)]" : "text-slate-400 hover:bg-white/80 hover:text-slate-700"}`}
+      className={`relative flex flex-1 items-center justify-center gap-2 rounded-[14px] border px-3 py-2.5 text-[10px] font-bold uppercase tracking-[0.1em] transition-all ${props.active ? "border-[#1A1C32] bg-[#1A1C32] text-white" : "border-transparent text-slate-400 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-700"}`}
     >
       <div className="relative">
         {props.icon}
@@ -3474,7 +3552,7 @@ function StatusTab(props: { label: string; count: number; active: boolean; onCli
 }
 
 function MiniBadge(props: { text: string; className: string }) {
-  return <span className={`rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] ${props.className}`}>{props.text}</span>;
+  return <span className={`rounded-md px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] ${props.className}`}>{props.text}</span>;
 }
 
 function EmptyCenter() {
