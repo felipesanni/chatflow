@@ -36,9 +36,10 @@ const updateInstanceSchema = z.object({
 
 const env = loadEnv();
 
-function pickHeaderSecret(value: string | string[] | undefined) {
+function pickHeaderSecret(value: unknown) {
   if (Array.isArray(value)) {
-    return value[0] ?? null;
+    const first = value[0];
+    return typeof first === 'string' ? first : null;
   }
 
   return typeof value === 'string' ? value : null;
