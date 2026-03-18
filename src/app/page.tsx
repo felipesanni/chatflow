@@ -5,7 +5,6 @@ import { io, type Socket } from "socket.io-client";
 import {
   Activity,
   ArrowRightLeft,
-  Cable,
   Calendar,
   CheckSquare,
   ChevronDown,
@@ -14,6 +13,9 @@ import {
   Database,
   Eye,
   EyeOff,
+  FileAudio,
+  FileImage,
+  FileText,
   Info,
   LayoutGrid,
   LayoutList,
@@ -23,6 +25,7 @@ import {
   Monitor,
   Pencil,
   Phone,
+  Paperclip,
   Plus,
   RefreshCw,
   Search,
@@ -31,7 +34,6 @@ import {
   ShieldCheck,
   Smartphone,
   User,
-  UserCog,
   UserPlus,
   Users,
   Workflow,
@@ -74,6 +76,26 @@ type MessageItem = {
   body: string | null;
   senderName: string | null;
   createdAt: string;
+  attachments?: AttachmentItem[];
+};
+
+type AttachmentItem = {
+  id: string;
+  fileName: string | null;
+  mimeType: string;
+  sizeBytes: number | null;
+  storage: string;
+  storageKey: string;
+  publicUrl: string | null;
+  createdAt?: string;
+};
+
+type ComposerAttachment = {
+  kind: "image" | "audio" | "document";
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  dataUrl: string;
 };
 
 type InstanceItem = {
@@ -154,6 +176,7 @@ const permissionDefinitions = [
   { key: "queues.assign", group: "Equipe e filas", label: "Associar agentes às filas" },
   { key: "api.view", group: "API", label: "Visualizar módulo de API" },
   { key: "contacts.view", group: "Contatos", label: "Visualizar contatos" },
+  { key: "contacts.manage", group: "Contatos", label: "Cadastrar e editar contatos" },
   { key: "profile.view", group: "Perfil", label: "Visualizar perfil" },
   { key: "activity.view", group: "Atividade", label: "Visualizar atividade operacional" },
   { key: "calendar.view", group: "Agenda", label: "Visualizar agenda operacional" },
@@ -206,6 +229,7 @@ function defaultPermissionsForRole(role: "admin" | "agent"): PermissionMap {
     "queues.assign": false,
     "api.view": false,
     "contacts.view": true,
+    "contacts.manage": false,
     "profile.view": true,
     "activity.view": true,
     "calendar.view": true,
@@ -229,15 +253,19 @@ function normalizePermissions(role: "admin" | "agent", raw?: Partial<Record<Perm
 
 const API_URL = "/api-proxy";
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL ?? null;
+const BRAND_LOGO_STORAGE_KEY = "chatflow.brand.logo";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers ?? {});
+
+  if (init?.body !== undefined && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
+    headers,
     cache: "no-store",
   });
 
@@ -337,13 +365,15 @@ export default function HomePage() {
   const [agentLoading, setAgentLoading] = React.useState(false);
   const [queueLoading, setQueueLoading] = React.useState(false);
   const [quickReplyLoading, setQuickReplyLoading] = React.useState(false);
+  const [customerLoading, setCustomerLoading] = React.useState(false);
   const [conversationLoading, setConversationLoading] = React.useState(false);
   const [assignmentLoading, setAssignmentLoading] = React.useState<string | null>(null);
   const [editingInstanceId, setEditingInstanceId] = React.useState<string | null>(null);
   const [editingAgentId, setEditingAgentId] = React.useState<string | null>(null);
   const [editingQueueId, setEditingQueueId] = React.useState<string | null>(null);
   const [editingQuickReplyId, setEditingQuickReplyId] = React.useState<string | null>(null);
-  const [managementModal, setManagementModal] = React.useState<null | "instance" | "agent" | "queue" | "conversation" | "quickReply">(null);
+  const [editingCustomerId, setEditingCustomerId] = React.useState<string | null>(null);
+  const [managementModal, setManagementModal] = React.useState<null | "instance" | "agent" | "queue" | "conversation" | "quickReply" | "customer">(null);
   const [managementModalTab, setManagementModalTab] = React.useState<"general" | "permissions">("general");
 
   const [messageInput, setMessageInput] = React.useState("");
@@ -358,9 +388,13 @@ export default function HomePage() {
   const [showOnlyMine, setShowOnlyMine] = React.useState(false);
   const [selectedQueueFilter, setSelectedQueueFilter] = React.useState<string>("all");
   const [showTicketDetails, setShowTicketDetails] = React.useState(false);
+  const [showTransferPanel, setShowTransferPanel] = React.useState(false);
   const [profileName, setProfileName] = React.useState("");
   const [profileAvatarPreview, setProfileAvatarPreview] = React.useState<string | null>(null);
+  const [brandLogoPreview, setBrandLogoPreview] = React.useState<string | null>(null);
+  const [composerAttachment, setComposerAttachment] = React.useState<ComposerAttachment | null>(null);
   const [profileSaving, setProfileSaving] = React.useState(false);
+  const [transferLoading, setTransferLoading] = React.useState(false);
 
   const [loginForm, setLoginForm] = React.useState({ email: "", password: "" });
   const [bootstrapForm, setBootstrapForm] = React.useState({ name: "", email: "", password: "" });
@@ -386,8 +420,23 @@ export default function HomePage() {
     whatsappInstanceId: "",
     queueId: "",
   });
+  const [customerForm, setCustomerForm] = React.useState({
+    name: "",
+    phone: "",
+    email: "",
+    companyName: "",
+    notes: "",
+  });
+  const [transferForm, setTransferForm] = React.useState({
+    agentId: "",
+    queueId: "",
+    reason: "",
+  });
   const socketRef = React.useRef<Socket | null>(null);
   const userMenuRef = React.useRef<HTMLDivElement | null>(null);
+  const imageUploadRef = React.useRef<HTMLInputElement | null>(null);
+  const documentUploadRef = React.useRef<HTMLInputElement | null>(null);
+  const audioUploadRef = React.useRef<HTMLInputElement | null>(null);
 
   const selectedTicket = React.useMemo(
     () => tickets.find((ticket) => ticket.id === selectedTicketId) ?? null,
@@ -414,6 +463,7 @@ export default function HomePage() {
   const canAssignQueues = currentUser.permissions["queues.assign"];
   const canStartConversation = currentUser.permissions["tickets.reply"];
   const canViewContacts = currentUser.permissions["contacts.view"];
+  const canManageContacts = currentUser.permissions["contacts.manage"];
 
   const canAcceptSelectedTicket = Boolean(
     selectedTicket &&
@@ -423,14 +473,16 @@ export default function HomePage() {
   );
   const canCloseSelectedTicket = Boolean(selectedTicket && selectedTicket.status !== "closed" && currentUser.permissions["tickets.close"]);
   const canSendToSelectedTicket = Boolean(selectedTicket && selectedTicket.status !== "closed" && currentUser.permissions["tickets.reply"]);
+  const canTransferSelectedTicket = Boolean(selectedTicket && selectedTicket.status !== "closed" && canViewTeam && currentUser.permissions["tickets.accept"]);
 
   const quickReplyCommand = React.useMemo(() => {
     const match = messageInput.match(/(?:^|\s)\/([a-z0-9_-]*)$/i);
-    return match?.[1]?.toLowerCase() ?? null;
+    if (!match) return null;
+    return match[1]?.toLowerCase() ?? "";
   }, [messageInput]);
 
   const quickReplyMatches = React.useMemo(() => {
-    if (!quickReplyCommand || !canViewQuickReplies) return [];
+    if (quickReplyCommand === null || !canViewQuickReplies) return [];
 
     return quickReplies
       .filter((item) => item.isActive && item.shortcut.toLowerCase().includes(quickReplyCommand))
@@ -618,6 +670,15 @@ export default function HomePage() {
   }, [user?.name, user?.avatarUrl]);
 
   React.useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const storedLogo = window.localStorage.getItem(BRAND_LOGO_STORAGE_KEY);
+    if (storedLogo) {
+      setBrandLogoPreview(storedLogo);
+    }
+  }, []);
+
+  React.useEffect(() => {
     const preferredWorkspaces: WorkspaceKey[] = [
       "tickets",
       "dashboard",
@@ -644,6 +705,15 @@ export default function HomePage() {
   React.useEffect(() => {
     setShowTicketDetails(false);
   }, [selectedTicketId]);
+
+  React.useEffect(() => {
+    setShowTransferPanel(false);
+    setTransferForm({
+      agentId: selectedTicket?.currentAgent?.id ?? "",
+      queueId: selectedTicket?.currentQueue?.id ?? "",
+      reason: "",
+    });
+  }, [selectedTicket?.currentAgent?.id, selectedTicket?.currentQueue?.id, selectedTicketId]);
 
   React.useEffect(() => {
     if (activeTab === "grupos" && !canViewGroups) {
@@ -928,6 +998,101 @@ export default function HomePage() {
     setPanelMessage("Avatar pronto para salvar.");
   }
 
+  async function handleBrandLogoChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.currentTarget.value = "";
+
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setPanelMessage("Selecione um arquivo de imagem válido para o logo.");
+      return;
+    }
+
+    if (file.size > 2_000_000) {
+      setPanelMessage("O logo deve ter no máximo 2 MB.");
+      return;
+    }
+
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.onerror = () => reject(new Error("Falha ao ler o arquivo do logo."));
+      reader.readAsDataURL(file);
+    });
+
+    setBrandLogoPreview(dataUrl);
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(BRAND_LOGO_STORAGE_KEY, dataUrl);
+    }
+
+    setPanelMessage("Logo atualizado no painel.");
+  }
+
+  function handleRemoveBrandLogo() {
+    setBrandLogoPreview(null);
+
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(BRAND_LOGO_STORAGE_KEY);
+    }
+
+    setPanelMessage("Logo removido. O painel voltou para a marca padrão.");
+  }
+
+  async function readFileAsDataUrl(file: File) {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.onerror = () => reject(new Error(`Falha ao ler o arquivo ${file.name}.`));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleComposerAttachmentChange(kind: ComposerAttachment["kind"], event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.currentTarget.value = "";
+
+    if (!file) return;
+
+    if (file.size > 12_000_000) {
+      setPanelMessage("O arquivo deve ter no máximo 12 MB.");
+      return;
+    }
+
+    if (kind === "image" && !file.type.startsWith("image/")) {
+      setPanelMessage("Selecione uma imagem válida.");
+      return;
+    }
+
+    if (kind === "audio" && !file.type.startsWith("audio/")) {
+      setPanelMessage("Selecione um áudio válido.");
+      return;
+    }
+
+    const dataUrl = await readFileAsDataUrl(file);
+
+    setComposerAttachment({
+      kind,
+      fileName: file.name,
+      mimeType: file.type || (kind === "image" ? "image/jpeg" : kind === "audio" ? "audio/ogg" : "application/octet-stream"),
+      sizeBytes: file.size,
+      dataUrl,
+    });
+
+    setPanelMessage(
+      kind === "image"
+        ? "Imagem pronta para envio."
+        : kind === "audio"
+          ? "Áudio pronto para envio."
+          : "Arquivo pronto para envio.",
+    );
+  }
+
+  function clearComposerAttachment() {
+    setComposerAttachment(null);
+  }
+
   async function handleSaveProfile() {
     if (!user) return;
 
@@ -954,9 +1119,10 @@ export default function HomePage() {
 
   async function handleSendMessage(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedTicketId || !messageInput.trim()) return;
+    if (!selectedTicketId) return;
 
     const trimmedInput = messageInput.trim();
+    if (!trimmedInput && !composerAttachment) return;
     const shortcutMatch = trimmedInput.match(/^\/([a-z0-9_-]+)$/i);
     const resolvedBody =
       shortcutMatch
@@ -967,9 +1133,21 @@ export default function HomePage() {
     try {
       await apiFetch(`/tickets/${selectedTicketId}/messages`, {
         method: "POST",
-        body: JSON.stringify({ body: resolvedBody }),
+        body: JSON.stringify({
+          body: resolvedBody,
+          attachment: composerAttachment
+            ? {
+                kind: composerAttachment.kind,
+                fileName: composerAttachment.fileName,
+                mimeType: composerAttachment.mimeType,
+                sizeBytes: composerAttachment.sizeBytes,
+                dataUrl: composerAttachment.dataUrl,
+              }
+            : undefined,
+        }),
       });
       setMessageInput("");
+      setComposerAttachment(null);
       await refreshMessages(selectedTicketId);
       await refreshTickets();
     } catch (error) {
@@ -998,6 +1176,32 @@ export default function HomePage() {
       await refreshTickets();
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao encerrar ticket.");
+    }
+  }
+
+  async function handleTransferTicket(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedTicketId) return;
+
+    setTransferLoading(true);
+    try {
+      await apiFetch(`/tickets/${selectedTicketId}/transfer`, {
+        method: "POST",
+        body: JSON.stringify({
+          agentId: transferForm.agentId || null,
+          queueId: transferForm.queueId || null,
+          reason: transferForm.reason.trim() || undefined,
+        }),
+      });
+
+      await refreshTickets();
+      setShowTransferPanel(false);
+      setTransferForm((current) => ({ ...current, reason: "" }));
+      setPanelMessage("Ticket transferido com sucesso.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao transferir ticket.");
+    } finally {
+      setTransferLoading(false);
     }
   }
 
@@ -1032,6 +1236,17 @@ export default function HomePage() {
     setQuickReplyForm({ shortcut: "", content: "", isActive: true });
   }
 
+  function resetCustomerForm() {
+    setEditingCustomerId(null);
+    setCustomerForm({
+      name: "",
+      phone: "",
+      email: "",
+      companyName: "",
+      notes: "",
+    });
+  }
+
   function resetConversationForm() {
     setConversationForm({
       customerName: "",
@@ -1050,7 +1265,8 @@ export default function HomePage() {
       apiKey: "",
       webhookSecret: "",
     });
-    setActiveWorkspace("channels");
+    setActiveWorkspace("settings");
+    setAdminSection("instances");
     setManagementModal("instance");
   }
 
@@ -1063,7 +1279,7 @@ export default function HomePage() {
       role: agent.role,
       permissions: normalizePermissions(agent.role, agent.permissions),
     });
-    setActiveWorkspace("team");
+    setActiveWorkspace("settings");
     setAdminSection("agents");
     setManagementModalTab("general");
     setManagementModal("agent");
@@ -1075,7 +1291,7 @@ export default function HomePage() {
       name: queue.name,
       color: queue.color ?? "#1A1C32",
     });
-    setActiveWorkspace("team");
+    setActiveWorkspace("settings");
     setAdminSection("queues");
     setManagementModal("queue");
   }
@@ -1091,18 +1307,32 @@ export default function HomePage() {
     setManagementModal("quickReply");
   }
 
+  function startEditCustomer(customer: CustomerItem) {
+    setEditingCustomerId(customer.id);
+    setCustomerForm({
+      name: customer.name,
+      phone: customer.phone ?? "",
+      email: customer.email ?? "",
+      companyName: customer.companyName ?? "",
+      notes: customer.notes ?? "",
+    });
+    setActiveWorkspace("contacts");
+    setManagementModal("customer");
+  }
+
   function openCreateInstanceModal() {
     resetInstanceForm();
     setManagementModalTab("general");
     setManagementModal("instance");
-    setActiveWorkspace("channels");
+    setActiveWorkspace("settings");
+    setAdminSection("instances");
   }
 
   function openCreateAgentModal() {
     resetAgentForm();
     setManagementModalTab("general");
     setManagementModal("agent");
-    setActiveWorkspace("team");
+    setActiveWorkspace("settings");
     setAdminSection("agents");
   }
 
@@ -1110,7 +1340,7 @@ export default function HomePage() {
     resetQueueForm();
     setManagementModalTab("general");
     setManagementModal("queue");
-    setActiveWorkspace("team");
+    setActiveWorkspace("settings");
     setAdminSection("queues");
   }
 
@@ -1119,6 +1349,13 @@ export default function HomePage() {
     setManagementModalTab("general");
     setManagementModal("quickReply");
     setActiveWorkspace("quickReplies");
+  }
+
+  function openCreateCustomerModal() {
+    resetCustomerForm();
+    setManagementModalTab("general");
+    setManagementModal("customer");
+    setActiveWorkspace("contacts");
   }
 
   function openCreateConversationModal() {
@@ -1143,6 +1380,7 @@ export default function HomePage() {
     setEditingAgentId(null);
     setEditingQueueId(null);
     setEditingQuickReplyId(null);
+    setEditingCustomerId(null);
     setInstanceForm({
       name: "",
       evolutionInstanceName: "",
@@ -1159,6 +1397,13 @@ export default function HomePage() {
     });
     setQueueForm({ name: "", color: "#1A1C32" });
     setQuickReplyForm({ shortcut: "", content: "", isActive: true });
+    setCustomerForm({
+      name: "",
+      phone: "",
+      email: "",
+      companyName: "",
+      notes: "",
+    });
     setConversationForm({
       customerName: "",
       phone: "",
@@ -1258,6 +1503,25 @@ export default function HomePage() {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao salvar resposta rápida.");
     } finally {
       setQuickReplyLoading(false);
+    }
+  }
+
+  async function handleCreateCustomer(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCustomerLoading(true);
+    try {
+      await apiFetch(editingCustomerId ? `/customers/${editingCustomerId}` : "/customers", {
+        method: editingCustomerId ? "PUT" : "POST",
+        body: JSON.stringify(customerForm),
+      });
+      resetCustomerForm();
+      closeManagementModal();
+      setPanelMessage(editingCustomerId ? "Contato atualizado." : "Contato criado.");
+      await refreshCustomers();
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao salvar contato.");
+    } finally {
+      setCustomerLoading(false);
     }
   }
 
@@ -1704,28 +1968,66 @@ export default function HomePage() {
               searchValue={searchQuery}
               searchPlaceholder="Pesquisar contato, telefone ou empresa"
               onSearchChange={setSearchQuery}
+              actionLabel={canManageContacts ? "Adicionar contato" : undefined}
+              onActionClick={canManageContacts ? openCreateCustomerModal : undefined}
+              actionIcon={Plus}
             />
 
-            <DataTable columns={["Nome", "Telefone", "E-mail", "Empresa", "Ultimo ticket", "Atualizado em"]} emptyMessage="Nenhum contato encontrado.">
-              {filteredCustomers.map((customer) => (
-                <DataRow key={customer.id}>
-                  <DataCell>{customer.name}</DataCell>
-                  <DataCell subtle>{customer.phone ?? "Sem telefone"}</DataCell>
-                  <DataCell subtle>{customer.email ?? "Sem e-mail"}</DataCell>
-                  <DataCell subtle>{customer.companyName ?? "Sem empresa"}</DataCell>
-                  <DataCell subtle>
-                    {customer.lastTicket ? (
-                      <div className="space-y-1">
-                        <div>{traduzirStatusTicket(customer.lastTicket.status)}</div>
-                        <div className="text-xs text-slate-400">{customer.lastTicket.queueName ?? "Sem fila"}</div>
-                      </div>
-                    ) : (
-                      "Sem historico"
-                    )}
-                  </DataCell>
-                  <DataCell subtle>{formatDateTime(customer.updatedAt)}</DataCell>
-                </DataRow>
-              ))}
+            <DataTable
+              columns={
+                canManageContacts
+                  ? ["Nome", "Telefone", "E-mail", "Empresa", "Ultimo ticket", "Atualizado em", "Ações"]
+                  : ["Nome", "Telefone", "E-mail", "Empresa", "Ultimo ticket", "Atualizado em"]
+              }
+              emptyMessage="Nenhum contato encontrado."
+            >
+              {filteredCustomers.length === 0 ? (
+                <tr>
+                  <td colSpan={canManageContacts ? 7 : 6} className="px-5 py-8 text-sm text-slate-500">
+                    Nenhum contato encontrado.
+                  </td>
+                </tr>
+              ) : (
+                filteredCustomers.map((customer) => (
+                  <DataRow key={customer.id}>
+                    <DataCell>
+                      {canManageContacts ? (
+                        <button
+                          type="button"
+                          onClick={() => startEditCustomer(customer)}
+                          className="text-left font-medium text-slate-900 transition hover:text-[#1A1C32]"
+                        >
+                          {customer.name}
+                        </button>
+                      ) : (
+                        customer.name
+                      )}
+                    </DataCell>
+                    <DataCell subtle>{customer.phone ?? "Sem telefone"}</DataCell>
+                    <DataCell subtle>{customer.email ?? "Sem e-mail"}</DataCell>
+                    <DataCell subtle>{customer.companyName ?? "Sem empresa"}</DataCell>
+                    <DataCell subtle>
+                      {customer.lastTicket ? (
+                        <div className="space-y-1">
+                          <div>{traduzirStatusTicket(customer.lastTicket.status)}</div>
+                          <div className="text-xs text-slate-400">{customer.lastTicket.queueName ?? "Sem fila"}</div>
+                        </div>
+                      ) : (
+                        "Sem historico"
+                      )}
+                    </DataCell>
+                    <DataCell subtle>{formatDateTime(customer.updatedAt)}</DataCell>
+                    {canManageContacts ? (
+                      <DataCell>
+                        <button type="button" onClick={() => startEditCustomer(customer)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                          <Pencil className="h-4 w-4" />
+                          Editar
+                        </button>
+                      </DataCell>
+                    ) : null}
+                  </DataRow>
+                ))
+              )}
             </DataTable>
           </WorkspaceSection>
         </div>
@@ -1886,58 +2188,213 @@ export default function HomePage() {
     if (activeWorkspace === "settings") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
+          <WorkspaceSection title="Identidade visual" description="Personalize a marca principal exibida no topo do painel.">
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_320px]">
+              <div className="rounded-[28px] border border-slate-200 bg-[linear-gradient(135deg,#ffffff,#f5f8fb)] p-5 shadow-sm">
+                <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">Logo superior</div>
+                <div className="mt-3 rounded-[24px] bg-[#1A1C32] p-5 shadow-[0_20px_40px_rgba(26,28,50,0.22)]">
+                  <div className="flex items-center gap-4">
+                    {brandLogoPreview ? (
+                      <div className="flex min-h-[64px] min-w-[200px] items-center rounded-2xl border border-white/10 bg-white px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
+                        <img src={brandLogoPreview} alt="Logo do painel" className="max-h-10 w-auto object-contain" />
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <span className="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10">
+                          <ShieldCheck className="h-5 w-5 text-white" />
+                        </span>
+                        <div>
+                          <div className="text-xl font-semibold tracking-tight text-white">CHATFLOW</div>
+                          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">Marca padrão</div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">Prévia</div>
+                      <div className="mt-1 text-sm font-semibold text-white">{workspaceTitle}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="text-sm font-semibold text-[#1A1C32]">Arquivo do logo</div>
+                <p className="mt-2 text-sm text-slate-500">Envie uma imagem horizontal com fundo transparente para substituir a marca padrão no cabeçalho.</p>
+                <div className="mt-4 flex flex-col gap-3">
+                  <label className="inline-flex h-11 cursor-pointer items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#232643]">
+                    <input type="file" accept="image/*" className="hidden" onChange={(event) => void handleBrandLogoChange(event)} />
+                    {brandLogoPreview ? "Trocar logo" : "Enviar logo"}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleRemoveBrandLogo}
+                    disabled={!brandLogoPreview}
+                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Remover logo
+                  </button>
+                </div>
+                <div className="mt-4 space-y-2 text-xs text-slate-400">
+                  <div>Formato recomendado: PNG ou SVG convertido em imagem.</div>
+                  <div>Tamanho máximo: 2 MB.</div>
+                </div>
+              </div>
+            </div>
+          </WorkspaceSection>
+
           <div className="flex flex-wrap gap-2">
             <AdminTab label="Instâncias" active={adminSection === "instances"} onClick={() => setAdminSection("instances")} />
             <AdminTab label="Agentes" active={adminSection === "agents"} onClick={() => setAdminSection("agents")} />
             <AdminTab label="Filas" active={adminSection === "queues"} onClick={() => setAdminSection("queues")} />
           </div>
 
-          <WorkspaceSection title="Central administrativa" description="Módulo dedicado para configuração operacional e manutenção do ambiente.">
-            <DataTable columns={["Área", "Resumo", "Detalhe"]} emptyMessage="Sem dados administrativos.">
-              {adminSection === "instances"
-                ? filteredInstances.map((instance) => (
+          {adminSection === "instances" ? (
+            <WorkspaceSection title="Canais e instâncias" description="Gerencie as conexões com a Evolution em um único lugar dentro das configurações.">
+              <ModuleToolbar
+                title="Conexões"
+                count={filteredInstances.length}
+                searchValue={searchQuery}
+                searchPlaceholder="Pesquisar instância, telefone ou status"
+                onSearchChange={setSearchQuery}
+                actionLabel={canManageInstances ? "Nova conexão" : undefined}
+                onActionClick={canManageInstances ? openCreateInstanceModal : undefined}
+                actionIcon={Plus}
+              />
+
+              <DataTable columns={["Nome", "Evolution", "Status", "Telefone", "URL base", "Criado em", "Ações"]} emptyMessage="Nenhuma instância cadastrada.">
+                {filteredInstances.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-5 py-8 text-sm text-slate-500">
+                      Nenhuma instância cadastrada.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredInstances.map((instance) => (
                     <DataRow key={instance.id}>
                       <DataCell>{instance.name}</DataCell>
                       <DataCell subtle>{instance.evolutionInstanceName}</DataCell>
-                      <DataCell subtle>{`${traduzirStatusInstancia(instance.status)} | ${instance.phoneNumber ?? "Sem telefone"}`}</DataCell>
+                      <DataCell>
+                        <StatusChip tone={instance.status === "connected" ? "success" : instance.status === "error" ? "danger" : "warning"}>
+                          {traduzirStatusInstancia(instance.status)}
+                        </StatusChip>
+                      </DataCell>
+                      <DataCell subtle>{instance.phoneNumber ?? "Sem número"}</DataCell>
+                      <DataCell subtle>{instance.baseUrl}</DataCell>
+                      <DataCell subtle>{formatDateTime(instance.createdAt)}</DataCell>
+                      <DataCell>
+                        {canManageInstances ? (
+                          <button type="button" onClick={() => startEditInstance(instance)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                            <Pencil className="h-4 w-4" />
+                            Editar
+                          </button>
+                        ) : null}
+                      </DataCell>
                     </DataRow>
                   ))
-                : adminSection === "agents"
-                  ? filteredAgents.map((agent) => (
-                      <DataRow key={agent.id}>
-                        <DataCell>{agent.name}</DataCell>
-                        <DataCell subtle>{agent.email}</DataCell>
-                        <DataCell subtle>{`${traduzirPerfil(agent.role)} | ${agent.queues.map((queue) => queue.name).join(", ") || "Sem filas"}`}</DataCell>
-                      </DataRow>
-                    ))
-                  : filteredQueues.map((queue) => (
-                      <DataRow key={queue.id}>
-                        <DataCell>{queue.name}</DataCell>
-                        <DataCell subtle>{`${queue.agents.length} agente(s)`}</DataCell>
-                        <DataCell subtle>{`${queue.openTicketCount} ticket(s) abertos | ${queue.color ?? "#1A1C32"}`}</DataCell>
-                      </DataRow>
-                    ))}
-            </DataTable>
+                )}
+              </DataTable>
 
-            <DataTable columns={["Ação", "Destino"]} emptyMessage="Sem atalhos disponíveis.">
-              <DataRow>
-                <DataCell>Gerenciar instâncias</DataCell>
-                <DataCell subtle>Abrir canais e revisar Evolution</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Gerenciar equipe</DataCell>
-                <DataCell subtle>Abrir agentes e filas</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>API publicada</DataCell>
-                <DataCell subtle>chatflow-api.qqruew.easypanel.host</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Frontend publicado</DataCell>
-                <DataCell subtle>chatflow-web.qqruew.easypanel.host</DataCell>
-              </DataRow>
-            </DataTable>
-          </WorkspaceSection>
+              <div className="grid gap-3">
+                <InfoRow title="Webhook sugerido" subtitle="Endpoint público para eventos da Evolution" meta="https://chatflow-api.qqruew.easypanel.host/api/webhooks/evolution" />
+                <InfoRow title="Frontend publicado" subtitle="URL operacional do painel" meta="https://chatflow-web.qqruew.easypanel.host" />
+              </div>
+            </WorkspaceSection>
+          ) : adminSection === "agents" ? (
+            <WorkspaceSection title="Equipe" description="Criação, leitura e distribuição dos agentes do sistema.">
+              <ModuleToolbar
+                title="Usuários"
+                count={filteredAgents.length}
+                searchValue={searchQuery}
+                searchPlaceholder="Pesquisar nome, e-mail ou fila"
+                onSearchChange={setSearchQuery}
+                actionLabel={canManageAgents ? "Adicionar usuário" : undefined}
+                onActionClick={canManageAgents ? openCreateAgentModal : undefined}
+                actionIcon={UserPlus}
+              />
+
+              <DataTable columns={["Nome", "E-mail", "Perfil", "Presença", "Filas", "Ações"]} emptyMessage="Nenhum agente cadastrado.">
+                {filteredAgents.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-5 py-8 text-sm text-slate-500">
+                      Nenhum agente cadastrado.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredAgents.map((agent) => (
+                    <DataRow key={agent.id}>
+                      <DataCell>{agent.name}</DataCell>
+                      <DataCell subtle>{agent.email}</DataCell>
+                      <DataCell>
+                        <StatusChip tone={agent.role === "admin" ? "default" : "success"}>{traduzirPerfil(agent.role)}</StatusChip>
+                      </DataCell>
+                      <DataCell subtle>{agent.presence}</DataCell>
+                      <DataCell subtle>{agent.queues.map((queue) => queue.name).join(", ") || "Sem filas"}</DataCell>
+                      <DataCell>
+                        {canManageAgents ? (
+                          <button type="button" onClick={() => startEditAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                            <Pencil className="h-4 w-4" />
+                            Editar
+                          </button>
+                        ) : null}
+                      </DataCell>
+                    </DataRow>
+                  ))
+                )}
+              </DataTable>
+            </WorkspaceSection>
+          ) : (
+            <WorkspaceSection title="Filas e membros" description="Distribuição de agentes e leitura do volume atual.">
+              <ModuleToolbar
+                title="Filas"
+                count={filteredQueues.length}
+                searchValue={searchQuery}
+                searchPlaceholder="Pesquisar fila ou membro"
+                onSearchChange={setSearchQuery}
+                actionLabel={canManageQueues ? "Adicionar fila" : undefined}
+                onActionClick={canManageQueues ? openCreateQueueModal : undefined}
+                actionIcon={Workflow}
+              />
+
+              <DataTable columns={["Fila", "Cor", "Agentes", "Tickets abertos", "Ações"]} emptyMessage="Nenhuma fila cadastrada.">
+                {filteredQueues.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-8 text-sm text-slate-500">
+                      Nenhuma fila cadastrada.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredQueues.map((queue) => (
+                    <DataRow key={queue.id}>
+                      <DataCell>{queue.name}</DataCell>
+                      <DataCell>
+                        <div className="flex items-center gap-2">
+                          <span className="h-4 w-10 rounded-sm border border-slate-200" style={{ backgroundColor: queue.color ?? "#1A1C32" }} />
+                          <span className="text-sm text-slate-500">{queue.color ?? "#1A1C32"}</span>
+                        </div>
+                      </DataCell>
+                      <DataCell subtle>{queue.agents.map((agent) => agent.name).join(", ") || "Sem membros"}</DataCell>
+                      <DataCell subtle>{queue.openTicketCount}</DataCell>
+                      <DataCell>
+                        {canManageQueues ? (
+                          <button type="button" onClick={() => startEditQueue(queue)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                            <Pencil className="h-4 w-4" />
+                            Editar
+                          </button>
+                        ) : null}
+                      </DataCell>
+                    </DataRow>
+                  ))
+                )}
+              </DataTable>
+
+              <div className="grid gap-3">
+                {filteredQueues.map((queue) => (
+                  <QueueEditor key={queue.id} queue={queue} agents={agents} loading={assignmentLoading === queue.id} canEdit={canAssignQueues} onSave={handleAssignQueueAgents} onChange={setQueues} />
+                ))}
+              </div>
+            </WorkspaceSection>
+          )}
         </div>
       );
     }
@@ -1946,36 +2403,119 @@ export default function HomePage() {
       <>
         {selectedTicket ? (
           <>
-            <div className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6">
-              <div className="flex items-center gap-3">
-                <div className="grid h-10 w-10 place-items-center rounded-full border bg-slate-100 text-sm font-semibold text-slate-700">
+            <div className="border-b border-slate-200/70 bg-[linear-gradient(180deg,#ffffff,#f5f8fb)] px-6 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="grid h-12 w-12 place-items-center rounded-[20px] border border-white/70 bg-[radial-gradient(circle_at_top,#ffffff,#d8e3ed)] text-sm font-semibold text-slate-700 shadow-[0_16px_32px_rgba(148,163,184,0.24)]">
                   {initials(selectedTicket.customerName) || "C"}
                 </div>
-                <div>
-                  <h3 className="text-sm font-semibold uppercase leading-none text-[#1A1C32]">{selectedTicket.customerName}</h3>
-                  <span className="text-[10px] font-bold uppercase text-[#1A9C68]">
-                    {selectedTicket.currentAgent?.name ?? (selectedTicket.isGroup ? "Conversa de grupo" : "Aguardando atendente")}
-                  </span>
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">{selectedTicket.whatsappInstance.name}</div>
+                    <h3 className="mt-1 text-lg font-semibold leading-none tracking-[-0.03em] text-[#1A1C32]">{selectedTicket.customerName}</h3>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-[0.12em]">
+                      <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">
+                        {selectedTicket.currentAgent?.name ?? (selectedTicket.isGroup ? "Conversa de grupo" : "Aguardando atendente")}
+                      </span>
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-500">{selectedTicket.externalChatId}</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
 
-              <div className="flex items-center gap-2">
-                <button type="button" aria-label="Assumir atendimento selecionado" title="Assumir atendimento" onClick={() => void handleAcceptTicket()} disabled={!canAcceptSelectedTicket} className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-[11px] font-bold uppercase text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 bg-green-600 hover:bg-green-700">
-                  <CheckSquare className="h-4 w-4" />
-                  {selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Atendimento fechado" : "Aceitar atendimento"}
-                </button>
-                <button type="button" aria-label="Fechar atendimento selecionado" title="Fechar atendimento" onClick={() => void handleCloseTicket()} disabled={!canCloseSelectedTicket} className="inline-flex items-center gap-1 text-[10px] font-bold uppercase text-red-500 transition hover:text-red-600 disabled:cursor-not-allowed disabled:text-slate-400">
-                  <X className="h-3.5 w-3.5" />
-                  {selectedTicket.status === "closed" ? "Fechado" : "Fechar"}
-                </button>
-                <button type="button" aria-label={showTicketDetails ? "Ocultar detalhes do atendimento" : "Mostrar detalhes do atendimento"} title={showTicketDetails ? "Ocultar detalhes" : "Mostrar detalhes"} onClick={() => setShowTicketDetails((current) => !current)} className="text-slate-400 transition hover:text-slate-600">
-                  <Info className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button type="button" aria-label="Assumir atendimento selecionado" title="Assumir atendimento" onClick={() => void handleAcceptTicket()} disabled={!canAcceptSelectedTicket} className="inline-flex h-11 items-center gap-2 rounded-full bg-[#1c8f5c] px-5 text-[11px] font-bold uppercase tracking-[0.12em] text-white shadow-[0_16px_32px_rgba(28,143,92,0.28)] transition hover:bg-[#16734a] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none">
+                    <CheckSquare className="h-4 w-4" />
+                    {selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Atendimento fechado" : "Aceitar atendimento"}
+                  </button>
+                  {canTransferSelectedTicket ? (
+                    <button
+                      type="button"
+                      aria-label={showTransferPanel ? "Ocultar painel de transferência" : "Transferir atendimento"}
+                      title="Transferir atendimento"
+                      onClick={() => setShowTransferPanel((current) => !current)}
+                      className={`inline-flex h-11 items-center gap-2 rounded-full border px-4 text-[11px] font-bold uppercase tracking-[0.12em] transition ${showTransferPanel ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+                    >
+                      <ArrowRightLeft className="h-3.5 w-3.5" />
+                      Transferir
+                    </button>
+                  ) : null}
+                  <button type="button" aria-label="Fechar atendimento selecionado" title="Fechar atendimento" onClick={() => void handleCloseTicket()} disabled={!canCloseSelectedTicket} className="inline-flex h-11 items-center gap-2 rounded-full border border-red-200 bg-white px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
+                    <X className="h-3.5 w-3.5" />
+                    {selectedTicket.status === "closed" ? "Fechado" : "Fechar"}
+                  </button>
+                  <button type="button" aria-label={showTicketDetails ? "Ocultar detalhes do atendimento" : "Mostrar detalhes do atendimento"} title={showTicketDetails ? "Ocultar detalhes" : "Mostrar detalhes"} onClick={() => setShowTicketDetails((current) => !current)} className="grid h-11 w-11 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700">
+                    <Info className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             </div>
 
+            {showTransferPanel && canTransferSelectedTicket ? (
+              <div className="border-b border-slate-200/70 bg-[linear-gradient(180deg,#f7fbff,#edf4fa)] px-6 py-4">
+                <form onSubmit={handleTransferTicket} className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(220px,1fr)_auto]">
+                  <label className="block text-sm font-medium text-slate-600">
+                    Agente de destino
+                    <select
+                      value={transferForm.agentId}
+                      onChange={(event) => setTransferForm((current) => ({ ...current, agentId: event.target.value }))}
+                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                    >
+                      <option value="">Sem agente definido</option>
+                      {agents.map((agent) => (
+                        <option key={agent.id} value={agent.id}>
+                          {agent.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="block text-sm font-medium text-slate-600">
+                    Fila de destino
+                    <select
+                      value={transferForm.queueId}
+                      onChange={(event) => setTransferForm((current) => ({ ...current, queueId: event.target.value }))}
+                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                    >
+                      <option value="">Sem fila</option>
+                      {queues.map((queue) => (
+                        <option key={queue.id} value={queue.id}>
+                          {queue.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="block text-sm font-medium text-slate-600">
+                    Motivo
+                    <input
+                      value={transferForm.reason}
+                      onChange={(event) => setTransferForm((current) => ({ ...current, reason: event.target.value }))}
+                      placeholder="Ex.: redistribuição, escalonamento..."
+                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                    />
+                  </label>
+
+                  <div className="flex items-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowTransferPanel(false)}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={transferLoading || (!transferForm.agentId && !transferForm.queueId)}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#0f766e,#155e75)] px-5 text-sm font-semibold text-white shadow-[0_16px_30px_rgba(14,116,144,0.24)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                    >
+                      {transferLoading ? "Transferindo..." : "Confirmar"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            ) : null}
+
             {showTicketDetails ? (
-              <div className="border-b border-slate-200 bg-slate-50 px-6 py-4">
+              <div className="border-b border-slate-200/70 bg-[linear-gradient(180deg,#f8fbfd,#eef4f8)] px-6 py-4">
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <InfoRow title="Status" subtitle={traduzirStatusTicket(selectedTicket.status)} meta={`não lidos: ${selectedTicket.unreadCount}`} />
                   <InfoRow title="Fila" subtitle={selectedTicket.currentQueue?.name ?? "Sem fila"} meta={selectedTicket.isGroup ? "conversa em grupo" : "conversa individual"} />
@@ -1986,8 +2526,8 @@ export default function HomePage() {
             ) : null}
 
             <div className="flex flex-1 flex-col overflow-hidden">
-              <div className="scrollbar-hide flex-1 overflow-y-auto px-6 py-6">
-                <div className="mx-auto flex max-w-4xl flex-col gap-4">
+              <div className="scrollbar-hide flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,#eef5f8,transparent_30%),linear-gradient(180deg,#e7eef3,#dce7ee)] px-4 py-5 md:px-6">
+                <div className="mx-auto flex max-w-5xl flex-col gap-4">
                   {messageLoading ? (
                     <div className="text-center text-sm text-slate-500">Carregando mensagens...</div>
                   ) : messages.length === 0 ? (
@@ -2007,12 +2547,42 @@ export default function HomePage() {
 
                       return (
                         <div key={message.id} className={`flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
-                          <article className={`max-w-[80%] rounded-2xl p-3 text-sm shadow-sm ${outgoing ? "border border-[#C6E9AD] bg-[#DCF8C6] text-slate-800" : "rounded-tl-none border border-slate-200 bg-white text-slate-800"}`}>
-                            <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.06em] text-slate-400">
+                          <article className={`max-w-[85%] rounded-[26px] px-4 py-3 text-sm shadow-[0_18px_40px_rgba(15,23,42,0.08)] md:max-w-[70%] ${outgoing ? "border border-emerald-200/70 bg-[linear-gradient(135deg,#ecffd8,#d5f7b8)] text-slate-800" : "rounded-tl-[10px] border border-white/70 bg-[linear-gradient(180deg,#ffffff,#f8fbfd)] text-slate-800"}`}>
+                            <div className={`mb-1 text-[10px] font-bold uppercase tracking-[0.12em] ${outgoing ? "text-emerald-700/70" : "text-slate-400"}`}>
                               {message.senderName ?? (outgoing ? currentUser.name : selectedTicket.customerName)}
                             </div>
-                            <div className="whitespace-pre-wrap text-sm leading-6">{message.body ?? `[${message.contentType}]`}</div>
-                            <div className="mt-2 text-right text-[10px] text-slate-400">{formatDateTime(message.createdAt)}</div>
+                            {message.attachments && message.attachments.length > 0 ? (
+                              <div className="mb-3 space-y-3">
+                                {message.attachments.map((attachment) => (
+                                  <div key={attachment.id} className="overflow-hidden rounded-[20px] border border-slate-200/80 bg-white/70">
+                                    {attachment.mimeType.startsWith("image/") && attachment.publicUrl ? (
+                                      <a href={attachment.publicUrl} target="_blank" rel="noreferrer" className="block">
+                                        <img src={attachment.publicUrl} alt={attachment.fileName ?? "Imagem"} className="max-h-72 w-full object-cover" />
+                                      </a>
+                                    ) : attachment.mimeType.startsWith("audio/") && attachment.publicUrl ? (
+                                      <div className="p-3">
+                                        <audio controls className="w-full" src={attachment.publicUrl}>
+                                          Seu navegador não suporta áudio.
+                                        </audio>
+                                      </div>
+                                    ) : (
+                                      <a href={attachment.publicUrl ?? "#"} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-3 transition hover:bg-slate-50">
+                                        <span className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-100 text-slate-500">
+                                          <FileText className="h-4 w-4" />
+                                        </span>
+                                        <div className="min-w-0">
+                                          <div className="truncate text-sm font-semibold text-slate-700">{attachment.fileName ?? "Arquivo"}</div>
+                                          <div className="text-xs text-slate-400">{attachment.mimeType}</div>
+                                        </div>
+                                      </a>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                            {message.body ? <div className="whitespace-pre-wrap text-[15px] leading-7">{message.body}</div> : null}
+                            {!message.body && (!message.attachments || message.attachments.length === 0) ? <div className="whitespace-pre-wrap text-[15px] leading-7">{`[${message.contentType}]`}</div> : null}
+                            <div className={`mt-3 text-right text-[10px] uppercase tracking-[0.08em] ${outgoing ? "text-emerald-800/50" : "text-slate-400"}`}>{formatDateTime(message.createdAt)}</div>
                           </article>
                         </div>
                       );
@@ -2021,8 +2591,38 @@ export default function HomePage() {
                 </div>
               </div>
 
-              <form onSubmit={handleSendMessage} className="border-t border-slate-200 bg-white px-6 py-4">
+              <form onSubmit={handleSendMessage} className="border-t border-slate-200/70 bg-[linear-gradient(180deg,#fdfefe,#f2f6f9)] px-4 py-4 md:px-6">
+                <input ref={imageUploadRef} type="file" accept="image/*" className="hidden" onChange={(event) => void handleComposerAttachmentChange("image", event)} />
+                <input ref={documentUploadRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.zip,application/*" className="hidden" onChange={(event) => void handleComposerAttachmentChange("document", event)} />
+                <input ref={audioUploadRef} type="file" accept="audio/*" className="hidden" onChange={(event) => void handleComposerAttachmentChange("audio", event)} />
+                {composerAttachment ? (
+                  <div className="mb-3 flex items-center justify-between gap-3 rounded-[22px] border border-slate-200 bg-white/90 px-4 py-3 shadow-[0_14px_40px_rgba(148,163,184,0.1)]">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-100 text-slate-500">
+                        {composerAttachment.kind === "image" ? <FileImage className="h-4 w-4" /> : composerAttachment.kind === "audio" ? <FileAudio className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-slate-800">{composerAttachment.fileName}</div>
+                        <div className="text-xs text-slate-400">{composerAttachment.mimeType}</div>
+                      </div>
+                    </div>
+                    <button type="button" onClick={clearComposerAttachment} className="text-xs font-bold uppercase tracking-[0.12em] text-slate-400 transition hover:text-slate-700">
+                      Remover
+                    </button>
+                  </div>
+                ) : null}
                 <div className="flex items-end gap-3">
+                  <div className="flex items-center gap-2 pb-1">
+                    <button type="button" aria-label="Anexar imagem" title="Anexar imagem" onClick={() => imageUploadRef.current?.click()} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-12 w-12 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-[0_10px_24px_rgba(148,163,184,0.14)] transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                      <FileImage className="h-4 w-4" />
+                    </button>
+                    <button type="button" aria-label="Anexar áudio" title="Anexar áudio" onClick={() => audioUploadRef.current?.click()} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-12 w-12 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-[0_10px_24px_rgba(148,163,184,0.14)] transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                      <FileAudio className="h-4 w-4" />
+                    </button>
+                    <button type="button" aria-label="Anexar arquivo" title="Anexar arquivo" onClick={() => documentUploadRef.current?.click()} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-12 w-12 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-[0_10px_24px_rgba(148,163,184,0.14)] transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                      <Paperclip className="h-4 w-4" />
+                    </button>
+                  </div>
                   <div className="relative flex-1">
                     <textarea
                       value={messageInput}
@@ -2030,11 +2630,11 @@ export default function HomePage() {
                       rows={2}
                       placeholder={canSendToSelectedTicket ? "Digite uma mensagem ou use /atalho" : "Ticket fechado para envio"}
                       disabled={!canSendToSelectedTicket}
-                      className="min-h-[52px] w-full resize-none rounded-full border border-slate-200 bg-slate-50 px-5 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                      className="min-h-[58px] w-full resize-none rounded-[30px] border border-white/80 bg-white/90 px-5 py-4 text-sm text-slate-700 shadow-[0_14px_40px_rgba(148,163,184,0.16)] outline-none transition focus:border-slate-300 focus:bg-white disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                     />
                     {quickReplyMatches.length > 0 && canSendToSelectedTicket ? (
-                      <div className="absolute bottom-[calc(100%+0.75rem)] left-0 z-20 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.12)]">
-                        <div className="border-b border-slate-100 px-4 py-3 text-xs font-bold uppercase tracking-[0.12em] text-slate-400">
+                      <div className="absolute bottom-[calc(100%+0.75rem)] left-0 z-20 w-full overflow-hidden rounded-[26px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff,#f8fbfd)] shadow-[0_24px_60px_rgba(15,23,42,0.16)]">
+                        <div className="border-b border-slate-100 px-4 py-3 text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
                           Respostas rápidas
                         </div>
                         <div className="max-h-72 overflow-y-auto py-2">
@@ -2053,7 +2653,7 @@ export default function HomePage() {
                       </div>
                     ) : null}
                     {canViewQuickReplies && canSendToSelectedTicket ? (
-                      <div className="mt-2 pl-4 text-xs text-slate-400">
+                      <div className="mt-2 pl-4 text-xs text-slate-500">
                         Use <span className="font-semibold text-slate-500">/atalho</span> para aplicar uma resposta rápida.
                       </div>
                     ) : null}
@@ -2061,8 +2661,8 @@ export default function HomePage() {
                   <button
                     type="submit"
                     aria-label="Enviar mensagem"
-                    disabled={sendLoading || !messageInput.trim() || !canSendToSelectedTicket}
-                    className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[#1A1C32] px-5 text-sm font-bold uppercase text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
+                    disabled={sendLoading || (!messageInput.trim() && !composerAttachment) || !canSendToSelectedTicket}
+                    className="inline-flex h-14 items-center justify-center gap-2 rounded-full bg-[linear-gradient(135deg,#1A1C32,#2c3f67)] px-6 text-sm font-bold uppercase tracking-[0.12em] text-white shadow-[0_18px_36px_rgba(26,28,50,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
                   >
                     <Send className="h-4 w-4" />
                     {sendLoading ? "Enviando" : "Enviar"}
@@ -2148,6 +2748,67 @@ export default function HomePage() {
               </button>
               <PrimaryAction disabled={conversationLoading} className="sm:w-auto sm:px-6">
                 {conversationLoading ? "Iniciando..." : "Iniciar conversa"}
+              </PrimaryAction>
+            </div>
+          </form>
+        ),
+      };
+    }
+
+    if (managementModal === "customer") {
+      if (!canManageContacts) {
+        return null;
+      }
+
+      return {
+        title: editingCustomerId ? "Editar contato" : "Adicionar contato",
+        description: "Cadastre ou atualize os dados principais do contato para manter a operação organizada.",
+        content: (
+          <form onSubmit={handleCreateCustomer} className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <CompactField
+                label="Nome"
+                value={customerForm.name}
+                onChange={(value) => setCustomerForm((current) => ({ ...current, name: value }))}
+                placeholder="Nome do contato"
+              />
+              <CompactField
+                label="Telefone"
+                value={customerForm.phone}
+                onChange={(value) => setCustomerForm((current) => ({ ...current, phone: value }))}
+                placeholder="5511999999999"
+              />
+              <CompactField
+                label="E-mail"
+                value={customerForm.email}
+                onChange={(value) => setCustomerForm((current) => ({ ...current, email: value }))}
+                placeholder="contato@empresa.com"
+              />
+              <CompactField
+                label="Empresa"
+                value={customerForm.companyName}
+                onChange={(value) => setCustomerForm((current) => ({ ...current, companyName: value }))}
+                placeholder="Empresa ou organização"
+              />
+            </div>
+
+            <label className="block text-sm font-medium text-slate-600">
+              Observações
+              <textarea
+                value={customerForm.notes}
+                onChange={(event) => setCustomerForm((current) => ({ ...current, notes: event.target.value }))}
+                rows={5}
+                placeholder="Anotações internas sobre o contato."
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+              />
+            </label>
+
+            <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button type="button" onClick={closeManagementModal} className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
+                Cancelar
+              </button>
+              <PrimaryAction disabled={customerLoading || !customerForm.name.trim()} className="sm:w-auto sm:px-6">
+                {customerLoading ? "Salvando..." : editingCustomerId ? "Salvar alterações" : "Cadastrar contato"}
               </PrimaryAction>
             </div>
           </form>
@@ -2456,15 +3117,24 @@ export default function HomePage() {
             <button type="button" aria-label={showRail ? "Recolher menu lateral" : "Expandir menu lateral"} title={showRail ? "Recolher menu lateral" : "Expandir menu lateral"} onClick={() => setShowRail((current) => !current)} className="text-white/90 transition hover:text-white">
               <Menu className="h-6 w-6" />
             </button>
-            <div className="flex items-center gap-3">
-              <span className="grid h-8 w-8 place-items-center rounded-full border border-white/20 bg-white/10">
-                <ShieldCheck className="h-4 w-4" />
-              </span>
-              <div>
-                <div className="text-[18px] font-semibold tracking-tight">CHATFLOW</div>
+            {brandLogoPreview ? (
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 min-w-[180px] items-center rounded-2xl border border-white/10 bg-white px-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
+                  <img src={brandLogoPreview} alt="Logo do painel" className="max-h-7 w-auto object-contain" />
+                </div>
                 <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">{workspaceTitle}</div>
               </div>
-            </div>
+            ) : (
+              <div className="flex items-center gap-3">
+                <span className="grid h-8 w-8 place-items-center rounded-full border border-white/20 bg-white/10">
+                  <ShieldCheck className="h-4 w-4" />
+                </span>
+                <div>
+                  <div className="text-[18px] font-semibold tracking-tight">CHATFLOW</div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">{workspaceTitle}</div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
@@ -2534,9 +3204,7 @@ export default function HomePage() {
             <div className="flex w-full flex-col gap-1 px-2">
               {currentUser.permissions["dashboard.view"] ? <RailButton icon={LayoutGrid} label="Painel geral" expanded={showRail} active={activeWorkspace === "dashboard"} onClick={() => setActiveWorkspace("dashboard")} /> : null}
               {currentUser.permissions["tickets.view"] ? <RailButton icon={WhatsAppIcon} label="Atendimento" expanded={showRail} active={activeWorkspace === "tickets"} onClick={() => setActiveWorkspace("tickets")} /> : null}
-              {currentUser.permissions["channels.view"] ? <RailButton icon={Cable} label="Canais e instâncias" expanded={showRail} active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} /> : null}
               {currentUser.permissions["quickReplies.view"] ? <RailButton icon={Zap} label="Respostas rápidas" expanded={showRail} active={activeWorkspace === "quickReplies"} onClick={() => setActiveWorkspace("quickReplies")} /> : null}
-              {currentUser.permissions["team.view"] ? <RailButton icon={UserCog} label="Equipe e filas" expanded={showRail} active={activeWorkspace === "team"} onClick={() => { setActiveWorkspace("team"); setAdminSection("agents"); }} /> : null}
               {currentUser.permissions["api.view"] ? <RailButton icon={Code2} label="API" expanded={showRail} active={activeWorkspace === "api"} onClick={() => setActiveWorkspace("api")} /> : null}
               {currentUser.permissions["contacts.view"] ? <RailButton icon={Users} label="Contatos" expanded={showRail} active={activeWorkspace === "contacts"} onClick={() => setActiveWorkspace("contacts")} /> : null}
               {currentUser.permissions["activity.view"] ? <RailButton icon={Activity} label="Atividade operacional" expanded={showRail} active={activeWorkspace === "activity"} onClick={() => setActiveWorkspace("activity")} /> : null}
@@ -2550,13 +3218,8 @@ export default function HomePage() {
 
           <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[380px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
             {ticketWorkspaceAtivo ? (
-              <div className="flex h-full flex-col border-r border-slate-200 bg-white">
-                <div className="space-y-3 border-b border-slate-200 p-3">
-                  <div>
-                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">{workspaceTitle}</div>
-                    <div className="mt-1 text-sm text-slate-500">{workspaceDescription}</div>
-                  </div>
-
+              <div className="flex h-full flex-col border-r border-slate-200/80 bg-[linear-gradient(180deg,#fbfdff,#f3f7fb)]">
+                <div className="space-y-4 border-b border-slate-200/80 p-4">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                     <input
@@ -2569,7 +3232,7 @@ export default function HomePage() {
                   </div>
 
                   <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50/60 p-1">
+                    <div className="flex items-center gap-1 rounded-[20px] border border-slate-200/80 bg-white/80 p-1.5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
                       <SidebarIconButton icon={Eye} label="Limpar filtros e voltar à caixa de entrada" active={!showOnlyUnread && !showOnlyMine && selectedQueueFilter === "all"} onClick={() => { setShowOnlyUnread(false); setShowOnlyMine(false); setSelectedQueueFilter("all"); setSearchQuery(""); setActiveWorkspace("tickets"); }} />
                       {canStartConversation ? <SidebarIconButton icon={Plus} label="Iniciar nova conversa" active={false} onClick={openCreateConversationModal} /> : null}
                       <SidebarIconButton icon={LayoutList} label="Usar lista compacta" active={ticketDensity === "compact"} onClick={() => setTicketDensity("compact")} />
@@ -2577,7 +3240,7 @@ export default function HomePage() {
                       <SidebarIconButton icon={CheckSquare} label="Mostrar apenas meus atendimentos" active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
                       <SidebarIconButton icon={EyeOff} label="Mostrar apenas não lidos" active={showOnlyUnread} onClick={() => setShowOnlyUnread((current) => !current)} />
                     </div>
-                    <label className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-500 transition hover:bg-slate-100">
+                    <label className="inline-flex items-center gap-1 rounded-[18px] border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-500 shadow-[0_12px_28px_rgba(15,23,42,0.05)] transition hover:bg-slate-50">
                       <select
                         aria-label="Filtrar atendimentos por fila"
                         value={selectedQueueFilter}
@@ -2597,13 +3260,15 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                <div className="flex items-center border-b border-slate-200 px-2">
+                <div className="border-b border-slate-200/80 px-3 py-3">
+                  <div className="flex items-center gap-2 rounded-[24px] bg-slate-100/80 p-1.5">
                   <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
                   <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
                   {canViewGroups ? <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" /> : null}
+                  </div>
                 </div>
 
-                <div className="scrollbar-hide flex-1 overflow-y-auto bg-slate-50/30">
+                <div className="scrollbar-hide flex-1 overflow-y-auto px-3 py-3">
                   {visibleTickets.length === 0 ? (
                     <div className="p-10 text-center text-xs font-medium text-slate-400">Nenhum atendimento nesta categoria.</div>
                   ) : (
@@ -2615,10 +3280,10 @@ export default function HomePage() {
                           key={ticket.id}
                           type="button"
                           onClick={() => { setSelectedTicketId(ticket.id); setActiveWorkspace("tickets"); setShowTicketDetails(false); }}
-                          className={`group relative flex w-full items-start gap-3 border-b border-slate-200 text-left transition ${selected ? "bg-white shadow-[inset_4px_0_0_0_#1A1C32]" : "bg-white/50 hover:bg-slate-100"} ${compact ? "p-2.5" : "p-3"}`}
+                          className={`group relative mb-2 flex w-full items-start gap-3 rounded-[28px] border text-left transition ${selected ? "border-slate-300 bg-white shadow-[0_20px_42px_rgba(15,23,42,0.12)]" : "border-transparent bg-white/55 hover:border-slate-200 hover:bg-white"} ${compact ? "p-3" : "p-4"}`}
                         >
                           <div className={compact ? "pt-0.5" : "pt-1"}>
-                            <div className={`grid place-items-center rounded-full border bg-[linear-gradient(135deg,#dbe6ef,#bfcbd8)] text-sm font-semibold text-slate-700 shadow-sm ${compact ? "h-10 w-10" : "h-12 w-12"}`}>
+                            <div className={`grid place-items-center rounded-[20px] border border-white/70 bg-[linear-gradient(135deg,#edf4fa,#ccd9e5)] text-sm font-semibold text-slate-700 shadow-[0_16px_32px_rgba(148,163,184,0.2)] ${compact ? "h-11 w-11" : "h-12 w-12"}`}>
                               {initials(ticket.customerName) || "C"}
                             </div>
                           </div>
@@ -2627,26 +3292,26 @@ export default function HomePage() {
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5">
-                                  <Phone className="h-3.5 w-3.5 shrink-0 text-green-500" />
+                                  <Phone className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
                                   <p className={`truncate font-bold text-slate-800 ${compact ? "text-[13px]" : "text-[14px]"}`}>{ticket.customerName}</p>
-                                  <Eye className="h-3.5 w-3.5 shrink-0 text-blue-500" />
+                                  {selected ? <span className="rounded-full bg-slate-950 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-white">Ativo</span> : null}
                                 </div>
-                                <p className={`mt-0.5 truncate font-bold text-slate-900 ${compact ? "text-[12px]" : "text-[13px]"}`}>
+                                <p className={`mt-1 truncate font-medium text-slate-600 ${compact ? "text-[12px]" : "text-[13px]"}`}>
                                   {ticket.lastMessagePreview ?? "Sem mensagem registrada"}
                                 </p>
                               </div>
-                              <span className="whitespace-nowrap text-[11px] font-bold text-green-700">{formatHour(ticket.updatedAt)}</span>
+                              <span className="whitespace-nowrap rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">{formatHour(ticket.updatedAt)}</span>
                             </div>
 
-                            <div className="mt-2 flex items-center justify-between gap-2">
+                            <div className="mt-3 flex items-center justify-between gap-2">
                               <div className="flex flex-wrap gap-1">
-                                <MiniBadge className="bg-[#00e676] text-white" text={ticket.externalChatId || "SEM INSTÂNCIA"} />
+                                <MiniBadge className="bg-emerald-500 text-white" text={ticket.externalChatId || "SEM INSTÂNCIA"} />
                                 {ticket.isGroup ? (
                                   <MiniBadge className="bg-blue-600 text-white" text="GRUPO" />
                                 ) : (
                                   <>
-                                    <MiniBadge className="bg-red-600 text-white" text={ticket.currentQueue?.name ?? "SEM FILA"} />
-                                    <MiniBadge className="bg-black text-white" text={ticket.currentAgent?.name ?? "SEM AGENTE"} />
+                                    <MiniBadge className="bg-red-500 text-white" text={ticket.currentQueue?.name ?? "SEM FILA"} />
+                                    <MiniBadge className="bg-slate-900 text-white" text={ticket.currentAgent?.name ?? "SEM AGENTE"} />
                                   </>
                                 )}
                               </div>
@@ -2657,7 +3322,7 @@ export default function HomePage() {
                                     {ticket.unreadCount}
                                   </span>
                                 ) : null}
-                                <ArrowRightLeft className="h-4 w-4 text-blue-500 transition group-hover:text-blue-700" />
+                                <ArrowRightLeft className="h-4 w-4 text-slate-400 transition group-hover:text-slate-700" />
                               </div>
                             </div>
                           </div>
@@ -2669,7 +3334,7 @@ export default function HomePage() {
               </div>
             ) : null}
 
-            <section className="flex min-h-0 min-w-0 flex-col overflow-y-auto bg-[#ebf1f4]">
+            <section className="flex min-h-0 min-w-0 flex-col overflow-y-auto bg-[linear-gradient(180deg,#edf3f7,#e1eaef)]">
               {panelMessage ? (
                 <div className="flex items-start justify-between gap-3 border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-800">
                   <div>{panelMessage}</div>
@@ -2785,9 +3450,9 @@ function SidebarIconButton(props: { icon: React.ComponentType<{ className?: stri
       aria-label={props.label}
       title={props.label}
       aria-pressed={props.active ? "true" : "false"}
-      className={`rounded p-1 transition ${props.active ? "border bg-white shadow-sm" : "hover:bg-slate-100"}`}
+      className={`grid h-8 w-8 place-items-center rounded-2xl border transition ${props.active ? "border-slate-300 bg-white text-slate-900 shadow-[0_8px_24px_rgba(15,23,42,0.08)]" : "border-transparent bg-white/60 text-slate-500 hover:border-slate-200 hover:bg-white"}`}
     >
-      <Icon className="h-3.5 w-3.5 text-slate-500" />
+      <Icon className="h-3.5 w-3.5" />
     </button>
   );
 }
@@ -2797,31 +3462,30 @@ function StatusTab(props: { label: string; count: number; active: boolean; onCli
     <button
       type="button"
       onClick={props.onClick}
-      className={`relative flex flex-1 items-center justify-center gap-1.5 py-3 text-[10px] font-bold tracking-tight transition-colors ${props.active ? "text-[#1A1C32]" : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"}`}
+      className={`relative flex flex-1 items-center justify-center gap-2 rounded-[18px] px-3 py-3 text-[10px] font-bold uppercase tracking-[0.14em] transition-all ${props.active ? "bg-slate-950 text-white shadow-[0_16px_32px_rgba(15,23,42,0.18)]" : "text-slate-400 hover:bg-white/80 hover:text-slate-700"}`}
     >
       <div className="relative">
         {props.icon}
         {props.count > 0 ? <span className={`absolute -right-2 -top-2 min-w-[14px] rounded-full px-1 text-[8px] text-white ${props.color}`}>{props.count}</span> : null}
       </div>
       {props.label}
-      {props.active ? <div className="absolute bottom-0 left-0 h-0.5 w-full bg-[#1A1C32]" /> : null}
     </button>
   );
 }
 
 function MiniBadge(props: { text: string; className: string }) {
-  return <span className={`rounded-sm px-1 py-0.5 text-[9px] font-bold uppercase ${props.className}`}>{props.text}</span>;
+  return <span className={`rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] ${props.className}`}>{props.text}</span>;
 }
 
 function EmptyCenter() {
   return (
     <div className="grid flex-1 place-items-center px-6 py-10 text-center">
-      <div>
-        <div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-slate-300 text-white">
+      <div className="max-w-xl">
+        <div className="mx-auto grid h-24 w-24 place-items-center rounded-[28px] border border-white/60 bg-[radial-gradient(circle_at_top,#ffffff,#d8e3ec)] text-slate-700 shadow-[0_24px_60px_rgba(148,163,184,0.3)]">
           <MessageSquare className="h-9 w-9" />
         </div>
-        <h3 className="mt-6 text-4xl font-semibold uppercase tracking-[0.12em] text-slate-400">Aguardando seleção</h3>
-        <p className="mt-3 text-lg text-slate-400">Escolha um atendimento para começar.</p>
+        <h3 className="mt-8 text-4xl font-semibold tracking-[-0.04em] text-slate-700">Selecione uma conversa</h3>
+        <p className="mt-3 text-lg leading-8 text-slate-500">Abra um ticket da fila lateral para responder, assumir o atendimento e acompanhar o histórico em tempo real.</p>
       </div>
     </div>
   );
@@ -2830,12 +3494,12 @@ function EmptyCenter() {
 function EmptyMessages() {
   return (
     <div className="grid flex-1 place-items-center px-6 py-10 text-center">
-      <div>
-        <div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-slate-200 text-slate-500">
+      <div className="max-w-lg">
+        <div className="mx-auto grid h-24 w-24 place-items-center rounded-[28px] border border-white/70 bg-[radial-gradient(circle_at_top,#ffffff,#dde7ef)] text-slate-600 shadow-[0_24px_60px_rgba(148,163,184,0.28)]">
           <MessageSquare className="h-9 w-9" />
         </div>
-        <h3 className="mt-6 text-3xl font-semibold uppercase tracking-[0.12em] text-slate-400">Sem mensagens ainda</h3>
-        <p className="mt-3 text-lg text-slate-400">Este atendimento ainda não possui histórico de conversa.</p>
+        <h3 className="mt-8 text-3xl font-semibold tracking-[-0.04em] text-slate-700">Conversa pronta para começar</h3>
+        <p className="mt-3 text-lg leading-8 text-slate-500">Assim que a primeira mensagem chegar, o histórico aparece aqui com contexto, horário e responsável.</p>
       </div>
     </div>
   );
@@ -2897,10 +3561,10 @@ function PrimaryAction(props: { disabled?: boolean; children: React.ReactNode; c
 
 function InfoRow(props: { title: string; subtitle: string; meta: string }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-      <div className="font-semibold text-slate-900">{props.title}</div>
-      <div className="mt-1 text-sm text-slate-500">{props.subtitle}</div>
-      <div className="mt-2 text-[11px] uppercase tracking-[0.05em] text-slate-400">{props.meta}</div>
+    <div className="rounded-[24px] border border-slate-200/80 bg-[linear-gradient(180deg,#ffffff,#f8fbfd)] px-4 py-4 shadow-[0_14px_36px_rgba(15,23,42,0.06)]">
+      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">{props.title}</div>
+      <div className="mt-2 text-sm font-semibold text-slate-900">{props.subtitle}</div>
+      <div className="mt-2 text-[11px] uppercase tracking-[0.08em] text-slate-500">{props.meta}</div>
     </div>
   );
 }

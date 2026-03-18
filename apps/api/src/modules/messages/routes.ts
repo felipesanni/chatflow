@@ -2,16 +2,66 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import { requirePermission } from '../../lib/auth-guard.js';
-import { sendEvolutionText } from '../../lib/evolution-client.js';
+import { sendEvolutionAudio, sendEvolutionMedia, sendEvolutionText } from '../../lib/evolution-client.js';
 import { loadEnv } from '../../config/env.js';
 import { decryptSecret, encryptSecret } from '../../lib/secrets.js';
 
+const outgoingAttachmentSchema = z.object({
+  kind: z.enum(['image', 'audio', 'document']),
+  fileName: z.string().trim().min(1, 'Informe o nome do arquivo.'),
+  mimeType: z.string().trim().min(1, 'Informe o tipo do arquivo.'),
+  dataUrl: z.string().trim().min(1, 'Informe o conteudo do arquivo.'),
+  sizeBytes: z.number().int().nonnegative().optional(),
+});
+
 const createMessageBodySchema = z.object({
-  body: z.string().min(1),
+  body: z.string().trim().optional().default(''),
   replyToMessageId: z.string().uuid().optional(),
+  attachment: outgoingAttachmentSchema.optional(),
+}).superRefine((value, ctx) => {
+  if (!value.body.trim() && !value.attachment) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Informe uma mensagem ou anexe um arquivo para enviar.',
+      path: ['body'],
+    });
+  }
 });
 
 const env = loadEnv();
+
+function parseDataUrl(input: string) {
+  const match = input.match(/^data:([^;]+);base64,(.+)$/);
+
+  if (!match) {
+    throw new Error('Arquivo em formato invalido.');
+  }
+
+  return {
+    mimeType: match[1] ?? 'application/octet-stream',
+    base64: match[2] ?? '',
+  };
+}
+
+function pickDeliveryMessageId(payload: any, fallback: string) {
+  return payload?.key?.id
+    ?? payload?.message?.key?.id
+    ?? payload?.data?.key?.id
+    ?? payload?.data?.message?.key?.id
+    ?? fallback;
+}
+
+function pickAttachmentPublicUrl(payload: any) {
+  return payload?.url
+    ?? payload?.data?.url
+    ?? payload?.message?.imageMessage?.url
+    ?? payload?.message?.documentMessage?.url
+    ?? payload?.message?.audioMessage?.url
+    ?? payload?.data?.message?.imageMessage?.url
+    ?? payload?.data?.message?.documentMessage?.url
+    ?? payload?.data?.message?.audioMessage?.url
+    ?? null;
+}
 
 export const messageRoutes: FastifyPluginAsync = async (app) => {
   app.get('/tickets/:ticketId/messages', async (request, reply) => {
@@ -37,7 +87,16 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         externalMessageId: message.externalMessageId,
         createdAt: message.createdAt,
         senderAgent: message.senderAgent ? { id: message.senderAgent.id, name: message.senderAgent.name } : null,
-        attachments: message.attachments,
+        attachments: message.attachments.map((attachment: any) => ({
+          id: attachment.id,
+          fileName: attachment.fileName,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          storage: attachment.storage,
+          storageKey: attachment.storageKey,
+          publicUrl: attachment.publicUrl,
+          createdAt: attachment.createdAt,
+        })),
       })),
       viewer: {
         id: session.userId,
@@ -53,6 +112,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
 
     const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
     const body = createMessageBodySchema.parse(request.body);
+    const trimmedBody = body.body.trim();
 
     const ticket = await app.prisma.ticket.findUnique({
       where: { id: params.ticketId },
@@ -85,14 +145,39 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    const delivery = await sendEvolutionText({
-      baseUrl: ticket.whatsappInstance.baseUrl,
-      apiKey: decryptedApiKey,
-      instanceName: ticket.whatsappInstance.evolutionInstanceName,
-      remoteJid: ticket.externalChatId,
-      text: body.body,
-      quotedMessageId: quotedMessage?.externalMessageId ?? undefined,
-    });
+    const attachmentInput = body.attachment;
+    const parsedAttachment = attachmentInput ? parseDataUrl(attachmentInput.dataUrl) : null;
+
+    const delivery = attachmentInput
+      ? attachmentInput.kind === 'audio'
+        ? await sendEvolutionAudio({
+            baseUrl: ticket.whatsappInstance.baseUrl,
+            apiKey: decryptedApiKey,
+            instanceName: ticket.whatsappInstance.evolutionInstanceName,
+            remoteJid: ticket.externalChatId,
+            base64: parsedAttachment?.base64 ?? '',
+            quotedMessageId: quotedMessage?.externalMessageId ?? undefined,
+          })
+        : await sendEvolutionMedia({
+            baseUrl: ticket.whatsappInstance.baseUrl,
+            apiKey: decryptedApiKey,
+            instanceName: ticket.whatsappInstance.evolutionInstanceName,
+            remoteJid: ticket.externalChatId,
+            mediaType: attachmentInput.kind === 'image' ? 'image' : 'document',
+            fileName: attachmentInput.fileName,
+            mimeType: attachmentInput.mimeType || parsedAttachment?.mimeType || 'application/octet-stream',
+            base64: parsedAttachment?.base64 ?? '',
+            caption: trimmedBody || undefined,
+            quotedMessageId: quotedMessage?.externalMessageId ?? undefined,
+          })
+      : await sendEvolutionText({
+          baseUrl: ticket.whatsappInstance.baseUrl,
+          apiKey: decryptedApiKey,
+          instanceName: ticket.whatsappInstance.evolutionInstanceName,
+          remoteJid: ticket.externalChatId,
+          text: trimmedBody,
+          quotedMessageId: quotedMessage?.externalMessageId ?? undefined,
+        });
 
     if (!delivery.ok) {
       return reply.code(400).send({
@@ -107,20 +192,35 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         id: randomUUID(),
         ticketId: ticket.id,
         senderAgentId: session.userId,
-        externalMessageId: delivery.messageId,
+        externalMessageId: pickDeliveryMessageId(delivery.payload, delivery.messageId),
         direction: 'outbound',
-        contentType: 'text',
-        body: body.body,
+        contentType: attachmentInput?.kind ?? 'text',
+        body: trimmedBody || (attachmentInput ? `[${attachmentInput.kind}] ${attachmentInput.fileName}` : null),
         senderNameSnapshot: ticket.currentAgent?.name ?? session.email,
         replyToMessageId: body.replyToMessageId,
         deliveredAt: new Date(),
       },
     });
 
+    if (attachmentInput) {
+      await app.prisma.attachment.create({
+        data: {
+          id: randomUUID(),
+          messageId: message.id,
+          fileName: attachmentInput.fileName,
+          mimeType: attachmentInput.mimeType || parsedAttachment?.mimeType || 'application/octet-stream',
+          sizeBytes: attachmentInput.sizeBytes ?? null,
+          storage: 'external',
+          storageKey: pickAttachmentPublicUrl(delivery.payload) ?? `outbound:${message.id}:${attachmentInput.fileName}`,
+          publicUrl: pickAttachmentPublicUrl(delivery.payload),
+        },
+      });
+    }
+
     await app.prisma.ticket.update({
       where: { id: ticket.id },
       data: {
-        lastMessagePreview: body.body,
+        lastMessagePreview: trimmedBody || (attachmentInput ? `[${attachmentInput.kind}] ${attachmentInput.fileName}` : null),
         unreadCount: 0,
         status: 'open',
         currentAgentId: ticket.currentAgentId ?? session.userId,
@@ -134,7 +234,12 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         ticketId: ticket.id,
         eventType: 'message_out',
         actorUserId: session.userId,
-        metadata: { messageId: message.id, externalMessageId: delivery.messageId },
+        metadata: {
+          messageId: message.id,
+          externalMessageId: pickDeliveryMessageId(delivery.payload, delivery.messageId),
+          contentType: attachmentInput?.kind ?? 'text',
+          attachmentName: attachmentInput?.fileName ?? null,
+        },
       },
     });
 
@@ -146,7 +251,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
 
     app.io.emit('ticket.updated', {
       ticketId: ticket.id,
-      lastMessagePreview: body.body,
+      lastMessagePreview: trimmedBody || (attachmentInput ? `[${attachmentInput.kind}] ${attachmentInput.fileName}` : null),
       unreadCount: 0,
     });
 

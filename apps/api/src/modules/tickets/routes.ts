@@ -18,6 +18,14 @@ const createTicketBodySchema = z.object({
   queueId: z.string().uuid().optional().nullable(),
 });
 
+const transferTicketBodySchema = z.object({
+  agentId: z.string().uuid().optional().nullable(),
+  queueId: z.string().uuid().optional().nullable(),
+  reason: z.string().trim().min(1).optional(),
+}).refine((value) => value.agentId || value.queueId, {
+  message: 'Informe um agente, uma fila ou ambos para transferir o ticket.',
+});
+
 function normalizePhone(value: string) {
   return value.replace(/\D+/g, '');
 }
@@ -329,6 +337,106 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
 
     return {
       item: ticket,
+    };
+  });
+
+  app.post('/tickets/:ticketId/transfer', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.accept');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const body = transferTicketBodySchema.parse(request.body ?? {});
+
+    const currentTicket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      include: {
+        currentAgent: true,
+        currentQueue: true,
+        whatsappInstance: true,
+      },
+    });
+
+    if (!currentTicket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (body.agentId) {
+      const targetAgent = await app.prisma.agent.findUnique({
+        where: { id: body.agentId },
+        select: { id: true },
+      });
+
+      if (!targetAgent) {
+        return reply.badRequest('Agente de destino nao encontrado.');
+      }
+    }
+
+    if (body.queueId) {
+      const targetQueue = await app.prisma.queue.findUnique({
+        where: { id: body.queueId },
+        select: { id: true },
+      });
+
+      if (!targetQueue) {
+        return reply.badRequest('Fila de destino nao encontrada.');
+      }
+    }
+
+    const reason = body.reason?.trim() || 'Transferencia manual';
+
+    const ticket = await app.prisma.ticket.update({
+      where: { id: params.ticketId },
+      data: {
+        currentAgentId: body.agentId ?? null,
+        currentQueueId: body.queueId ?? currentTicket.currentQueueId ?? null,
+        status: body.agentId ? 'open' : 'pending',
+      },
+      include: {
+        currentAgent: true,
+        currentQueue: true,
+        whatsappInstance: true,
+      },
+    });
+
+    await app.prisma.ticketAssignment.create({
+      data: {
+        id: randomUUID(),
+        ticketId: ticket.id,
+        fromAgentId: currentTicket.currentAgentId,
+        toAgentId: body.agentId ?? null,
+        fromQueueId: currentTicket.currentQueueId,
+        toQueueId: body.queueId ?? currentTicket.currentQueueId ?? null,
+        reason,
+        createdByUserId: session.userId,
+      },
+    });
+
+    await app.prisma.ticketEvent.create({
+      data: {
+        id: randomUUID(),
+        ticketId: ticket.id,
+        eventType: 'transferred',
+        actorUserId: session.userId,
+        metadata: {
+          reason,
+          fromAgentId: currentTicket.currentAgentId,
+          toAgentId: body.agentId ?? null,
+          fromQueueId: currentTicket.currentQueueId,
+          toQueueId: body.queueId ?? currentTicket.currentQueueId ?? null,
+        },
+      },
+    });
+
+    app.io.emit('ticket.updated', {
+      ticketId: ticket.id,
+      status: ticket.status,
+      currentAgentId: ticket.currentAgentId,
+      currentQueueId: ticket.currentQueueId,
+    });
+
+    return {
+      item: serializeTicket(ticket),
     };
   });
 };

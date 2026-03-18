@@ -9,6 +9,28 @@ interface SendTextParams {
   quotedMessageId?: string;
 }
 
+interface SendMediaParams {
+  baseUrl: string;
+  apiKey: string;
+  instanceName: string;
+  remoteJid: string;
+  mediaType: 'image' | 'document';
+  fileName: string;
+  mimeType: string;
+  base64: string;
+  caption?: string;
+  quotedMessageId?: string;
+}
+
+interface SendAudioParams {
+  baseUrl: string;
+  apiKey: string;
+  instanceName: string;
+  remoteJid: string;
+  base64: string;
+  quotedMessageId?: string;
+}
+
 interface ConfigureWebhookParams {
   baseUrl: string;
   apiKey: string;
@@ -17,6 +39,7 @@ interface ConfigureWebhookParams {
 }
 
 const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'];
+const WEBSOCKET_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'];
 
 function normalizeDestination(remoteJid: string) {
   if (remoteJid.includes('@g.us')) {
@@ -41,6 +64,87 @@ export async function sendEvolutionText(params: SendTextParams) {
       text: params.text,
       delay: 300,
       quoted: params.quotedMessageId ? { key: { id: params.quotedMessageId } } : undefined,
+    }),
+  });
+
+  let payload: any = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    payload,
+    messageId: payload?.key?.id ?? payload?.message?.key?.id ?? randomUUID(),
+  };
+}
+
+export async function sendEvolutionMedia(params: SendMediaParams) {
+  const cleanUrl = params.baseUrl.replace(/\/$/, '');
+  const destination = normalizeDestination(params.remoteJid);
+
+  const response = await fetch(`${cleanUrl}/message/sendMedia/${params.instanceName}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: params.apiKey,
+    },
+    body: JSON.stringify({
+      number: destination,
+      mediaMessage: {
+        mediaType: params.mediaType,
+        fileName: params.fileName,
+        caption: params.caption,
+        mimetype: params.mimeType,
+        media: params.base64,
+      },
+      options: {
+        delay: 300,
+        presence: 'composing',
+        quoted: params.quotedMessageId ? { key: { id: params.quotedMessageId } } : undefined,
+      },
+    }),
+  });
+
+  let payload: any = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    payload,
+    messageId: payload?.key?.id ?? payload?.message?.key?.id ?? randomUUID(),
+  };
+}
+
+export async function sendEvolutionAudio(params: SendAudioParams) {
+  const cleanUrl = params.baseUrl.replace(/\/$/, '');
+  const destination = normalizeDestination(params.remoteJid);
+
+  const response = await fetch(`${cleanUrl}/message/sendWhatsAppAudio/${params.instanceName}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: params.apiKey,
+    },
+    body: JSON.stringify({
+      number: destination,
+      audioMessage: {
+        audio: params.base64,
+      },
+      options: {
+        delay: 300,
+        presence: 'recording',
+        encoding: true,
+        quoted: params.quotedMessageId ? { key: { id: params.quotedMessageId } } : undefined,
+      },
     }),
   });
 
@@ -113,5 +217,34 @@ export async function configureEvolutionWebhook(params: ConfigureWebhookParams) 
     ok: false,
     status: 500,
     payload: null,
+  };
+}
+
+export async function configureEvolutionWebSocket(params: Omit<ConfigureWebhookParams, 'webhookUrl'>) {
+  const cleanUrl = params.baseUrl.replace(/\/$/, '');
+  const response = await fetch(`${cleanUrl}/websocket/set/${params.instanceName}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: params.apiKey,
+    },
+    body: JSON.stringify({
+      enabled: true,
+      events: WEBSOCKET_EVENTS,
+    }),
+  });
+
+  let payload: any = null;
+  try {
+    const raw = await response.text();
+    payload = raw ? JSON.parse(raw) : null;
+  } catch {
+    payload = null;
+  }
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    payload,
   };
 }
