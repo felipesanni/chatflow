@@ -94,18 +94,24 @@ export async function configureEvolutionWebhook(params: ConfigureWebhookParams) 
     };
   }
 
-  const firstAttempt = await execute(requestBody);
-  const validationMessages = JSON.stringify(firstAttempt.payload ?? {});
+  const attempts = [
+    { body: { webhook: requestBody } },
+    { body: requestBody },
+  ];
 
-  if (
-    !firstAttempt.ok
-    && firstAttempt.status === 400
-    && validationMessages.includes('instance requires property "webhook"')
-  ) {
-    return execute({
-      webhook: requestBody,
-    });
+  let lastAttempt = null as Awaited<ReturnType<typeof execute>> | null;
+
+  for (const attempt of attempts) {
+    lastAttempt = await execute(attempt.body);
+
+    if (lastAttempt.ok) {
+      return lastAttempt;
+    }
   }
 
-  return firstAttempt;
+  return lastAttempt ?? {
+    ok: false,
+    status: 500,
+    payload: null,
+  };
 }
