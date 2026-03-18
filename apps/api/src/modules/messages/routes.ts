@@ -43,6 +43,19 @@ function parseDataUrl(input: string) {
   };
 }
 
+function normalizeSizeBytes(value: unknown) {
+  if (typeof value === 'bigint') {
+    const normalized = Number(value);
+    return Number.isSafeInteger(normalized) ? normalized : null;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  return null;
+}
+
 function pickDeliveryMessageId(payload: any, fallback: string) {
   return payload?.key?.id
     ?? payload?.message?.key?.id
@@ -91,7 +104,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
           id: attachment.id,
           fileName: attachment.fileName,
           mimeType: attachment.mimeType,
-          sizeBytes: attachment.sizeBytes,
+          sizeBytes: normalizeSizeBytes(attachment.sizeBytes),
           storage: attachment.storage,
           storageKey: attachment.storageKey,
           publicUrl: attachment.publicUrl,
@@ -209,7 +222,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
           messageId: message.id,
           fileName: attachmentInput.fileName,
           mimeType: attachmentInput.mimeType || parsedAttachment?.mimeType || 'application/octet-stream',
-          sizeBytes: attachmentInput.sizeBytes ?? null,
+          sizeBytes: normalizeSizeBytes(attachmentInput.sizeBytes),
           storage: 'external',
           storageKey: pickAttachmentPublicUrl(delivery.payload) ?? `outbound:${message.id}:${attachmentInput.fileName}`,
           publicUrl: pickAttachmentPublicUrl(delivery.payload),

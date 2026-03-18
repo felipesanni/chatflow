@@ -22,10 +22,13 @@ import {
   LogIn,
   Menu,
   MessageSquare,
+  Mic,
   Monitor,
+  Pause,
   Pencil,
   Phone,
   Paperclip,
+  Play,
   Plus,
   RefreshCw,
   Search,
@@ -33,6 +36,7 @@ import {
   Settings,
   ShieldCheck,
   Smile,
+  Square,
   Smartphone,
   User,
   UserPlus,
@@ -361,6 +365,17 @@ function formatHour(value: string) {
   }
 }
 
+function formatAudioTime(totalSeconds: number) {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+    return "0:00";
+  }
+
+  const safeSeconds = Math.floor(totalSeconds);
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 function initials(name: string) {
   return name
     .split(" ")
@@ -440,6 +455,7 @@ export default function HomePage() {
   const [brandLogoPreview, setBrandLogoPreview] = React.useState<string | null>(null);
   const [composerAttachment, setComposerAttachment] = React.useState<ComposerAttachment | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = React.useState(false);
+  const [recordingAudio, setRecordingAudio] = React.useState(false);
   const [publicUrls, setPublicUrls] = React.useState(resolvePublicUrls);
   const [profileSaving, setProfileSaving] = React.useState(false);
   const [transferLoading, setTransferLoading] = React.useState(false);
@@ -482,11 +498,12 @@ export default function HomePage() {
   });
   const socketRef = React.useRef<Socket | null>(null);
   const userMenuRef = React.useRef<HTMLDivElement | null>(null);
-  const imageUploadRef = React.useRef<HTMLInputElement | null>(null);
-  const documentUploadRef = React.useRef<HTMLInputElement | null>(null);
-  const audioUploadRef = React.useRef<HTMLInputElement | null>(null);
+  const attachmentUploadRef = React.useRef<HTMLInputElement | null>(null);
   const messagesViewportRef = React.useRef<HTMLDivElement | null>(null);
   const shouldStickMessagesToBottomRef = React.useRef(true);
+  const audioRecorderRef = React.useRef<MediaRecorder | null>(null);
+  const audioStreamRef = React.useRef<MediaStream | null>(null);
+  const audioChunksRef = React.useRef<BlobPart[]>([]);
 
   const selectedTicket = React.useMemo(
     () => tickets.find((ticket) => ticket.id === selectedTicketId) ?? null,
@@ -718,6 +735,13 @@ export default function HomePage() {
     setProfileName(user?.name ?? "");
     setProfileAvatarPreview(user?.avatarUrl ?? null);
   }, [user?.name, user?.avatarUrl]);
+
+  React.useEffect(() => {
+    return () => {
+      audioRecorderRef.current?.stop();
+      audioStreamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1119,7 +1143,26 @@ export default function HomePage() {
     });
   }
 
-  async function handleComposerAttachmentChange(kind: ComposerAttachment["kind"], event: React.ChangeEvent<HTMLInputElement>) {
+  async function buildComposerAttachmentFromFile(file: File) {
+    const kind: ComposerAttachment["kind"] =
+      file.type.startsWith("image/")
+        ? "image"
+        : file.type.startsWith("audio/")
+          ? "audio"
+          : "document";
+
+    const dataUrl = await readFileAsDataUrl(file);
+
+    return {
+      kind,
+      fileName: file.name,
+      mimeType: file.type || (kind === "image" ? "image/jpeg" : kind === "audio" ? "audio/webm" : "application/octet-stream"),
+      sizeBytes: file.size,
+      dataUrl,
+    } satisfies ComposerAttachment;
+  }
+
+  async function handleComposerAttachmentChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.currentTarget.value = "";
 
@@ -1130,37 +1173,103 @@ export default function HomePage() {
       return;
     }
 
-    if (kind === "image" && !file.type.startsWith("image/")) {
-      setPanelMessage("Selecione uma imagem válida.");
-      return;
-    }
+    const attachment = await buildComposerAttachmentFromFile(file);
 
-    if (kind === "audio" && !file.type.startsWith("audio/")) {
-      setPanelMessage("Selecione um áudio válido.");
-      return;
-    }
-
-    const dataUrl = await readFileAsDataUrl(file);
-
-    setComposerAttachment({
-      kind,
-      fileName: file.name,
-      mimeType: file.type || (kind === "image" ? "image/jpeg" : kind === "audio" ? "audio/ogg" : "application/octet-stream"),
-      sizeBytes: file.size,
-      dataUrl,
-    });
+    setComposerAttachment(attachment);
 
     setPanelMessage(
-      kind === "image"
-        ? "Imagem pronta para envio."
-        : kind === "audio"
-          ? "Áudio pronto para envio."
-          : "Arquivo pronto para envio.",
+        attachment.kind === "image"
+          ? "Imagem pronta para envio."
+          : attachment.kind === "audio"
+            ? "Áudio pronto para envio."
+            : "Arquivo pronto para envio.",
     );
   }
 
   function clearComposerAttachment() {
     setComposerAttachment(null);
+  }
+
+  async function handleToggleAudioRecording() {
+    if (!canSendToSelectedTicket || sendLoading) return;
+
+    if (recordingAudio) {
+      audioRecorderRef.current?.stop();
+      return;
+    }
+
+    if (typeof window === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setPanelMessage("Gravação de áudio não é suportada neste navegador.");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")
+          ? "audio/ogg;codecs=opus"
+          : "";
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+
+      audioChunksRef.current = [];
+      audioStreamRef.current = stream;
+      audioRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = () => {
+        setRecordingAudio(false);
+        audioStreamRef.current?.getTracks().forEach((track) => track.stop());
+        audioStreamRef.current = null;
+        audioRecorderRef.current = null;
+        audioChunksRef.current = [];
+        setPanelMessage("Falha ao gravar áudio.");
+      };
+
+      recorder.onstop = async () => {
+        const recordedMimeType = recorder.mimeType || "audio/webm";
+        const extension = recordedMimeType.includes("ogg") ? "ogg" : recordedMimeType.includes("mp4") ? "m4a" : "webm";
+        const blob = new Blob(audioChunksRef.current, { type: recordedMimeType });
+
+        audioStreamRef.current?.getTracks().forEach((track) => track.stop());
+        audioStreamRef.current = null;
+        audioRecorderRef.current = null;
+        audioChunksRef.current = [];
+        setRecordingAudio(false);
+
+        if (!blob.size) {
+          setPanelMessage("Nenhum áudio foi capturado.");
+          return;
+        }
+
+        if (blob.size > 12_000_000) {
+          setPanelMessage("O áudio gravado deve ter no máximo 12 MB.");
+          return;
+        }
+
+        const file = new File([blob], `audio-${Date.now()}.${extension}`, { type: recordedMimeType });
+        const attachment = await buildComposerAttachmentFromFile(file);
+        setComposerAttachment(attachment);
+        setPanelMessage("Áudio gravado e pronto para envio.");
+      };
+
+      recorder.start();
+      setRecordingAudio(true);
+      setShowEmojiPicker(false);
+      setPanelMessage("Gravação iniciada.");
+    } catch (error) {
+      setRecordingAudio(false);
+      audioStreamRef.current?.getTracks().forEach((track) => track.stop());
+      audioStreamRef.current = null;
+      audioRecorderRef.current = null;
+      audioChunksRef.current = [];
+      setPanelMessage(error instanceof Error ? error.message : "Não foi possível acessar o microfone.");
+    }
   }
 
   async function handleSaveProfile() {
@@ -2525,9 +2634,9 @@ export default function HomePage() {
                   {canTransferSelectedTicket ? (
                     <button
                       type="button"
-                      aria-label={showTransferPanel ? "Ocultar painel de transferência" : "Transferir atendimento"}
+                      aria-label={showTransferPanel ? "Fechar popup de transferência" : "Transferir atendimento"}
                       title="Transferir atendimento"
-                      onClick={() => setShowTransferPanel((current) => !current)}
+                      onClick={() => setShowTransferPanel(true)}
                       className={`inline-flex h-10 items-center gap-2 rounded-full border px-4 text-[11px] font-bold uppercase tracking-[0.12em] transition ${showTransferPanel ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
                     >
                       <ArrowRightLeft className="h-3.5 w-3.5" />
@@ -2544,71 +2653,6 @@ export default function HomePage() {
                 </div>
               </div>
             </div>
-
-            {showTransferPanel && canTransferSelectedTicket ? (
-              <div className="border-b border-slate-200/70 bg-[linear-gradient(180deg,#f7fbff,#edf4fa)] px-6 py-4">
-                <form onSubmit={handleTransferTicket} className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(220px,1fr)_auto]">
-                  <label className="block text-sm font-medium text-slate-600">
-                    Agente de destino
-                    <select
-                      value={transferForm.agentId}
-                      onChange={(event) => setTransferForm((current) => ({ ...current, agentId: event.target.value }))}
-                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-                    >
-                      <option value="">Sem agente definido</option>
-                      {agents.map((agent) => (
-                        <option key={agent.id} value={agent.id}>
-                          {agent.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="block text-sm font-medium text-slate-600">
-                    Fila de destino
-                    <select
-                      value={transferForm.queueId}
-                      onChange={(event) => setTransferForm((current) => ({ ...current, queueId: event.target.value }))}
-                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-                    >
-                      <option value="">Sem fila</option>
-                      {queues.map((queue) => (
-                        <option key={queue.id} value={queue.id}>
-                          {queue.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="block text-sm font-medium text-slate-600">
-                    Motivo
-                    <input
-                      value={transferForm.reason}
-                      onChange={(event) => setTransferForm((current) => ({ ...current, reason: event.target.value }))}
-                      placeholder="Ex.: redistribuição, escalonamento..."
-                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-                    />
-                  </label>
-
-                  <div className="flex items-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowTransferPanel(false)}
-                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={transferLoading || (!transferForm.agentId && !transferForm.queueId)}
-                      className="inline-flex h-11 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#0f766e,#155e75)] px-5 text-sm font-semibold text-white shadow-[0_16px_30px_rgba(14,116,144,0.24)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
-                    >
-                      {transferLoading ? "Transferindo..." : "Confirmar"}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            ) : null}
 
             <div className="flex min-h-0 flex-1 overflow-hidden">
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -2658,9 +2702,13 @@ export default function HomePage() {
                                       </a>
                                     ) : attachment.mimeType.startsWith("audio/") && attachment.publicUrl ? (
                                       <div className="p-3">
-                                        <audio controls className="w-full" src={attachment.publicUrl}>
-                                          Seu navegador não suporta áudio.
-                                        </audio>
+                                        <AudioMessagePlayer
+                                          src={attachment.publicUrl}
+                                          fileName={attachment.fileName ?? "Áudio"}
+                                          outgoing={outgoing}
+                                          avatarLabel={outgoing ? currentUser.name : (message.senderName ?? selectedTicket.customerName)}
+                                          timestamp={formatHour(message.createdAt)}
+                                        />
                                       </div>
                                     ) : (
                                       <a href={attachment.publicUrl ?? "#"} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-3 transition hover:bg-slate-50">
@@ -2689,9 +2737,7 @@ export default function HomePage() {
               </div>
 
               <form onSubmit={handleSendMessage} className="border-t border-slate-200 bg-white px-4 py-2.5 md:px-5">
-                <input ref={imageUploadRef} type="file" accept="image/*" className="hidden" onChange={(event) => void handleComposerAttachmentChange("image", event)} />
-                <input ref={documentUploadRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.zip,application/*" className="hidden" onChange={(event) => void handleComposerAttachmentChange("document", event)} />
-                <input ref={audioUploadRef} type="file" accept="audio/*" className="hidden" onChange={(event) => void handleComposerAttachmentChange("audio", event)} />
+                <input ref={attachmentUploadRef} type="file" className="hidden" onChange={(event) => void handleComposerAttachmentChange(event)} />
                 {composerAttachment ? (
                   <div className="mb-3 flex items-center justify-between gap-3 rounded-[22px] border border-slate-200 bg-white/90 px-4 py-3 shadow-[0_14px_40px_rgba(148,163,184,0.1)]">
                     <div className="flex min-w-0 items-center gap-3">
@@ -2732,14 +2778,22 @@ export default function HomePage() {
                         </div>
                       ) : null}
                     </div>
-                    <button type="button" aria-label="Anexar imagem" title="Anexar imagem" onClick={() => imageUploadRef.current?.click()} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
-                      <FileImage className="h-4 w-4" />
-                    </button>
-                    <button type="button" aria-label="Anexar áudio" title="Anexar áudio" onClick={() => audioUploadRef.current?.click()} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
-                      <FileAudio className="h-4 w-4" />
-                    </button>
-                    <button type="button" aria-label="Anexar arquivo" title="Anexar arquivo" onClick={() => documentUploadRef.current?.click()} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    <button type="button" aria-label="Anexar arquivo" title="Anexar arquivo" onClick={() => attachmentUploadRef.current?.click()} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                       <Paperclip className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={recordingAudio ? "Parar gravação" : "Gravar áudio"}
+                      title={recordingAudio ? "Parar gravação" : "Gravar áudio"}
+                      onClick={() => void handleToggleAudioRecording()}
+                      disabled={!canSendToSelectedTicket || sendLoading}
+                      className={`grid h-10 w-10 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                        recordingAudio
+                          ? "border-red-200 bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600"
+                          : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+                      }`}
+                    >
+                      {recordingAudio ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                     </button>
                   </div>
                   <div className="relative flex-1">
@@ -2775,6 +2829,11 @@ export default function HomePage() {
                     {canViewQuickReplies && canSendToSelectedTicket ? (
                       <div className="mt-1.5 pl-3 text-[11px] text-slate-500">
                         `Enter` envia. `Shift + Enter` quebra linha. Use <span className="font-semibold text-slate-500">/atalho</span> para aplicar uma resposta rápida.
+                      </div>
+                    ) : null}
+                    {recordingAudio ? (
+                      <div className="mt-1.5 pl-3 text-[11px] font-medium text-red-500">
+                        Gravando áudio. Clique no microfone vermelho para parar e anexar.
                       </div>
                     ) : null}
                   </div>
@@ -2820,6 +2879,87 @@ export default function HomePage() {
                 </aside>
               ) : null}
             </div>
+            {showTransferPanel && canTransferSelectedTicket ? (
+              <div className="absolute inset-0 z-40 flex items-start justify-center bg-slate-950/18 px-4 py-20 backdrop-blur-[2px]">
+                <div className="w-full max-w-3xl overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Transferir atendimento</div>
+                      <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{selectedTicket.customerName}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowTransferPanel(false)}
+                      className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <form onSubmit={handleTransferTicket} className="space-y-5 px-6 py-6">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <label className="block text-sm font-medium text-slate-600">
+                        Agente de destino
+                        <select
+                          value={transferForm.agentId}
+                          onChange={(event) => setTransferForm((current) => ({ ...current, agentId: event.target.value }))}
+                          className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                        >
+                          <option value="">Sem agente definido</option>
+                          {agents.map((agent) => (
+                            <option key={agent.id} value={agent.id}>
+                              {agent.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="block text-sm font-medium text-slate-600">
+                        Fila de destino
+                        <select
+                          value={transferForm.queueId}
+                          onChange={(event) => setTransferForm((current) => ({ ...current, queueId: event.target.value }))}
+                          className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                        >
+                          <option value="">Sem fila</option>
+                          {queues.map((queue) => (
+                            <option key={queue.id} value={queue.id}>
+                              {queue.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    <label className="block text-sm font-medium text-slate-600">
+                      Motivo
+                      <input
+                        value={transferForm.reason}
+                        onChange={(event) => setTransferForm((current) => ({ ...current, reason: event.target.value }))}
+                        placeholder="Ex.: redistribuição, escalonamento..."
+                        className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                      />
+                    </label>
+
+                    <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setShowTransferPanel(false)}
+                        className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={transferLoading || (!transferForm.agentId && !transferForm.queueId)}
+                        className="inline-flex h-11 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#0f766e,#155e75)] px-5 text-sm font-semibold text-white shadow-[0_16px_30px_rgba(14,116,144,0.24)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                      >
+                        {transferLoading ? "Transferindo..." : "Confirmar"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            ) : null}
           </>
         ) : (
           <EmptyCenter />
@@ -3366,9 +3506,9 @@ export default function HomePage() {
             </div>
           </aside>
 
-          <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[320px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
+          <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[280px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
             {ticketWorkspaceAtivo ? (
-              <div className="flex h-full flex-col border-r border-slate-200 bg-white">
+              <div className="flex h-full min-w-0 flex-col border-r border-slate-200 bg-white">
                 <div className="space-y-3 border-b border-slate-200 p-3">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -3381,8 +3521,8 @@ export default function HomePage() {
                     />
                   </div>
 
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-1 rounded-[16px] border border-slate-200 bg-slate-50 p-1">
+                  <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1 rounded-[16px] border border-slate-200 bg-slate-50 p-1">
                       <SidebarIconButton icon={Eye} label="Limpar filtros e voltar à caixa de entrada" active={!showOnlyUnread && !showOnlyMine && selectedQueueFilter === "all"} onClick={() => { setShowOnlyUnread(false); setShowOnlyMine(false); setSelectedQueueFilter("all"); setSearchQuery(""); setActiveWorkspace("tickets"); }} />
                       {canStartConversation ? <SidebarIconButton icon={Plus} label="Iniciar nova conversa" active={false} onClick={openCreateConversationModal} /> : null}
                       <SidebarIconButton icon={LayoutList} label="Usar lista compacta" active={ticketDensity === "compact"} onClick={() => setTicketDensity("compact")} />
@@ -3390,12 +3530,12 @@ export default function HomePage() {
                       <SidebarIconButton icon={CheckSquare} label="Mostrar apenas meus atendimentos" active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
                       <SidebarIconButton icon={EyeOff} label="Mostrar apenas não lidos" active={showOnlyUnread} onClick={() => setShowOnlyUnread((current) => !current)} />
                     </div>
-                    <label className="inline-flex items-center gap-1 rounded-[16px] border border-slate-300 bg-white px-3 py-2 text-[11px] text-slate-500 transition hover:bg-slate-50">
+                    <label className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-[16px] border border-slate-300 bg-white px-3 py-2 text-[11px] text-slate-500 transition hover:bg-slate-50">
                       <select
                         aria-label="Filtrar atendimentos por fila"
                         value={selectedQueueFilter}
                         onChange={(event) => setSelectedQueueFilter(event.target.value)}
-                        className="bg-transparent pr-4 text-[11px] text-slate-600 outline-none"
+                        className="max-w-[110px] truncate bg-transparent pr-4 text-[11px] text-slate-600 outline-none"
                       >
                         <option value="all">Todas as filas</option>
                         <option value="without-queue">Sem fila</option>
@@ -3418,7 +3558,7 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                <div className="scrollbar-hide flex-1 overflow-y-auto bg-white px-2 py-2">
+                <div className="scrollbar-hide flex-1 min-w-0 overflow-y-auto bg-white px-2 py-2">
                   {visibleTickets.length === 0 ? (
                     <div className="p-10 text-center text-xs font-medium text-slate-400">Nenhum atendimento nesta categoria.</div>
                   ) : (
@@ -3430,7 +3570,7 @@ export default function HomePage() {
                           key={ticket.id}
                           type="button"
                           onClick={() => { setSelectedTicketId(ticket.id); setActiveWorkspace("tickets"); setShowTicketDetails(false); }}
-                          className={`group relative mb-1.5 flex w-full items-start gap-2.5 rounded-[18px] border text-left transition ${selected ? "border-slate-300 bg-slate-50 shadow-sm" : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"} ${compact ? "p-2.5" : "p-3"}`}
+                          className={`group relative mb-1.5 flex w-full min-w-0 items-start gap-2.5 rounded-[18px] border text-left transition ${selected ? "border-slate-300 bg-slate-50 shadow-sm" : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"} ${compact ? "p-2.5" : "p-3"}`}
                         >
                           <div className={compact ? "pt-0.5" : "pt-1"}>
                             <div className={`grid place-items-center rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700 ${compact ? "h-11 w-11" : "h-12 w-12"}`}>
@@ -3453,8 +3593,8 @@ export default function HomePage() {
                               <span className="whitespace-nowrap text-[11px] font-medium text-slate-400">{formatHour(ticket.updatedAt)}</span>
                             </div>
 
-                            <div className="mt-2 flex items-center justify-between gap-2">
-                              <div className="flex flex-wrap gap-1">
+                            <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
+                              <div className="flex min-w-0 flex-wrap gap-1 overflow-hidden">
                                 <MiniBadge className="bg-emerald-500 text-white" text={ticket.whatsappInstance.name || "SEM INSTÂNCIA"} />
                                 {ticket.isGroup ? (
                                   <MiniBadge className="bg-blue-600 text-white" text="GRUPO" />
@@ -3624,7 +3764,143 @@ function StatusTab(props: { label: string; count: number; active: boolean; onCli
 }
 
 function MiniBadge(props: { text: string; className: string }) {
-  return <span className={`rounded-md px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] ${props.className}`}>{props.text}</span>;
+  return <span className={`inline-flex max-w-full truncate rounded-md px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] ${props.className}`}>{props.text}</span>;
+}
+
+function AudioMessagePlayer(props: {
+  src: string;
+  fileName: string;
+  outgoing: boolean;
+  avatarLabel: string;
+  timestamp: string;
+}) {
+  const audioRef = React.useRef<HTMLAudioElement | null>(null);
+  const [isPlaying, setIsPlaying] = React.useState(false);
+  const [duration, setDuration] = React.useState(0);
+  const [currentTime, setCurrentTime] = React.useState(0);
+
+  const waveform = React.useMemo(
+    () => [4, 7, 10, 8, 5, 6, 9, 12, 14, 11, 8, 6, 5, 7, 9, 13, 16, 12, 8, 6, 5, 7, 10, 12, 9, 7, 5, 6, 8, 11, 9, 6],
+    [],
+  );
+
+  const progress = duration > 0 ? Math.min(currentTime / duration, 1) : 0;
+
+  React.useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const syncDuration = () => setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
+    const syncTime = () => setCurrentTime(audio.currentTime || 0);
+    const handleEnded = () => {
+      setIsPlaying(false);
+      setCurrentTime(audio.duration || 0);
+    };
+    const handlePause = () => setIsPlaying(false);
+    const handlePlay = () => setIsPlaying(true);
+
+    audio.addEventListener("loadedmetadata", syncDuration);
+    audio.addEventListener("durationchange", syncDuration);
+    audio.addEventListener("timeupdate", syncTime);
+    audio.addEventListener("ended", handleEnded);
+    audio.addEventListener("pause", handlePause);
+    audio.addEventListener("play", handlePlay);
+
+    return () => {
+      audio.pause();
+      audio.removeEventListener("loadedmetadata", syncDuration);
+      audio.removeEventListener("durationchange", syncDuration);
+      audio.removeEventListener("timeupdate", syncTime);
+      audio.removeEventListener("ended", handleEnded);
+      audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("play", handlePlay);
+    };
+  }, []);
+
+  async function togglePlayback() {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    if (audio.paused) {
+      try {
+        await audio.play();
+      } catch {
+        setIsPlaying(false);
+      }
+      return;
+    }
+
+    audio.pause();
+  }
+
+  function handleSeek(event: React.ChangeEvent<HTMLInputElement>) {
+    const audio = audioRef.current;
+    if (!audio || !duration) return;
+
+    const nextTime = Number(event.target.value);
+    audio.currentTime = nextTime;
+    setCurrentTime(nextTime);
+  }
+
+  return (
+    <div
+      className={`relative overflow-hidden rounded-[24px] border px-3 py-3 shadow-[0_10px_30px_rgba(15,23,42,0.08)] ${
+        props.outgoing ? "border-[#cfe9ad] bg-[#eef9df]" : "border-[#e8dfd3] bg-white"
+      }`}
+    >
+      <audio ref={audioRef} preload="metadata" src={props.src}>
+        Seu navegador não suporta áudio.
+      </audio>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          aria-label={isPlaying ? "Pausar áudio" : "Reproduzir áudio"}
+          onClick={() => void togglePlayback()}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#25d366] text-white shadow-[0_10px_24px_rgba(37,211,102,0.28)] transition hover:scale-[1.02] hover:brightness-105"
+        >
+          {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="ml-0.5 h-4 w-4" />}
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div className="truncate text-[12px] font-semibold text-slate-700">{props.fileName}</div>
+            <div className="shrink-0 text-[11px] text-slate-400">{props.timestamp}</div>
+          </div>
+          <div className="relative">
+            <div className="pointer-events-none flex h-8 items-center gap-[3px]">
+              {waveform.map((height, index) => (
+                <span
+                  key={`${props.src}-${index}`}
+                  className={`block w-[3px] rounded-full transition-colors ${
+                    index / (waveform.length - 1) <= progress ? "bg-[#25d366]" : "bg-slate-300"
+                  }`}
+                  style={{ height: `${height + 8}px` }}
+                />
+              ))}
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={duration || 0}
+              step={0.1}
+              value={Math.min(currentTime, duration || 0)}
+              onChange={handleSeek}
+              aria-label="Progresso do áudio"
+              className="absolute inset-0 h-8 w-full cursor-pointer opacity-0"
+            />
+          </div>
+          <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+            <span>{formatAudioTime(currentTime)}</span>
+            <span>{formatAudioTime(duration)}</span>
+          </div>
+        </div>
+        <div className="hidden shrink-0 md:flex">
+          <div className="grid h-11 w-11 place-items-center rounded-full border border-white/70 bg-white text-sm font-semibold text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.08)]">
+            {initials(props.avatarLabel) || "A"}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function EmptyCenter() {
