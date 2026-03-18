@@ -116,7 +116,16 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     return undefined as T;
   }
 
-  const payload = await response.json().catch(() => ({}));
+  const rawBody = await response.text();
+  const payload = rawBody
+    ? (() => {
+        try {
+          return JSON.parse(rawBody);
+        } catch {
+          return { message: rawBody };
+        }
+      })()
+    : {};
 
   if (!response.ok) {
     throw new Error(payload?.message ?? "Falha na requisição.");
@@ -203,8 +212,7 @@ export default function HomePage() {
   const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "grupos">("atendendo");
   const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "channels" | "team" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
   const [adminSection, setAdminSection] = React.useState<"instances" | "agents" | "queues">("instances");
-  const [showAdminPanel, setShowAdminPanel] = React.useState(true);
-  const [showRail, setShowRail] = React.useState(true);
+  const [showRail, setShowRail] = React.useState(false);
   const [ticketDensity, setTicketDensity] = React.useState<"comfortable" | "compact">("comfortable");
   const [showOnlyUnread, setShowOnlyUnread] = React.useState(false);
   const [showOnlyMine, setShowOnlyMine] = React.useState(false);
@@ -640,7 +648,6 @@ export default function HomePage() {
   }
 
   const ticketWorkspaceAtivo = activeWorkspace === "tickets";
-  const showAdmin = currentUser.role === "admin" && showAdminPanel && ticketWorkspaceAtivo;
 
   const workspaceTitle =
     activeWorkspace === "dashboard"
@@ -719,30 +726,53 @@ export default function HomePage() {
     if (activeWorkspace === "channels") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Instâncias Evolution" description="Cadastro e consulta das instâncias conectadas.">
-            {currentUser.role === "admin" ? (
-              <form onSubmit={handleCreateInstance} className="grid gap-3 lg:grid-cols-2">
-                <CompactField label="Nome interno" value={instanceForm.name} onChange={(value) => setInstanceForm((current) => ({ ...current, name: value }))} />
-                <CompactField label="Nome na Evolution" value={instanceForm.evolutionInstanceName} onChange={(value) => setInstanceForm((current) => ({ ...current, evolutionInstanceName: value }))} />
-                <CompactField label="URL base" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder="https://evolution.seudominio.com" />
-                <CompactField label="Chave da API" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} />
-                <CompactField label="Segredo do webhook" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
-                <div className="lg:col-span-2">
-                  <PrimaryAction disabled={instanceLoading}>{instanceLoading ? "Salvando..." : "Salvar instância"}</PrimaryAction>
-                </div>
-              </form>
-            ) : (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Somente administradores podem cadastrar instâncias.</div>
-            )}
-          </WorkspaceSection>
-          <WorkspaceSection title="Instâncias publicadas" description="Base atual usada pelo envio e pelos webhooks.">
-            <div className="grid gap-3 xl:grid-cols-2">
-              {instances.map((instance) => (
-                <InfoRow key={instance.id} title={instance.name} subtitle={instance.evolutionInstanceName} meta={`${traduzirStatusInstancia(instance.status)} | ${instance.phoneNumber ?? "sem telefone"}`} />
-              ))}
+          <WorkspaceSection title="Canais e instâncias" description="Gerencie as conexões com a Evolution e valide o ambiente publicado.">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+              <AdminPanelCard title="Cadastrar instância" icon={Smartphone}>
+                {currentUser.role === "admin" ? (
+                  <form onSubmit={handleCreateInstance} className="grid gap-3 lg:grid-cols-2">
+                    <CompactField label="Nome interno" value={instanceForm.name} onChange={(value) => setInstanceForm((current) => ({ ...current, name: value }))} />
+                    <CompactField label="Nome na Evolution" value={instanceForm.evolutionInstanceName} onChange={(value) => setInstanceForm((current) => ({ ...current, evolutionInstanceName: value }))} />
+                    <CompactField label="URL base" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder="https://evolution.seudominio.com" />
+                    <CompactField label="Chave da API" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} />
+                    <CompactField label="Segredo do webhook" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
+                    <div className="lg:col-span-2">
+                      <PrimaryAction disabled={instanceLoading}>{instanceLoading ? "Salvando..." : "Salvar instância"}</PrimaryAction>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Somente administradores podem cadastrar instâncias.</div>
+                )}
+              </AdminPanelCard>
+
+              <div className="grid gap-4">
+                <AdminPanelCard title="Ambiente público" icon={ShieldCheck}>
+                  <div className="space-y-3">
+                    <InfoRow title="Webhook sugerido" subtitle="Endpoint público para eventos da Evolution" meta="https://chatflow-api.qqruew.easypanel.host/api/webhooks/evolution" />
+                    <InfoRow title="API publicada" subtitle="Base usada pelo frontend e pelos sockets" meta="https://chatflow-api.qqruew.easypanel.host" />
+                    <InfoRow title="Frontend publicado" subtitle="URL operacional do painel" meta="https://chatflow-web.qqruew.easypanel.host" />
+                  </div>
+                </AdminPanelCard>
+                <AdminPanelCard title="Resumo das instâncias" icon={Database}>
+                  <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-1">
+                    <WorkspaceStatCard title="Instâncias" value={String(instances.length)} accent="blue" description="Conexões cadastradas no backend." />
+                    <WorkspaceStatCard title="Conectadas" value={String(instances.filter((instance) => instance.status === "connected").length)} accent="emerald" description="Prontas para uso operacional." />
+                    <WorkspaceStatCard title="Com erro" value={String(instances.filter((instance) => instance.status === "error").length)} accent="amber" description="Exigem revisão manual." />
+                  </div>
+                </AdminPanelCard>
+              </div>
             </div>
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-500">
-              Webhook sugerido: <span className="font-semibold text-slate-700">https://chatflow-api.qqruew.easypanel.host/api/webhooks/evolution</span>
+          </WorkspaceSection>
+
+          <WorkspaceSection title="Instâncias publicadas" description="Leitura rápida das conexões já configuradas.">
+            <div className="grid gap-3 xl:grid-cols-2">
+              {instances.length === 0 ? (
+                <InfoRow title="Nenhuma instância cadastrada" subtitle="Cadastre a primeira conexão com a Evolution" meta="O envio e os webhooks dependem dessa etapa" />
+              ) : (
+                instances.map((instance) => (
+                  <InfoRow key={instance.id} title={instance.name} subtitle={instance.evolutionInstanceName} meta={`${traduzirStatusInstancia(instance.status)} | ${instance.phoneNumber ?? "sem telefone"}`} />
+                ))
+              )}
             </div>
           </WorkspaceSection>
         </div>
@@ -757,35 +787,59 @@ export default function HomePage() {
             <AdminTab label="Filas" active={adminSection === "queues"} onClick={() => setAdminSection("queues")} />
           </div>
           {adminSection === "agents" ? (
-            <WorkspaceSection title="Equipe" description="Criação e leitura dos agentes do sistema.">
-              {currentUser.role === "admin" ? (
-                <form onSubmit={handleCreateAgent} className="grid gap-3 lg:grid-cols-2">
-                  <CompactField label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} />
-                  <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} />
-                  <CompactField label="Senha" type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} />
-                  <label className="block text-sm font-medium text-slate-600">Perfil<select value={agentForm.role} onChange={(event) => setAgentForm((current) => ({ ...current, role: event.target.value as "admin" | "agent" }))} className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none"><option value="agent">Agente</option><option value="admin">Administrador</option></select></label>
-                  <div className="lg:col-span-2"><PrimaryAction disabled={agentLoading}>{agentLoading ? "Criando..." : "Criar agente"}</PrimaryAction></div>
-                </form>
-              ) : null}
-              <div className="grid gap-3 xl:grid-cols-2">
-                {agents.map((agent) => (
-                  <InfoRow key={agent.id} title={agent.name} subtitle={agent.email} meta={`${traduzirPerfil(agent.role)} | ${agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}`} />
-                ))}
+            <WorkspaceSection title="Equipe" description="Criação, leitura e distribuição dos agentes do sistema.">
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+                <AdminPanelCard title="Novo agente" icon={UserPlus}>
+                  {currentUser.role === "admin" ? (
+                    <form onSubmit={handleCreateAgent} className="grid gap-3 lg:grid-cols-2">
+                      <CompactField label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} />
+                      <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} />
+                      <CompactField label="Senha" type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} />
+                      <label className="block text-sm font-medium text-slate-600">Perfil<select value={agentForm.role} onChange={(event) => setAgentForm((current) => ({ ...current, role: event.target.value as "admin" | "agent" }))} className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none"><option value="agent">Agente</option><option value="admin">Administrador</option></select></label>
+                      <div className="lg:col-span-2"><PrimaryAction disabled={agentLoading}>{agentLoading ? "Criando..." : "Criar agente"}</PrimaryAction></div>
+                    </form>
+                  ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Somente administradores podem criar agentes.</div>
+                  )}
+                </AdminPanelCard>
+
+                <AdminPanelCard title="Agentes ativos" icon={Users}>
+                  <div className="grid gap-3">
+                    {agents.length === 0 ? (
+                      <InfoRow title="Nenhum agente cadastrado" subtitle="Crie o primeiro usuário operacional" meta="A equipe aparecerá aqui após o cadastro" />
+                    ) : (
+                      agents.map((agent) => (
+                        <InfoRow key={agent.id} title={agent.name} subtitle={agent.email} meta={`${traduzirPerfil(agent.role)} | ${agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}`} />
+                      ))
+                    )}
+                  </div>
+                </AdminPanelCard>
               </div>
             </WorkspaceSection>
           ) : (
             <WorkspaceSection title="Filas e membros" description="Distribuição de agentes e leitura do volume atual.">
-              {currentUser.role === "admin" ? (
-                <form onSubmit={handleCreateQueue} className="grid gap-3 md:grid-cols-[1fr_220px]">
-                  <CompactField label="Nome da fila" value={queueForm.name} onChange={(value) => setQueueForm((current) => ({ ...current, name: value }))} />
-                  <CompactField label="Cor" value={queueForm.color} onChange={(value) => setQueueForm((current) => ({ ...current, color: value }))} placeholder="#1A1C32" />
-                  <div className="md:col-span-2"><PrimaryAction disabled={queueLoading}>{queueLoading ? "Criando..." : "Criar fila"}</PrimaryAction></div>
-                </form>
-              ) : null}
-              <div className="grid gap-3 xl:grid-cols-2">
-                {queues.map((queue) => (
-                  <QueueEditor key={queue.id} queue={queue} agents={agents} loading={assignmentLoading === queue.id} onSave={handleAssignQueueAgents} onChange={setQueues} />
-                ))}
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                <AdminPanelCard title="Nova fila" icon={Workflow}>
+                  {currentUser.role === "admin" ? (
+                    <form onSubmit={handleCreateQueue} className="grid gap-3 md:grid-cols-[1fr_220px]">
+                      <CompactField label="Nome da fila" value={queueForm.name} onChange={(value) => setQueueForm((current) => ({ ...current, name: value }))} />
+                      <CompactField label="Cor" value={queueForm.color} onChange={(value) => setQueueForm((current) => ({ ...current, color: value }))} placeholder="#1A1C32" />
+                      <div className="md:col-span-2"><PrimaryAction disabled={queueLoading}>{queueLoading ? "Criando..." : "Criar fila"}</PrimaryAction></div>
+                    </form>
+                  ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Somente administradores podem criar filas.</div>
+                  )}
+                </AdminPanelCard>
+
+                <div className="grid gap-3">
+                  {queues.length === 0 ? (
+                    <InfoRow title="Nenhuma fila cadastrada" subtitle="Crie a primeira fila para organizar a operação" meta="Os agentes poderão ser distribuídos após a criação" />
+                  ) : (
+                    queues.map((queue) => (
+                      <QueueEditor key={queue.id} queue={queue} agents={agents} loading={assignmentLoading === queue.id} onSave={handleAssignQueueAgents} onChange={setQueues} />
+                    ))
+                  )}
+                </div>
               </div>
             </WorkspaceSection>
           )}
@@ -869,12 +923,76 @@ export default function HomePage() {
     if (activeWorkspace === "settings") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Configurações do sistema" description="Atalhos administrativos e estado da publicação.">
-            <div className="grid gap-3 md:grid-cols-2">
-              <button type="button" onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Gerenciar instâncias</div><div className="mt-1 text-sm text-slate-500">Abrir canais e revisar Evolution.</div></button>
-              <button type="button" onClick={() => { setActiveWorkspace("team"); setAdminSection("agents"); }} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Gerenciar equipe</div><div className="mt-1 text-sm text-slate-500">Abrir agentes e filas.</div></button>
-              <button type="button" onClick={() => setShowAdminPanel((current) => !current)} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Painel lateral</div><div className="mt-1 text-sm text-slate-500">{showAdminPanel ? "Ocultar painel admin na caixa de entrada" : "Mostrar painel admin na caixa de entrada"}</div></button>
-              <button type="button" onClick={() => void refreshAll()} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Recarregar tudo</div><div className="mt-1 text-sm text-slate-500">Forçar sincronização manual dos dados.</div></button>
+          <div className="flex flex-wrap gap-2">
+            <AdminTab label="Instâncias" active={adminSection === "instances"} onClick={() => setAdminSection("instances")} />
+            <AdminTab label="Agentes" active={adminSection === "agents"} onClick={() => setAdminSection("agents")} />
+            <AdminTab label="Filas" active={adminSection === "queues"} onClick={() => setAdminSection("queues")} />
+          </div>
+
+          <WorkspaceSection title="Central administrativa" description="Módulo dedicado para configuração operacional e manutenção do ambiente.">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+              <div className="grid gap-4">
+                {adminSection === "instances" ? (
+                  <AdminPanelCard title="Instâncias publicadas" icon={Smartphone}>
+                    <div className="grid gap-3">
+                      {instances.length === 0 ? (
+                        <InfoRow title="Nenhuma instância cadastrada" subtitle="Cadastre uma conexão na tela de canais" meta="Sem instância não há webhook nem envio" />
+                      ) : (
+                        instances.map((instance) => (
+                          <InfoRow key={instance.id} title={instance.name} subtitle={instance.evolutionInstanceName} meta={`${traduzirStatusInstancia(instance.status)} | ${instance.phoneNumber ?? "sem telefone"}`} />
+                        ))
+                      )}
+                    </div>
+                  </AdminPanelCard>
+                ) : null}
+
+                {adminSection === "agents" ? (
+                  <AdminPanelCard title="Equipe cadastrada" icon={UserPlus}>
+                    <div className="grid gap-3">
+                      {agents.length === 0 ? (
+                        <InfoRow title="Nenhum agente cadastrado" subtitle="Crie usuários na área de equipe" meta="Os perfis aparecem aqui para conferência" />
+                      ) : (
+                        agents.map((agent) => (
+                          <InfoRow key={agent.id} title={agent.name} subtitle={agent.email} meta={`${traduzirPerfil(agent.role)} | ${agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}`} />
+                        ))
+                      )}
+                    </div>
+                  </AdminPanelCard>
+                ) : null}
+
+                {adminSection === "queues" ? (
+                  <AdminPanelCard title="Filas cadastradas" icon={Users}>
+                    <div className="grid gap-3">
+                      {queues.length === 0 ? (
+                        <InfoRow title="Nenhuma fila cadastrada" subtitle="Crie filas na área de equipe" meta="A distribuição operacional aparecerá aqui" />
+                      ) : (
+                        queues.map((queue) => (
+                          <InfoRow key={queue.id} title={queue.name} subtitle={`${queue.agents.length} agente(s)`} meta={`${queue.openTicketCount} ticket(s) abertos | ${queue.color ?? "#1A1C32"}`} />
+                        ))
+                      )}
+                    </div>
+                  </AdminPanelCard>
+                ) : null}
+              </div>
+
+              <div className="grid gap-4">
+                <AdminPanelCard title="Ações rápidas" icon={Settings}>
+                  <div className="grid gap-3">
+                    <button type="button" onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Gerenciar instâncias</div><div className="mt-1 text-sm text-slate-500">Abrir canais e revisar Evolution.</div></button>
+                    <button type="button" onClick={() => { setActiveWorkspace("team"); setAdminSection("agents"); }} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Gerenciar equipe</div><div className="mt-1 text-sm text-slate-500">Abrir agentes e filas.</div></button>
+                    <button type="button" onClick={() => { setActiveWorkspace("team"); setAdminSection("queues"); }} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Revisar distribuição</div><div className="mt-1 text-sm text-slate-500">Validar membros das filas e volume atual.</div></button>
+                    <button type="button" onClick={() => void refreshAll()} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Recarregar tudo</div><div className="mt-1 text-sm text-slate-500">Forçar sincronização manual dos dados.</div></button>
+                  </div>
+                </AdminPanelCard>
+
+                <AdminPanelCard title="Saúde do ambiente" icon={Monitor}>
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1">
+                    <InfoRow title="Frontend" subtitle="Painel publicado" meta="chatflow-web.qqruew.easypanel.host" />
+                    <InfoRow title="API" subtitle="Backend publicado" meta="chatflow-api.qqruew.easypanel.host" />
+                    <InfoRow title="Tempo real" subtitle={SOCKET_URL ? "Socket configurado" : "Socket pendente"} meta={SOCKET_URL ?? "Configure NEXT_PUBLIC_SOCKET_URL"} />
+                  </div>
+                </AdminPanelCard>
+              </div>
             </div>
           </WorkspaceSection>
         </div>
@@ -1085,7 +1203,7 @@ export default function HomePage() {
       <div className="flex min-h-screen flex-col">
         <header className="flex h-[60px] items-center justify-between bg-[#1A1C32] px-5 text-white shadow-sm">
           <div className="flex items-center gap-6">
-            <button type="button" aria-label={showRail ? "Ocultar menu lateral" : "Mostrar menu lateral"} title={showRail ? "Ocultar menu lateral" : "Mostrar menu lateral"} onClick={() => setShowRail((current) => !current)} className="text-white/90 transition hover:text-white">
+            <button type="button" aria-label={showRail ? "Recolher menu lateral" : "Expandir menu lateral"} title={showRail ? "Recolher menu lateral" : "Expandir menu lateral"} onClick={() => setShowRail((current) => !current)} className="text-white/90 transition hover:text-white">
               <Menu className="h-6 w-6" />
             </button>
             <div className="flex items-center gap-3">
@@ -1117,139 +1235,139 @@ export default function HomePage() {
         </header>
 
         <div className="flex min-h-[calc(100vh-60px)]">
-          {showRail ? (
-            <aside className="hidden w-14 shrink-0 border-r border-slate-200 bg-white md:flex md:flex-col md:items-center md:justify-between md:py-4">
-              <div className="flex w-full flex-col items-center gap-1">
-                <RailButton icon={LayoutGrid} label="Abrir painel geral" active={activeWorkspace === "dashboard"} onClick={() => setActiveWorkspace("dashboard")} />
-                <RailButton icon={Phone} label="Abrir atendimento" active={activeWorkspace === "tickets"} onClick={() => setActiveWorkspace("tickets")} />
-                <RailButton icon={Smartphone} label="Abrir canais e instâncias" active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} />
-                <RailButton icon={Users} label="Abrir equipe e filas" active={activeWorkspace === "team"} onClick={() => { setActiveWorkspace("team"); setAdminSection("agents"); }} />
-                <RailButton icon={User} label="Abrir perfil" active={activeWorkspace === "profile"} onClick={() => setActiveWorkspace("profile")} />
-                <RailButton icon={Clock} label="Abrir atividade operacional" active={activeWorkspace === "activity"} onClick={() => setActiveWorkspace("activity")} />
-                <RailButton icon={Calendar} label="Abrir agenda operacional" active={activeWorkspace === "calendar"} onClick={() => setActiveWorkspace("calendar")} />
-                <RailButton icon={Workflow} label="Abrir automações" active={activeWorkspace === "automations"} onClick={() => setActiveWorkspace("automations")} />
-              </div>
-              <div className="flex w-full flex-col items-center gap-1">
-                <RailButton icon={Settings} label="Abrir configurações" active={activeWorkspace === "settings"} onClick={() => setActiveWorkspace("settings")} />
-                <button
-                  type="button"
-                  aria-label="Encerrar sessão"
-                  title="Encerrar sessão"
-                  onClick={() => void handleLogout()}
-                  className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
-                >
-                  <LogIn className="h-5 w-5 rotate-180" />
-                </button>
-              </div>
-            </aside>
-          ) : null}
-
-          <section className={`grid min-w-0 flex-1 ${showAdmin ? "xl:grid-cols-[380px_minmax(0,1fr)_360px]" : "xl:grid-cols-[380px_minmax(0,1fr)]"}`}>
-            <div className="flex h-full flex-col border-r border-slate-200 bg-white">
-              <div className="space-y-3 border-b border-slate-200 p-3">
-                <div>
-                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">{workspaceTitle}</div>
-                  <div className="mt-1 text-sm text-slate-500">{workspaceDescription}</div>
-                </div>
-
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    aria-label="Buscar atendimentos"
-                    value={searchQuery}
-                    onChange={(event) => setSearchQuery(event.target.value)}
-                    placeholder="Buscar atendimento e mensagens"
-                    disabled={!ticketWorkspaceAtivo}
-                    className="h-11 w-full rounded-full border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50/60 p-1">
-                    <SidebarIconButton icon={Eye} label="Limpar filtros e voltar à caixa de entrada" active={!showOnlyUnread && !showOnlyMine} onClick={() => { setShowOnlyUnread(false); setShowOnlyMine(false); setSearchQuery(""); setActiveWorkspace("tickets"); }} />
-                    <SidebarIconButton icon={Plus} label="Abrir canais e instâncias" active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace(currentUser.role === "admin" ? "channels" : "tickets"); if (currentUser.role === "admin") setAdminSection("instances"); }} />
-                    <SidebarIconButton icon={LayoutList} label="Usar lista compacta" active={ticketDensity === "compact"} onClick={() => setTicketDensity("compact")} />
-                    <SidebarIconButton icon={Monitor} label="Usar lista confortável" active={ticketDensity === "comfortable"} onClick={() => setTicketDensity("comfortable")} />
-                    <SidebarIconButton icon={CheckSquare} label="Mostrar apenas meus atendimentos" active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
-                    <SidebarIconButton icon={EyeOff} label="Mostrar apenas não lidos" active={showOnlyUnread} onClick={() => setShowOnlyUnread((current) => !current)} />
-                  </div>
-                  <button type="button" aria-label="Abrir gestão de filas" title="Abrir gestão de filas" onClick={() => { setActiveWorkspace("team"); setAdminSection("queues"); }} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-500 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60" disabled={!ticketWorkspaceAtivo}>
-                    Filas
-                    <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
-                  </button>
-                </div>
-              </div>
-
-              <div className={`flex items-center border-b border-slate-200 px-2 ${ticketWorkspaceAtivo ? "" : "pointer-events-none opacity-55"}`}>
-                <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
-                <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
-                <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" />
-              </div>
-
-              <div className="scrollbar-hide flex-1 overflow-y-auto bg-slate-50/30">
-                {visibleTickets.length === 0 ? (
-                  <div className="p-10 text-center text-xs font-medium text-slate-400">Nenhum atendimento nesta categoria.</div>
-                ) : (
-                  visibleTickets.map((ticket) => {
-                    const selected = ticket.id === selectedTicketId;
-                    const compact = ticketDensity === "compact";
-                    return (
-                      <button
-                        key={ticket.id}
-                        type="button"
-                        onClick={() => { setSelectedTicketId(ticket.id); setActiveWorkspace("tickets"); setShowTicketDetails(false); }}
-                        className={`group relative flex w-full items-start gap-3 border-b border-slate-200 text-left transition ${selected ? "bg-white shadow-[inset_4px_0_0_0_#1A1C32]" : "bg-white/50 hover:bg-slate-100"} ${compact ? "p-2.5" : "p-3"}`}
-                      >
-                        <div className={compact ? "pt-0.5" : "pt-1"}>
-                          <div className={`grid place-items-center rounded-full border bg-[linear-gradient(135deg,#dbe6ef,#bfcbd8)] text-sm font-semibold text-slate-700 shadow-sm ${compact ? "h-10 w-10" : "h-12 w-12"}`}>
-                            {initials(ticket.customerName) || "C"}
-                          </div>
-                        </div>
-
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <Phone className="h-3.5 w-3.5 shrink-0 text-green-500" />
-                                <p className={`truncate font-bold text-slate-800 ${compact ? "text-[13px]" : "text-[14px]"}`}>{ticket.customerName}</p>
-                                <Eye className="h-3.5 w-3.5 shrink-0 text-blue-500" />
-                              </div>
-                              <p className={`mt-0.5 truncate font-bold text-slate-900 ${compact ? "text-[12px]" : "text-[13px]"}`}>
-                                {ticket.lastMessagePreview ?? "Sem mensagem registrada"}
-                              </p>
-                            </div>
-                            <span className="whitespace-nowrap text-[11px] font-bold text-green-700">{formatHour(ticket.updatedAt)}</span>
-                          </div>
-
-                          <div className="mt-2 flex items-center justify-between gap-2">
-                            <div className="flex flex-wrap gap-1">
-                          <MiniBadge className="bg-[#00e676] text-white" text={ticket.externalChatId || "SEM INSTÂNCIA"} />
-                              {ticket.isGroup ? (
-                                <MiniBadge className="bg-blue-600 text-white" text="GRUPO" />
-                              ) : (
-                                <>
-                                  <MiniBadge className="bg-red-600 text-white" text={ticket.currentQueue?.name ?? "SEM FILA"} />
-                                  <MiniBadge className="bg-black text-white" text={ticket.currentAgent?.name ?? "SEM AGENTE"} />
-                                </>
-                              )}
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              {ticket.unreadCount > 0 ? (
-                                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-[10px] font-bold text-white shadow-sm">
-                                  {ticket.unreadCount}
-                                </span>
-                              ) : null}
-                              <ArrowRightLeft className="h-4 w-4 text-blue-500 transition group-hover:text-blue-700" />
-                            </div>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
+          <aside className={`hidden shrink-0 border-r border-slate-200 bg-white transition-[width] duration-200 md:flex md:flex-col md:justify-between md:py-4 ${showRail ? "w-[220px]" : "w-14"}`}>
+            <div className="flex w-full flex-col gap-1 px-2">
+              <RailButton icon={LayoutGrid} label="Painel geral" expanded={showRail} active={activeWorkspace === "dashboard"} onClick={() => setActiveWorkspace("dashboard")} />
+              <RailButton icon={Phone} label="Atendimento" expanded={showRail} active={activeWorkspace === "tickets"} onClick={() => setActiveWorkspace("tickets")} />
+              <RailButton icon={Smartphone} label="Canais e instâncias" expanded={showRail} active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} />
+              <RailButton icon={Users} label="Equipe e filas" expanded={showRail} active={activeWorkspace === "team"} onClick={() => { setActiveWorkspace("team"); setAdminSection("agents"); }} />
+              <RailButton icon={User} label="Perfil" expanded={showRail} active={activeWorkspace === "profile"} onClick={() => setActiveWorkspace("profile")} />
+              <RailButton icon={Clock} label="Atividade operacional" expanded={showRail} active={activeWorkspace === "activity"} onClick={() => setActiveWorkspace("activity")} />
+              <RailButton icon={Calendar} label="Agenda operacional" expanded={showRail} active={activeWorkspace === "calendar"} onClick={() => setActiveWorkspace("calendar")} />
+              <RailButton icon={Workflow} label="Automações" expanded={showRail} active={activeWorkspace === "automations"} onClick={() => setActiveWorkspace("automations")} />
             </div>
+            <div className="flex w-full flex-col gap-1 px-2">
+              <RailButton icon={Settings} label="Configurações" expanded={showRail} active={activeWorkspace === "settings"} onClick={() => setActiveWorkspace("settings")} />
+              <button
+                type="button"
+                aria-label="Encerrar sessão"
+                title="Encerrar sessão"
+                onClick={() => void handleLogout()}
+                className={`flex items-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700 ${showRail ? "gap-3 px-3 py-2.5" : "h-10 w-10 justify-center self-center"}`}
+              >
+                <LogIn className="h-5 w-5 rotate-180" />
+                {showRail ? <span className="text-sm font-medium text-slate-600">Sair</span> : null}
+              </button>
+            </div>
+          </aside>
+
+          <section className={`grid min-w-0 flex-1 ${ticketWorkspaceAtivo ? "xl:grid-cols-[380px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
+            {ticketWorkspaceAtivo ? (
+              <div className="flex h-full flex-col border-r border-slate-200 bg-white">
+                <div className="space-y-3 border-b border-slate-200 p-3">
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">{workspaceTitle}</div>
+                    <div className="mt-1 text-sm text-slate-500">{workspaceDescription}</div>
+                  </div>
+
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      aria-label="Buscar atendimentos"
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      placeholder="Buscar atendimento e mensagens"
+                      className="h-11 w-full rounded-full border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50/60 p-1">
+                      <SidebarIconButton icon={Eye} label="Limpar filtros e voltar à caixa de entrada" active={!showOnlyUnread && !showOnlyMine} onClick={() => { setShowOnlyUnread(false); setShowOnlyMine(false); setSearchQuery(""); setActiveWorkspace("tickets"); }} />
+                      <SidebarIconButton icon={Plus} label="Abrir canais e instâncias" active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace(currentUser.role === "admin" ? "channels" : "tickets"); if (currentUser.role === "admin") setAdminSection("instances"); }} />
+                      <SidebarIconButton icon={LayoutList} label="Usar lista compacta" active={ticketDensity === "compact"} onClick={() => setTicketDensity("compact")} />
+                      <SidebarIconButton icon={Monitor} label="Usar lista confortável" active={ticketDensity === "comfortable"} onClick={() => setTicketDensity("comfortable")} />
+                      <SidebarIconButton icon={CheckSquare} label="Mostrar apenas meus atendimentos" active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
+                      <SidebarIconButton icon={EyeOff} label="Mostrar apenas não lidos" active={showOnlyUnread} onClick={() => setShowOnlyUnread((current) => !current)} />
+                    </div>
+                    <button type="button" aria-label="Abrir gestão de filas" title="Abrir gestão de filas" onClick={() => { setActiveWorkspace("team"); setAdminSection("queues"); }} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-500 transition hover:bg-slate-100">
+                      Filas
+                      <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center border-b border-slate-200 px-2">
+                  <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
+                  <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
+                  <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" />
+                </div>
+
+                <div className="scrollbar-hide flex-1 overflow-y-auto bg-slate-50/30">
+                  {visibleTickets.length === 0 ? (
+                    <div className="p-10 text-center text-xs font-medium text-slate-400">Nenhum atendimento nesta categoria.</div>
+                  ) : (
+                    visibleTickets.map((ticket) => {
+                      const selected = ticket.id === selectedTicketId;
+                      const compact = ticketDensity === "compact";
+                      return (
+                        <button
+                          key={ticket.id}
+                          type="button"
+                          onClick={() => { setSelectedTicketId(ticket.id); setActiveWorkspace("tickets"); setShowTicketDetails(false); }}
+                          className={`group relative flex w-full items-start gap-3 border-b border-slate-200 text-left transition ${selected ? "bg-white shadow-[inset_4px_0_0_0_#1A1C32]" : "bg-white/50 hover:bg-slate-100"} ${compact ? "p-2.5" : "p-3"}`}
+                        >
+                          <div className={compact ? "pt-0.5" : "pt-1"}>
+                            <div className={`grid place-items-center rounded-full border bg-[linear-gradient(135deg,#dbe6ef,#bfcbd8)] text-sm font-semibold text-slate-700 shadow-sm ${compact ? "h-10 w-10" : "h-12 w-12"}`}>
+                              {initials(ticket.customerName) || "C"}
+                            </div>
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <Phone className="h-3.5 w-3.5 shrink-0 text-green-500" />
+                                  <p className={`truncate font-bold text-slate-800 ${compact ? "text-[13px]" : "text-[14px]"}`}>{ticket.customerName}</p>
+                                  <Eye className="h-3.5 w-3.5 shrink-0 text-blue-500" />
+                                </div>
+                                <p className={`mt-0.5 truncate font-bold text-slate-900 ${compact ? "text-[12px]" : "text-[13px]"}`}>
+                                  {ticket.lastMessagePreview ?? "Sem mensagem registrada"}
+                                </p>
+                              </div>
+                              <span className="whitespace-nowrap text-[11px] font-bold text-green-700">{formatHour(ticket.updatedAt)}</span>
+                            </div>
+
+                            <div className="mt-2 flex items-center justify-between gap-2">
+                              <div className="flex flex-wrap gap-1">
+                                <MiniBadge className="bg-[#00e676] text-white" text={ticket.externalChatId || "SEM INSTÂNCIA"} />
+                                {ticket.isGroup ? (
+                                  <MiniBadge className="bg-blue-600 text-white" text="GRUPO" />
+                                ) : (
+                                  <>
+                                    <MiniBadge className="bg-red-600 text-white" text={ticket.currentQueue?.name ?? "SEM FILA"} />
+                                    <MiniBadge className="bg-black text-white" text={ticket.currentAgent?.name ?? "SEM AGENTE"} />
+                                  </>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                {ticket.unreadCount > 0 ? (
+                                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-[10px] font-bold text-white shadow-sm">
+                                    {ticket.unreadCount}
+                                  </span>
+                                ) : null}
+                                <ArrowRightLeft className="h-4 w-4 text-blue-500 transition group-hover:text-blue-700" />
+                              </div>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            ) : null}
 
             <section className="flex min-w-0 flex-col bg-[#ebf1f4]">
               {panelMessage ? (
@@ -1268,89 +1386,6 @@ export default function HomePage() {
               ) : null}
               {workspacePanel}
             </section>
-
-            {showAdmin ? (
-              <aside className="border-l border-slate-200 bg-white">
-                <div className="border-b border-slate-200 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">Administração</div>
-                      <div className="mt-1 text-lg font-semibold text-slate-900">Configurações</div>
-                    </div>
-                    <button type="button" aria-label="Ocultar painel administrativo" title="Ocultar painel administrativo" onClick={() => setShowAdminPanel(false)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-500 transition hover:bg-slate-50">
-                      Ocultar
-                    </button>
-                  </div>
-                  <div className="mt-4 grid grid-cols-3 gap-2">
-                    <AdminTab label="Instâncias" active={adminSection === "instances"} onClick={() => setAdminSection("instances")} />
-                    <AdminTab label="Agentes" active={adminSection === "agents"} onClick={() => setAdminSection("agents")} />
-                    <AdminTab label="Filas" active={adminSection === "queues"} onClick={() => setAdminSection("queues")} />
-                  </div>
-                </div>
-
-                <div className="scrollbar-hide max-h-[calc(100vh-124px)] space-y-4 overflow-y-auto p-4">
-                  {adminSection === "instances" ? (
-                    <AdminPanelCard title="Nova instância" icon={Smartphone}>
-                      <form onSubmit={handleCreateInstance} className="space-y-3">
-                        <CompactField label="Nome interno" value={instanceForm.name} onChange={(value) => setInstanceForm((current) => ({ ...current, name: value }))} />
-                        <CompactField label="Nome na Evolution" value={instanceForm.evolutionInstanceName} onChange={(value) => setInstanceForm((current) => ({ ...current, evolutionInstanceName: value }))} />
-                        <CompactField label="URL base" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder="https://evolution.seudominio.com" />
-                        <CompactField label="Chave da API" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} />
-                        <CompactField label="Segredo do webhook" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
-                        <PrimaryAction disabled={instanceLoading}>{instanceLoading ? "Salvando..." : "Salvar instância"}</PrimaryAction>
-                      </form>
-                      <div className="mt-4 space-y-3">
-                        {instances.map((instance) => (
-                          <InfoRow key={instance.id} title={instance.name} subtitle={instance.evolutionInstanceName} meta={`${traduzirStatusInstancia(instance.status)} | ${instance.phoneNumber ?? "sem telefone"}`} />
-                        ))}
-                      </div>
-                    </AdminPanelCard>
-                  ) : null}
-
-                  {adminSection === "agents" ? (
-                    <AdminPanelCard title="Novo agente" icon={UserPlus}>
-                      <form onSubmit={handleCreateAgent} className="space-y-3">
-                        <CompactField label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} />
-                        <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} />
-                        <CompactField label="Senha" type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} />
-                        <label className="block text-sm font-medium text-slate-600">
-                          Perfil
-                          <select
-                            value={agentForm.role}
-                            onChange={(event) => setAgentForm((current) => ({ ...current, role: event.target.value as "admin" | "agent" }))}
-                            className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-700 outline-none"
-                          >
-                            <option value="agent">Agente</option>
-                            <option value="admin">Administrador</option>
-                          </select>
-                        </label>
-                        <PrimaryAction disabled={agentLoading}>{agentLoading ? "Criando..." : "Criar agente"}</PrimaryAction>
-                      </form>
-                      <div className="mt-4 space-y-3">
-                        {agents.map((agent) => (
-                          <InfoRow key={agent.id} title={agent.name} subtitle={agent.email} meta={`${traduzirPerfil(agent.role)} | ${agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}`} />
-                        ))}
-                      </div>
-                    </AdminPanelCard>
-                  ) : null}
-
-                  {adminSection === "queues" ? (
-                    <AdminPanelCard title="Filas e membros" icon={Users}>
-                      <form onSubmit={handleCreateQueue} className="space-y-3">
-                        <CompactField label="Nome da fila" value={queueForm.name} onChange={(value) => setQueueForm((current) => ({ ...current, name: value }))} />
-                        <CompactField label="Cor" value={queueForm.color} onChange={(value) => setQueueForm((current) => ({ ...current, color: value }))} placeholder="#1A1C32" />
-                        <PrimaryAction disabled={queueLoading}>{queueLoading ? "Criando..." : "Criar fila"}</PrimaryAction>
-                      </form>
-                      <div className="mt-4 space-y-3">
-                        {queues.map((queue) => (
-                          <QueueEditor key={queue.id} queue={queue} agents={agents} loading={assignmentLoading === queue.id} onSave={handleAssignQueueAgents} onChange={setQueues} />
-                        ))}
-                      </div>
-                    </AdminPanelCard>
-                  ) : null}
-                </div>
-              </aside>
-            ) : null}
           </section>
         </div>
       </div>
@@ -1384,7 +1419,7 @@ function AuthField(props: { label: string; value: string; onChange: (value: stri
   );
 }
 
-function RailButton(props: { icon: React.ComponentType<{ className?: string }>; label: string; active?: boolean; onClick?: () => void }) {
+function RailButton(props: { icon: React.ComponentType<{ className?: string }>; label: string; expanded?: boolean; active?: boolean; onClick?: () => void }) {
   const Icon = props.icon;
   return (
     <button
@@ -1392,9 +1427,10 @@ function RailButton(props: { icon: React.ComponentType<{ className?: string }>; 
       onClick={props.onClick}
       aria-label={props.label}
       title={props.label}
-      className={`grid h-10 w-10 place-items-center rounded-lg transition ${props.active ? "border-l-2 border-[#1A1C32] bg-slate-100 text-[#1A1C32]" : "text-slate-400 hover:bg-slate-50 hover:text-slate-700"}`}
+      className={`flex items-center rounded-lg transition ${props.active ? "bg-slate-100 text-[#1A1C32]" : "text-slate-400 hover:bg-slate-50 hover:text-slate-700"} ${props.expanded ? "gap-3 px-3 py-2.5" : "h-10 w-10 justify-center self-center"} ${props.active && props.expanded ? "border-l-2 border-[#1A1C32]" : ""} ${props.active && !props.expanded ? "border-l-2 border-[#1A1C32]" : ""}`}
     >
       <Icon className="h-5 w-5" />
+      {props.expanded ? <span className="text-sm font-medium">{props.label}</span> : null}
     </button>
   );
 }
