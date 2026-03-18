@@ -26,6 +26,35 @@ function normalizeRemoteJid(phone: string) {
   return `${phone}@s.whatsapp.net`;
 }
 
+async function findOrCreateCustomer(
+  prisma: FastifyPluginAsync extends never ? never : any,
+  params: { name: string; phoneE164: string },
+) {
+  const existing = await prisma.customer.findFirst({
+    where: { phoneE164: params.phoneE164 },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  if (existing) {
+    if (existing.name !== params.name) {
+      return prisma.customer.update({
+        where: { id: existing.id },
+        data: { name: params.name },
+      });
+    }
+
+    return existing;
+  }
+
+  return prisma.customer.create({
+    data: {
+      id: randomUUID(),
+      name: params.name,
+      phoneE164: params.phoneE164,
+    },
+  });
+}
+
 function serializeTicket(ticket: any) {
   return {
     id: ticket.id,
@@ -180,16 +209,9 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       };
     }
 
-    const customer = await app.prisma.customer.upsert({
-      where: { phoneE164: normalizedPhone },
-      update: {
-        name: body.customerName,
-      },
-      create: {
-        id: randomUUID(),
-        name: body.customerName,
-        phoneE164: normalizedPhone,
-      },
+    const customer = await findOrCreateCustomer(app.prisma, {
+      name: body.customerName,
+      phoneE164: normalizedPhone,
     });
 
     const ticket = await app.prisma.ticket.create({

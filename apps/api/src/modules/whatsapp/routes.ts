@@ -93,6 +93,35 @@ function normalizeConnectionPhone(value: unknown) {
   return digits.length > 0 ? digits : null;
 }
 
+async function findOrCreateCustomer(
+  prisma: FastifyPluginAsync extends never ? never : any,
+  params: { name: string; phoneE164: string },
+) {
+  const existing = await prisma.customer.findFirst({
+    where: { phoneE164: params.phoneE164 },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  if (existing) {
+    if (existing.name !== params.name) {
+      return prisma.customer.update({
+        where: { id: existing.id },
+        data: { name: params.name },
+      });
+    }
+
+    return existing;
+  }
+
+  return prisma.customer.create({
+    data: {
+      id: randomUUID(),
+      name: params.name,
+      phoneE164: params.phoneE164,
+    },
+  });
+}
+
 function resolveInstanceSnapshot(event: string, payload: Prisma.InputJsonValue | Record<string, unknown>) {
   const raw = payload as Record<string, any>;
   const data = (raw?.data && typeof raw.data === 'object' ? raw.data : {}) as Record<string, any>;
@@ -221,16 +250,9 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
     try {
       const customer = parsed.isGroup || !parsed.phone
         ? null
-        : await app.prisma.customer.upsert({
-            where: { phoneE164: parsed.phone },
-            update: {
-              name: parsed.pushName ?? parsed.phone,
-            },
-            create: {
-              id: randomUUID(),
-              name: parsed.pushName ?? parsed.phone,
-              phoneE164: parsed.phone,
-            },
+        : await findOrCreateCustomer(app.prisma, {
+            name: parsed.pushName ?? parsed.phone,
+            phoneE164: parsed.phone,
           });
 
       let ticket = await app.prisma.ticket.findFirst({
