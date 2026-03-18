@@ -67,19 +67,18 @@ export async function configureEvolutionWebhook(params: ConfigureWebhookParams) 
       apikey: params.apiKey,
     },
     body: JSON.stringify({
+      enabled: true,
       url: params.webhookUrl,
-      events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'],
-      webhook_by_events: false,
-      webhook_base64: false,
       webhookByEvents: false,
       webhookBase64: false,
-      enabled: true,
+      events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'],
     }),
   });
 
   let payload: any = null;
   try {
-    payload = await response.json();
+    const raw = await response.text();
+    payload = raw ? JSON.parse(raw) : null;
   } catch {
     payload = null;
   }
