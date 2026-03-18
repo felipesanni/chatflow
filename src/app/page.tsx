@@ -1284,7 +1284,7 @@ export default function HomePage() {
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50/60 p-1">
                       <SidebarIconButton icon={Eye} label="Limpar filtros e voltar à caixa de entrada" active={!showOnlyUnread && !showOnlyMine} onClick={() => { setShowOnlyUnread(false); setShowOnlyMine(false); setSearchQuery(""); setActiveWorkspace("tickets"); }} />
-                      <SidebarIconButton icon={Plus} label="Abrir canais e instâncias" active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace(currentUser.role === "admin" ? "channels" : "tickets"); if (currentUser.role === "admin") setAdminSection("instances"); }} />
+                      <SidebarIconButton icon={Plus} label="Abrir canais e instâncias" active={false} onClick={() => { setActiveWorkspace(currentUser.role === "admin" ? "channels" : "tickets"); if (currentUser.role === "admin") setAdminSection("instances"); }} />
                       <SidebarIconButton icon={LayoutList} label="Usar lista compacta" active={ticketDensity === "compact"} onClick={() => setTicketDensity("compact")} />
                       <SidebarIconButton icon={Monitor} label="Usar lista confortável" active={ticketDensity === "comfortable"} onClick={() => setTicketDensity("comfortable")} />
                       <SidebarIconButton icon={CheckSquare} label="Mostrar apenas meus atendimentos" active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
