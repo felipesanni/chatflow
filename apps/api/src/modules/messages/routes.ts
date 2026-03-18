@@ -85,7 +85,7 @@ function pickAttachmentPublicUrl(payload: any) {
 }
 
 function canViewTicket(viewerId: string, permissions: PermissionMap, ticket: { currentAgentId: string | null }) {
-  if (permissions.tickets.viewAll) {
+  if (permissions['tickets.viewAll']) {
     return true;
   }
 

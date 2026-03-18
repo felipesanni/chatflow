@@ -101,7 +101,7 @@ function serializeTicket(ticket: any) {
 }
 
 function canViewTicket(viewerId: string, permissions: PermissionMap, ticket: { currentAgentId: string | null }) {
-  if (permissions.tickets.viewAll) {
+  if (permissions['tickets.viewAll']) {
     return true;
   }
 
@@ -119,7 +119,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     const session = access.session;
 
     const query = ticketListQuerySchema.parse(request.query);
-    if (!access.permissions.tickets.viewAll && query.agentId && query.agentId !== session.userId) {
+    if (!access.permissions['tickets.viewAll'] && query.agentId && query.agentId !== session.userId) {
       return {
         items: [],
         filters: query,
@@ -132,10 +132,10 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
 
     const where = {
       status: query.status,
-      currentAgentId: access.permissions.tickets.viewAll ? query.agentId : undefined,
+      currentAgentId: access.permissions['tickets.viewAll'] ? query.agentId : undefined,
       currentQueueId: query.queueId,
       AND: [
-        ...(!access.permissions.tickets.viewAll
+        ...(!access.permissions['tickets.viewAll']
           ? [{
               OR: [
                 { currentAgentId: session.userId },
