@@ -52,8 +52,6 @@ export const evolutionSocketsPlugin = fp(async (app: FastifyInstance) => {
       },
     });
 
-    const groups = new Map<string, { baseUrl: string; apiKey: string; instanceNames: string[] }>();
-
     for (const instance of instances) {
       const apiKey = decryptSecret(instance.apiKeyEncrypted, env.SESSION_SECRET);
 
@@ -84,41 +82,29 @@ export const evolutionSocketsPlugin = fp(async (app: FastifyInstance) => {
         }, 'Erro ao configurar websocket da Evolution.');
       }
 
-      const groupKey = `${instance.baseUrl}::${apiKey}`;
-      const existing = groups.get(groupKey);
-
-      if (existing) {
-        existing.instanceNames.push(instance.evolutionInstanceName);
-      } else {
-        groups.set(groupKey, {
-          baseUrl: instance.baseUrl,
-          apiKey,
-          instanceNames: [instance.evolutionInstanceName],
-        });
-      }
-    }
-
-    for (const [groupKey, group] of groups.entries()) {
-      const socket = io(group.baseUrl.replace(/\/$/, ''), {
+      const instanceSocketUrl = `${instance.baseUrl.replace(/\/$/, '')}/${instance.evolutionInstanceName}`;
+      const socketKey = `${instance.baseUrl}::${instance.evolutionInstanceName}`;
+      const socket = io(instanceSocketUrl, {
         transports: ['websocket'],
         reconnection: true,
         timeout: 20000,
         extraHeaders: {
-          apikey: group.apiKey,
+          apikey: apiKey,
         },
         auth: {
-          apikey: group.apiKey,
+          apikey: apiKey,
         },
         query: {
-          apikey: group.apiKey,
+          apikey: apiKey,
         },
       });
 
       socket.on('connect', () => {
         app.log.info({
           action: 'evolution_socket_connected',
-          baseUrl: group.baseUrl,
-          instances: group.instanceNames,
+          baseUrl: instance.baseUrl,
+          instanceName: instance.evolutionInstanceName,
+          socketUrl: instanceSocketUrl,
           socketId: socket.id,
         }, 'Socket da Evolution conectado.');
       });
@@ -126,8 +112,9 @@ export const evolutionSocketsPlugin = fp(async (app: FastifyInstance) => {
       socket.on('connect_error', (error) => {
         app.log.error({
           action: 'evolution_socket_connect_error',
-          baseUrl: group.baseUrl,
-          instances: group.instanceNames,
+          baseUrl: instance.baseUrl,
+          instanceName: instance.evolutionInstanceName,
+          socketUrl: instanceSocketUrl,
           message: error.message,
         }, 'Falha ao conectar socket da Evolution.');
       });
@@ -135,8 +122,9 @@ export const evolutionSocketsPlugin = fp(async (app: FastifyInstance) => {
       socket.on('disconnect', (reason) => {
         app.log.warn({
           action: 'evolution_socket_disconnected',
-          baseUrl: group.baseUrl,
-          instances: group.instanceNames,
+          baseUrl: instance.baseUrl,
+          instanceName: instance.evolutionInstanceName,
+          socketUrl: instanceSocketUrl,
           reason,
         }, 'Socket da Evolution desconectado.');
       });
@@ -147,8 +135,9 @@ export const evolutionSocketsPlugin = fp(async (app: FastifyInstance) => {
             app.log.info({
               action: 'evolution_socket_event_received',
               event: eventName,
-              baseUrl: group.baseUrl,
-              instances: group.instanceNames,
+              baseUrl: instance.baseUrl,
+              instanceName: instance.evolutionInstanceName,
+              socketUrl: instanceSocketUrl,
               payloadInstance: typeof payload?.instance === 'string' ? payload.instance : null,
             }, 'Evento recebido da Evolution via websocket.');
 
@@ -161,14 +150,16 @@ export const evolutionSocketsPlugin = fp(async (app: FastifyInstance) => {
             app.log.error({
               action: 'process_evolution_socket_event',
               event: eventName,
-              baseUrl: group.baseUrl,
+              baseUrl: instance.baseUrl,
+              instanceName: instance.evolutionInstanceName,
+              socketUrl: instanceSocketUrl,
               error,
             }, 'Falha ao processar evento recebido da Evolution via websocket.');
           }
         });
       }
 
-      sockets.set(groupKey, socket);
+      sockets.set(socketKey, socket);
     }
   }
 
