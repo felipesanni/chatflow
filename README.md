@@ -12,6 +12,7 @@ Base nova do ChatFlow para uso interno, pronta para implantacao via EasyPanel co
 - O Next.js usa um proxy interno em `/api-proxy/*` para falar com a API.
 - O realtime do painel usa `Socket.IO` apontando para a URL publica da API.
 - A API concentra autenticacao, regras de negocio, webhooks e envio para a Evolution.
+- Chaves da Evolution sao armazenadas cifradas no banco.
 - O PostgreSQL guarda tickets, mensagens, usuarios, filas e auditoria.
 - A Evolution API continua na VPS como integracao com WhatsApp.
 
@@ -50,7 +51,8 @@ Voce pode importar este repositorio no GitHub e criar tres servicos, ou usar o `
 6. Se o banco estiver vazio, a API cria o primeiro admin automaticamente usando `ADMIN_BOOTSTRAP_*`.
 7. Abra o web e confirme o login.
 8. Cadastre a instancia Evolution no painel.
-9. Configure o webhook da Evolution apontando para `/api/webhooks/evolution`.
+9. Se voce definir `webhookSecret` na instancia, envie esse valor no header `x-webhook-secret` ou na query `?secret=`.
+10. Configure o webhook da Evolution apontando para `/api/webhooks/evolution`.
 
 ## Endpoints ja funcionais
 
@@ -82,7 +84,7 @@ Voce pode importar este repositorio no GitHub e criar tres servicos, ou usar o `
 - leitura de mensagens
 - envio de texto via Evolution
 - assumir e encerrar ticket
-- cadastro de instancias Evolution
+- cadastro de instancias Evolution com chave cifrada em repouso
 - cadastro de agentes
 - cadastro de filas
 - vinculacao de agentes em filas

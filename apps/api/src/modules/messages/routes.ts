@@ -3,11 +3,15 @@ import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import { requireSession } from '../../lib/auth-guard.js';
 import { sendEvolutionText } from '../../lib/evolution-client.js';
+import { loadEnv } from '../../config/env.js';
+import { decryptSecret, encryptSecret } from '../../lib/secrets.js';
 
 const createMessageBodySchema = z.object({
   body: z.string().min(1),
   replyToMessageId: z.string().uuid().optional(),
 });
+
+const env = loadEnv();
 
 export const messageRoutes: FastifyPluginAsync = async (app) => {
   app.get('/tickets/:ticketId/messages', async (request, reply) => {
@@ -68,9 +72,20 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       ? await app.prisma.ticketMessage.findUnique({ where: { id: body.replyToMessageId } })
       : null;
 
+    const decryptedApiKey = decryptSecret(ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
+
+    if (!ticket.whatsappInstance.apiKeyEncrypted.startsWith('enc:')) {
+      await app.prisma.whatsAppInstance.update({
+        where: { id: ticket.whatsappInstance.id },
+        data: {
+          apiKeyEncrypted: encryptSecret(decryptedApiKey, env.SESSION_SECRET),
+        },
+      });
+    }
+
     const delivery = await sendEvolutionText({
       baseUrl: ticket.whatsappInstance.baseUrl,
-      apiKey: ticket.whatsappInstance.apiKeyEncrypted,
+      apiKey: decryptedApiKey,
       instanceName: ticket.whatsappInstance.evolutionInstanceName,
       remoteJid: ticket.externalChatId,
       text: body.body,
@@ -105,6 +120,8 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       data: {
         lastMessagePreview: body.body,
         unreadCount: 0,
+        status: 'open',
+        currentAgentId: ticket.currentAgentId ?? session.userId,
         updatedAt: new Date(),
       },
     });

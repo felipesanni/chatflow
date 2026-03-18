@@ -1,12 +1,12 @@
-CREATE TYPE user_role AS ENUM ('admin', 'agent');
-CREATE TYPE user_status AS ENUM ('active', 'inactive');
-CREATE TYPE agent_presence AS ENUM ('online', 'offline', 'busy');
-CREATE TYPE ticket_status AS ENUM ('open', 'pending', 'closed');
-CREATE TYPE message_direction AS ENUM ('inbound', 'outbound', 'system');
-CREATE TYPE message_content_type AS ENUM ('text', 'image', 'audio', 'video', 'document', 'sticker', 'other');
-CREATE TYPE attachment_storage AS ENUM ('local', 's3', 'minio', 'external');
-CREATE TYPE instance_status AS ENUM ('disconnected', 'pairing', 'connected', 'error');
-CREATE TYPE ticket_event_type AS ENUM (
+CREATE TYPE "UserRole" AS ENUM ('admin', 'agent');
+CREATE TYPE "UserStatus" AS ENUM ('active', 'inactive');
+CREATE TYPE "AgentPresence" AS ENUM ('online', 'offline', 'busy');
+CREATE TYPE "TicketStatus" AS ENUM ('open', 'pending', 'closed');
+CREATE TYPE "MessageDirection" AS ENUM ('inbound', 'outbound', 'system');
+CREATE TYPE "MessageContentType" AS ENUM ('text', 'image', 'audio', 'video', 'document', 'sticker', 'other');
+CREATE TYPE "AttachmentStorage" AS ENUM ('local', 's3', 'minio', 'external');
+CREATE TYPE "InstanceStatus" AS ENUM ('disconnected', 'pairing', 'connected', 'error');
+CREATE TYPE "TicketEventType" AS ENUM (
   'created',
   'accepted',
   'assigned',
@@ -24,8 +24,8 @@ CREATE TABLE users (
   id UUID PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  role user_role NOT NULL DEFAULT 'agent',
-  status user_status NOT NULL DEFAULT 'active',
+  role "UserRole" NOT NULL DEFAULT 'agent',
+  status "UserStatus" NOT NULL DEFAULT 'active',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_login_at TIMESTAMPTZ
@@ -35,7 +35,7 @@ CREATE TABLE agents (
   id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   avatar_url TEXT,
-  presence agent_presence NOT NULL DEFAULT 'offline',
+  presence "AgentPresence" NOT NULL DEFAULT 'offline',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_active_at TIMESTAMPTZ
@@ -72,7 +72,7 @@ CREATE TABLE whatsapp_instances (
   base_url TEXT NOT NULL,
   api_key_encrypted TEXT NOT NULL,
   webhook_secret TEXT,
-  status instance_status NOT NULL DEFAULT 'disconnected',
+  status "InstanceStatus" NOT NULL DEFAULT 'disconnected',
   phone_number TEXT,
   last_seen_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -90,7 +90,7 @@ CREATE TABLE tickets (
   customer_name_snapshot TEXT NOT NULL,
   customer_avatar_url TEXT,
   title TEXT,
-  status ticket_status NOT NULL DEFAULT 'open',
+  status "TicketStatus" NOT NULL DEFAULT 'open',
   unread_count INTEGER NOT NULL DEFAULT 0,
   is_group BOOLEAN NOT NULL DEFAULT FALSE,
   last_message_preview TEXT,
@@ -112,8 +112,8 @@ CREATE TABLE ticket_messages (
   ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
   sender_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
   external_message_id TEXT,
-  direction message_direction NOT NULL,
-  content_type message_content_type NOT NULL DEFAULT 'text',
+  direction "MessageDirection" NOT NULL,
+  content_type "MessageContentType" NOT NULL DEFAULT 'text',
   body TEXT,
   sender_name_snapshot TEXT,
   raw_payload JSONB,
@@ -136,7 +136,7 @@ CREATE TABLE attachments (
   file_name TEXT,
   mime_type TEXT NOT NULL,
   size_bytes BIGINT,
-  storage attachment_storage NOT NULL,
+  storage "AttachmentStorage" NOT NULL,
   storage_key TEXT NOT NULL,
   public_url TEXT,
   checksum_sha256 TEXT,
@@ -163,7 +163,7 @@ CREATE INDEX ticket_assignments_ticket_id_idx
 CREATE TABLE ticket_events (
   id UUID PRIMARY KEY,
   ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
-  event_type ticket_event_type NOT NULL,
+  event_type "TicketEventType" NOT NULL,
   actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

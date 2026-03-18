@@ -183,8 +183,14 @@ export default function HomePage() {
   const [messageInput, setMessageInput] = React.useState("");
   const [searchQuery, setSearchQuery] = React.useState("");
   const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "grupos">("atendendo");
+  const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "channels" | "team" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
   const [adminSection, setAdminSection] = React.useState<"instances" | "agents" | "queues">("instances");
   const [showAdminPanel, setShowAdminPanel] = React.useState(true);
+  const [showRail, setShowRail] = React.useState(true);
+  const [ticketDensity, setTicketDensity] = React.useState<"comfortable" | "compact">("comfortable");
+  const [showOnlyUnread, setShowOnlyUnread] = React.useState(false);
+  const [showOnlyMine, setShowOnlyMine] = React.useState(false);
+  const [showTicketDetails, setShowTicketDetails] = React.useState(false);
 
   const [loginForm, setLoginForm] = React.useState({ email: "", password: "" });
   const [bootstrapForm, setBootstrapForm] = React.useState({ name: "", email: "", password: "" });
@@ -209,7 +215,11 @@ export default function HomePage() {
     [tickets, selectedTicketId],
   );
 
-  const filteredTickets = React.useMemo(() => {
+  const canAcceptSelectedTicket = Boolean(selectedTicket && selectedTicket.status !== "closed" && selectedTicket.currentAgent?.id !== user?.id);
+  const canCloseSelectedTicket = Boolean(selectedTicket && selectedTicket.status !== "closed");
+  const canSendToSelectedTicket = Boolean(selectedTicket && selectedTicket.status !== "closed");
+
+  const visibleTickets = React.useMemo(() => {
     const search = searchQuery.trim().toLowerCase();
 
     return tickets.filter((ticket) => {
@@ -221,6 +231,14 @@ export default function HomePage() {
             : ticket.status === "open" && !ticket.isGroup;
 
       if (!matchesTab) {
+        return false;
+      }
+
+      if (showOnlyUnread && ticket.unreadCount === 0) {
+        return false;
+      }
+
+      if (showOnlyMine && ticket.currentAgent?.id !== user?.id) {
         return false;
       }
 
@@ -239,7 +257,7 @@ export default function HomePage() {
         .toLowerCase()
         .includes(search);
     });
-  }, [activeTab, searchQuery, tickets]);
+  }, [activeTab, searchQuery, showOnlyMine, showOnlyUnread, tickets, user?.id]);
 
   const counters = React.useMemo(
     () => ({
@@ -249,6 +267,27 @@ export default function HomePage() {
     }),
     [tickets],
   );
+
+  React.useEffect(() => {
+    if (visibleTickets.length === 0) {
+      setSelectedTicketId(null);
+      return;
+    }
+
+    if (!selectedTicketId || !visibleTickets.some((ticket) => ticket.id === selectedTicketId)) {
+      setSelectedTicketId(visibleTickets[0]?.id ?? null);
+    }
+  }, [selectedTicketId, visibleTickets]);
+
+  React.useEffect(() => {
+    if (activeWorkspace !== "tickets" && showTicketDetails) {
+      setShowTicketDetails(false);
+    }
+  }, [activeWorkspace, showTicketDetails]);
+
+  React.useEffect(() => {
+    setShowTicketDetails(false);
+  }, [selectedTicketId]);
 
   const refreshAuth = React.useCallback(async () => {
     setLoadingAuth(true);
@@ -399,6 +438,25 @@ export default function HomePage() {
       socket.disconnect();
       socketRef.current = null;
     };
+  }, [refreshAgents, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
+
+  React.useEffect(() => {
+    if (!user) return;
+
+    const interval = setInterval(() => {
+      void refreshTickets();
+      if (selectedTicketId) {
+        void refreshMessages(selectedTicketId);
+      }
+
+      if (user.role === "admin") {
+        void refreshInstances();
+        void refreshAgents();
+        void refreshQueues();
+      }
+    }, 20000);
+
+    return () => clearInterval(interval);
   }, [refreshAgents, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
 
   async function handleBootstrap(event: React.FormEvent<HTMLFormElement>) {
@@ -556,6 +614,355 @@ export default function HomePage() {
     }
   }
 
+  const showAdmin = user.role === "admin" && showAdminPanel && activeWorkspace === "tickets";
+
+  const workspaceTitle =
+    activeWorkspace === "dashboard"
+      ? "Painel geral"
+      : activeWorkspace === "tickets"
+        ? "Atendimento"
+        : activeWorkspace === "channels"
+          ? "Canais e instancias"
+          : activeWorkspace === "team"
+            ? "Equipe e filas"
+            : activeWorkspace === "profile"
+              ? "Perfil"
+              : activeWorkspace === "activity"
+                ? "Atividade operacional"
+                : activeWorkspace === "calendar"
+                  ? "Agenda operacional"
+                  : activeWorkspace === "automations"
+                    ? "Automacoes"
+                    : "Configuracoes";
+
+  const workspaceDescription =
+    activeWorkspace === "dashboard"
+      ? "Resumo rapido do que esta acontecendo no atendimento."
+      : activeWorkspace === "tickets"
+        ? "Inbox de conversas com a operacao em tempo real."
+        : activeWorkspace === "channels"
+          ? "Instancias Evolution e orientacoes de conexao."
+          : activeWorkspace === "team"
+            ? "Gestao de agentes e distribuicao por filas."
+            : activeWorkspace === "profile"
+              ? "Dados da sessao e atalhos pessoais."
+              : activeWorkspace === "activity"
+                ? "Leitura operacional do volume e das pendencias."
+                : activeWorkspace === "calendar"
+                  ? "Passos operacionais e rotinas de acompanhamento."
+                  : activeWorkspace === "automations"
+                    ? "Webhook, realtime e fluxo da integracao."
+                    : "Ajustes administrativos e visao de ambiente.";
+
+  const workspacePanel = (() => {
+    if (activeWorkspace === "dashboard") {
+      return (
+        <div className="flex h-full flex-col gap-4 p-6">
+          <div className="grid gap-4 md:grid-cols-3">
+            <WorkspaceStatCard title="Atendendo" value={String(counters.atendendo)} accent="emerald" description="Conversas com agente ativo." />
+            <WorkspaceStatCard title="Aguardando" value={String(counters.aguardando)} accent="amber" description="Tickets novos sem responsavel." />
+            <WorkspaceStatCard title="Grupos" value={String(counters.grupos)} accent="blue" description="Conversas coletivas monitoradas." />
+          </div>
+          <WorkspaceSection title="Ultimos tickets" description="Atalhos rapidos para voltar ao inbox.">
+            <div className="grid gap-3 xl:grid-cols-2">
+              {tickets.slice(0, 6).map((ticket) => (
+                <button
+                  key={ticket.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveWorkspace("tickets");
+                    setSelectedTicketId(ticket.id);
+                    setShowTicketDetails(false);
+                  }}
+                  className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-slate-900">{ticket.customerName}</div>
+                    <span className="text-[11px] font-bold uppercase text-slate-400">{ticket.status}</span>
+                  </div>
+                  <div className="mt-2 text-sm text-slate-500">{ticket.lastMessagePreview ?? "Sem mensagem registrada."}</div>
+                  <div className="mt-3 text-[11px] uppercase tracking-[0.05em] text-slate-400">{ticket.currentQueue?.name ?? "Sem fila"} | {formatHour(ticket.updatedAt)}</div>
+                </button>
+              ))}
+            </div>
+          </WorkspaceSection>
+        </div>
+      );
+    }
+
+    if (activeWorkspace === "channels") {
+      return (
+        <div className="flex h-full flex-col gap-4 p-6">
+          <WorkspaceSection title="Instancias Evolution" description="Cadastro e consulta das instancias conectadas.">
+            {user.role === "admin" ? (
+              <form onSubmit={handleCreateInstance} className="grid gap-3 lg:grid-cols-2">
+                <CompactField label="Nome interno" value={instanceForm.name} onChange={(value) => setInstanceForm((current) => ({ ...current, name: value }))} />
+                <CompactField label="Nome na Evolution" value={instanceForm.evolutionInstanceName} onChange={(value) => setInstanceForm((current) => ({ ...current, evolutionInstanceName: value }))} />
+                <CompactField label="Base URL" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder="https://evolution.seudominio.com" />
+                <CompactField label="API key" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} />
+                <CompactField label="Webhook secret" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
+                <div className="lg:col-span-2">
+                  <PrimaryAction disabled={instanceLoading}>{instanceLoading ? "Salvando..." : "Salvar instancia"}</PrimaryAction>
+                </div>
+              </form>
+            ) : (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Somente administradores podem cadastrar instancias.</div>
+            )}
+          </WorkspaceSection>
+          <WorkspaceSection title="Instancias publicadas" description="Base atual usada pelo envio e pelos webhooks.">
+            <div className="grid gap-3 xl:grid-cols-2">
+              {instances.map((instance) => (
+                <InfoRow key={instance.id} title={instance.name} subtitle={instance.evolutionInstanceName} meta={`${instance.status} | ${instance.phoneNumber ?? "sem telefone"}`} />
+              ))}
+            </div>
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+              Webhook sugerido: <span className="font-semibold text-slate-700">https://chatflow-api.qqruew.easypanel.host/api/webhooks/evolution</span>
+            </div>
+          </WorkspaceSection>
+        </div>
+      );
+    }
+
+    if (activeWorkspace === "team") {
+      return (
+        <div className="flex h-full flex-col gap-4 p-6">
+          <div className="flex flex-wrap gap-2">
+            <AdminTab label="Agentes" active={adminSection === "agents"} onClick={() => setAdminSection("agents")} />
+            <AdminTab label="Filas" active={adminSection === "queues"} onClick={() => setAdminSection("queues")} />
+          </div>
+          {adminSection === "agents" ? (
+            <WorkspaceSection title="Equipe" description="Criacao e leitura dos agentes do sistema.">
+              {user.role === "admin" ? (
+                <form onSubmit={handleCreateAgent} className="grid gap-3 lg:grid-cols-2">
+                  <CompactField label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} />
+                  <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} />
+                  <CompactField label="Senha" type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} />
+                  <label className="block text-sm font-medium text-slate-600">Perfil<select value={agentForm.role} onChange={(event) => setAgentForm((current) => ({ ...current, role: event.target.value as "admin" | "agent" }))} className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none"><option value="agent">Agente</option><option value="admin">Administrador</option></select></label>
+                  <div className="lg:col-span-2"><PrimaryAction disabled={agentLoading}>{agentLoading ? "Criando..." : "Criar agente"}</PrimaryAction></div>
+                </form>
+              ) : null}
+              <div className="grid gap-3 xl:grid-cols-2">
+                {agents.map((agent) => (
+                  <InfoRow key={agent.id} title={agent.name} subtitle={agent.email} meta={`${agent.role} | ${agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}`} />
+                ))}
+              </div>
+            </WorkspaceSection>
+          ) : (
+            <WorkspaceSection title="Filas e membros" description="Distribuicao de agentes e leitura do volume atual.">
+              {user.role === "admin" ? (
+                <form onSubmit={handleCreateQueue} className="grid gap-3 md:grid-cols-[1fr_220px]">
+                  <CompactField label="Nome da fila" value={queueForm.name} onChange={(value) => setQueueForm((current) => ({ ...current, name: value }))} />
+                  <CompactField label="Cor" value={queueForm.color} onChange={(value) => setQueueForm((current) => ({ ...current, color: value }))} placeholder="#1A1C32" />
+                  <div className="md:col-span-2"><PrimaryAction disabled={queueLoading}>{queueLoading ? "Criando..." : "Criar fila"}</PrimaryAction></div>
+                </form>
+              ) : null}
+              <div className="grid gap-3 xl:grid-cols-2">
+                {queues.map((queue) => (
+                  <QueueEditor key={queue.id} queue={queue} agents={agents} loading={assignmentLoading === queue.id} onSave={handleAssignQueueAgents} onChange={setQueues} />
+                ))}
+              </div>
+            </WorkspaceSection>
+          )}
+        </div>
+      );
+    }
+
+    if (activeWorkspace === "profile") {
+      return (
+        <div className="flex h-full flex-col gap-4 p-6">
+          <WorkspaceSection title="Meu perfil" description="Informacoes da sessao atual e atalhos pessoais.">
+            <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="grid h-20 w-20 place-items-center rounded-full bg-[#1A1C32] text-2xl font-bold text-white">{initials(user.name) || "CF"}</div>
+                <div className="mt-4 text-xl font-semibold text-slate-900">{user.name}</div>
+                <div className="mt-1 text-sm text-slate-500">{user.email}</div>
+                <div className="mt-4 inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase text-slate-600">{user.role}</div>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <InfoRow title="Sessao" subtitle="Autenticacao ativa" meta="cookie httpOnly + backend proprio" />
+                <InfoRow title="Realtime" subtitle={SOCKET_URL ? "Socket configurado" : "Socket nao configurado"} meta={SOCKET_URL ?? "fallback por polling"} />
+                <button type="button" onClick={() => setActiveWorkspace("tickets")} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Voltar ao inbox</div><div className="mt-1 text-sm text-slate-500">Abrir conversas e continuar o atendimento.</div></button>
+                <button type="button" onClick={() => void handleLogout()} className="rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-left shadow-sm transition hover:bg-red-100"><div className="font-semibold text-red-700">Encerrar sessao</div><div className="mt-1 text-sm text-red-500">Sair do painel com seguranca.</div></button>
+              </div>
+            </div>
+          </WorkspaceSection>
+        </div>
+      );
+    }
+
+    if (activeWorkspace === "activity") {
+      return (
+        <div className="flex h-full flex-col gap-4 p-6">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <WorkspaceStatCard title="Tickets visiveis" value={String(visibleTickets.length)} accent="slate" description="Resultado da busca e dos filtros atuais." />
+            <WorkspaceStatCard title="Nao lidos" value={String(tickets.filter((ticket) => ticket.unreadCount > 0).length)} accent="emerald" description="Conversas pedindo resposta rapida." />
+            <WorkspaceStatCard title="Com agente" value={String(tickets.filter((ticket) => ticket.currentAgent).length)} accent="blue" description="Atendimentos ja distribuidos." />
+            <WorkspaceStatCard title="Sem fila" value={String(tickets.filter((ticket) => !ticket.currentQueue).length)} accent="amber" description="Conversas ainda sem classificacao." />
+          </div>
+          <WorkspaceSection title="Leitura operacional" description="Ultimos movimentos do atendimento.">
+            <div className="space-y-3">
+              {tickets.slice(0, 8).map((ticket) => (
+                <InfoRow key={ticket.id} title={ticket.customerName} subtitle={ticket.lastMessagePreview ?? "Sem mensagem registrada"} meta={`${ticket.status} | ${ticket.currentAgent?.name ?? "sem agente"} | ${formatDateTime(ticket.updatedAt)}`} />
+              ))}
+            </div>
+          </WorkspaceSection>
+        </div>
+      );
+    }
+
+    if (activeWorkspace === "calendar") {
+      return (
+        <div className="flex h-full flex-col gap-4 p-6">
+          <WorkspaceSection title="Rotina operacional" description="Checklist simples para o uso interno do sistema.">
+            <div className="grid gap-3 md:grid-cols-2">
+              <InfoRow title="Inicio do turno" subtitle="Conferir login, socket e instancias" meta="1. abrir painel | 2. validar health | 3. conferir instancias" />
+              <InfoRow title="Durante o atendimento" subtitle="Monitorar aguardando e nao lidos" meta="1. assumir tickets | 2. responder | 3. encerrar quando concluir" />
+              <InfoRow title="Evolution" subtitle="Validar webhook e telefone vinculado" meta="URL publica + secret opcional" />
+              <InfoRow title="Encerramento" subtitle="Revisar tickets fechados e pendentes" meta="registrar ajustes ou incidentes" />
+            </div>
+          </WorkspaceSection>
+        </div>
+      );
+    }
+
+    if (activeWorkspace === "automations") {
+      return (
+        <div className="flex h-full flex-col gap-4 p-6">
+          <WorkspaceSection title="Fluxo da integracao" description="Como a operacao conversa com a API e com a Evolution.">
+            <div className="grid gap-3 md:grid-cols-2">
+              <InfoRow title="Entrada" subtitle="Webhook da Evolution" meta="POST /api/webhooks/evolution" />
+              <InfoRow title="Saida" subtitle="Envio via API propria" meta="POST /api/tickets/:ticketId/messages" />
+              <InfoRow title="Realtime" subtitle="Atualizacao por Socket.IO" meta={SOCKET_URL ?? "configure NEXT_PUBLIC_SOCKET_URL"} />
+              <InfoRow title="Proxy" subtitle="Frontend fala com /api-proxy" meta="segredos ficam no backend" />
+            </div>
+          </WorkspaceSection>
+        </div>
+      );
+    }
+
+    if (activeWorkspace === "settings") {
+      return (
+        <div className="flex h-full flex-col gap-4 p-6">
+          <WorkspaceSection title="Configuracoes do sistema" description="Atalhos administrativos e estado da publicacao.">
+            <div className="grid gap-3 md:grid-cols-2">
+              <button type="button" onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Gerenciar instancias</div><div className="mt-1 text-sm text-slate-500">Abrir canais e revisar Evolution.</div></button>
+              <button type="button" onClick={() => { setActiveWorkspace("team"); setAdminSection("agents"); }} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Gerenciar equipe</div><div className="mt-1 text-sm text-slate-500">Abrir agentes e filas.</div></button>
+              <button type="button" onClick={() => setShowAdminPanel((current) => !current)} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Painel lateral</div><div className="mt-1 text-sm text-slate-500">{showAdminPanel ? "Ocultar painel admin no inbox" : "Mostrar painel admin no inbox"}</div></button>
+              <button type="button" onClick={() => void refreshAll()} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Recarregar tudo</div><div className="mt-1 text-sm text-slate-500">Forcar sincronizacao manual dos dados.</div></button>
+            </div>
+          </WorkspaceSection>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        {selectedTicket ? (
+          <>
+            <div className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6">
+              <div className="flex items-center gap-3">
+                <div className="grid h-10 w-10 place-items-center rounded-full border bg-slate-100 text-sm font-semibold text-slate-700">
+                  {initials(selectedTicket.customerName) || "C"}
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold uppercase leading-none text-[#1A1C32]">{selectedTicket.customerName}</h3>
+                  <span className="text-[10px] font-bold uppercase text-[#1A9C68]">
+                    {selectedTicket.currentAgent?.name ?? (selectedTicket.isGroup ? "Conversa de grupo" : "Aguardando atendente")}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => void handleAcceptTicket()} disabled={!canAcceptSelectedTicket} className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-[11px] font-bold uppercase text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 bg-green-600 hover:bg-green-700">
+                  <CheckSquare className="h-4 w-4" />
+                  {selectedTicket.currentAgent?.id === user.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Ticket fechado" : "Aceitar atendimento"}
+                </button>
+                <button type="button" onClick={() => void handleCloseTicket()} disabled={!canCloseSelectedTicket} className="inline-flex items-center gap-1 text-[10px] font-bold uppercase text-red-500 transition hover:text-red-600 disabled:cursor-not-allowed disabled:text-slate-400">
+                  <X className="h-3.5 w-3.5" />
+                  {selectedTicket.status === "closed" ? "Fechado" : "Fechar"}
+                </button>
+                <button type="button" onClick={() => setShowTicketDetails((current) => !current)} className="text-slate-400 transition hover:text-slate-600">
+                  <Info className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {showTicketDetails ? (
+              <div className="border-b border-slate-200 bg-slate-50 px-6 py-4">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <InfoRow title="Status" subtitle={selectedTicket.status} meta={`nao lidos: ${selectedTicket.unreadCount}`} />
+                  <InfoRow title="Fila" subtitle={selectedTicket.currentQueue?.name ?? "Sem fila"} meta={selectedTicket.isGroup ? "conversa em grupo" : "conversa individual"} />
+                  <InfoRow title="Responsavel" subtitle={selectedTicket.currentAgent?.name ?? "Sem agente"} meta={selectedTicket.externalChatId} />
+                  <InfoRow title="Canal" subtitle={selectedTicket.whatsappInstance.name} meta={formatDateTime(selectedTicket.updatedAt)} />
+                </div>
+              </div>
+            ) : null}
+
+            <div className="flex flex-1 flex-col overflow-hidden">
+              <div className="scrollbar-hide flex-1 overflow-y-auto px-6 py-6">
+                <div className="mx-auto flex max-w-4xl flex-col gap-4">
+                  {messageLoading ? (
+                    <div className="text-center text-sm text-slate-500">Carregando mensagens...</div>
+                  ) : messages.length === 0 ? (
+                    <EmptyCenter />
+                  ) : (
+                    messages.map((message) => {
+                      const outgoing = message.direction === "outbound";
+                      const system = message.direction === "system";
+
+                      if (system) {
+                        return (
+                          <div key={message.id} className="self-center rounded-full bg-slate-200 px-4 py-2 text-[11px] font-bold uppercase text-slate-500">
+                            {message.body ?? "Evento interno"}
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div key={message.id} className={`flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
+                          <article className={`max-w-[80%] rounded-2xl p-3 text-sm shadow-sm ${outgoing ? "border border-[#C6E9AD] bg-[#DCF8C6] text-slate-800" : "rounded-tl-none border border-slate-200 bg-white text-slate-800"}`}>
+                            <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.06em] text-slate-400">
+                              {message.senderName ?? (outgoing ? user.name : selectedTicket.customerName)}
+                            </div>
+                            <div className="whitespace-pre-wrap text-sm leading-6">{message.body ?? `[${message.contentType}]`}</div>
+                            <div className="mt-2 text-right text-[10px] text-slate-400">{formatDateTime(message.createdAt)}</div>
+                          </article>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              <form onSubmit={handleSendMessage} className="border-t border-slate-200 bg-white px-6 py-4">
+                <div className="flex items-center gap-3">
+                  <textarea
+                    value={messageInput}
+                    onChange={(event) => setMessageInput(event.target.value)}
+                    rows={2}
+                    placeholder={canSendToSelectedTicket ? "Digite uma mensagem" : "Ticket fechado para envio"}
+                    disabled={!canSendToSelectedTicket}
+                    className="min-h-[52px] flex-1 resize-none rounded-full border border-slate-200 bg-slate-50 px-5 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                  />
+                  <button
+                    type="submit"
+                    disabled={sendLoading || !messageInput.trim() || !canSendToSelectedTicket}
+                    className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[#1A1C32] px-5 text-sm font-bold uppercase text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    <Send className="h-4 w-4" />
+                    {sendLoading ? "Enviando" : "Enviar"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </>
+        ) : (
+          <EmptyCenter />
+        )}
+      </>
+    );
+  })();
+
   if (loadingAuth) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#ebf1f4] p-6">
@@ -645,21 +1052,22 @@ export default function HomePage() {
     );
   }
 
-  const showAdmin = user.role === "admin" && showAdminPanel;
-
   return (
     <main className="min-h-screen bg-[#ebf1f4] text-slate-800">
       <div className="flex min-h-screen flex-col">
         <header className="flex h-[60px] items-center justify-between bg-[#1A1C32] px-5 text-white shadow-sm">
           <div className="flex items-center gap-6">
-            <button type="button" className="text-white/90 transition hover:text-white">
+            <button type="button" onClick={() => setShowRail((current) => !current)} className="text-white/90 transition hover:text-white">
               <Menu className="h-6 w-6" />
             </button>
             <div className="flex items-center gap-3">
               <span className="grid h-8 w-8 place-items-center rounded-full border border-white/20 bg-white/10">
                 <ShieldCheck className="h-4 w-4" />
               </span>
-              <span className="text-[18px] font-semibold tracking-tight">CHATFLOW</span>
+              <div>
+                <div className="text-[18px] font-semibold tracking-tight">CHATFLOW</div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">{workspaceTitle}</div>
+              </div>
             </div>
           </div>
 
@@ -672,59 +1080,66 @@ export default function HomePage() {
               <RefreshCw className={`h-4 w-4 ${ticketLoading || messageLoading ? "animate-spin" : ""}`} />
               Atualizar
             </button>
-            <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-full border border-white/10 bg-white/10 text-sm font-semibold uppercase">
+            <button type="button" onClick={() => setActiveWorkspace("profile")} className="grid h-10 w-10 place-items-center overflow-hidden rounded-full border border-white/10 bg-white/10 text-sm font-semibold uppercase transition hover:bg-white/15">
               {initials(user.name) || "CF"}
-            </div>
+            </button>
           </div>
         </header>
 
         <div className="flex min-h-[calc(100vh-60px)]">
-          <aside className="hidden w-14 shrink-0 border-r border-slate-200 bg-white md:flex md:flex-col md:items-center md:justify-between md:py-4">
-            <div className="flex w-full flex-col items-center gap-1">
-              <RailButton icon={LayoutGrid} />
-              <RailButton icon={Phone} active />
-              <RailButton icon={Smartphone} />
-              <RailButton icon={Users} />
-              <RailButton icon={User} />
-              <RailButton icon={Clock} />
-              <RailButton icon={Calendar} />
-              <RailButton icon={Workflow} />
-            </div>
-            <div className="flex w-full flex-col items-center gap-1">
-              <RailButton icon={Settings} onClick={user.role === "admin" ? () => setShowAdminPanel((current) => !current) : undefined} />
-              <button
-                type="button"
-                onClick={() => void handleLogout()}
-                className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
-              >
-                <LogIn className="h-5 w-5 rotate-180" />
-              </button>
-            </div>
-          </aside>
+          {showRail ? (
+            <aside className="hidden w-14 shrink-0 border-r border-slate-200 bg-white md:flex md:flex-col md:items-center md:justify-between md:py-4">
+              <div className="flex w-full flex-col items-center gap-1">
+                <RailButton icon={LayoutGrid} active={activeWorkspace === "dashboard"} onClick={() => setActiveWorkspace("dashboard")} />
+                <RailButton icon={Phone} active={activeWorkspace === "tickets"} onClick={() => setActiveWorkspace("tickets")} />
+                <RailButton icon={Smartphone} active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} />
+                <RailButton icon={Users} active={activeWorkspace === "team"} onClick={() => { setActiveWorkspace("team"); setAdminSection("agents"); }} />
+                <RailButton icon={User} active={activeWorkspace === "profile"} onClick={() => setActiveWorkspace("profile")} />
+                <RailButton icon={Clock} active={activeWorkspace === "activity"} onClick={() => setActiveWorkspace("activity")} />
+                <RailButton icon={Calendar} active={activeWorkspace === "calendar"} onClick={() => setActiveWorkspace("calendar")} />
+                <RailButton icon={Workflow} active={activeWorkspace === "automations"} onClick={() => setActiveWorkspace("automations")} />
+              </div>
+              <div className="flex w-full flex-col items-center gap-1">
+                <RailButton icon={Settings} active={activeWorkspace === "settings"} onClick={() => setActiveWorkspace("settings")} />
+                <button
+                  type="button"
+                  onClick={() => void handleLogout()}
+                  className="grid h-10 w-10 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                >
+                  <LogIn className="h-5 w-5 rotate-180" />
+                </button>
+              </div>
+            </aside>
+          ) : null}
 
           <section className={`grid min-w-0 flex-1 ${showAdmin ? "xl:grid-cols-[380px_minmax(0,1fr)_360px]" : "xl:grid-cols-[380px_minmax(0,1fr)]"}`}>
             <div className="flex h-full flex-col border-r border-slate-200 bg-white">
               <div className="space-y-3 border-b border-slate-200 p-3">
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">{workspaceTitle}</div>
+                  <div className="mt-1 text-sm text-slate-500">{workspaceDescription}</div>
+                </div>
+
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
-                    placeholder="Buscar atendimento e mensagens"
+                    placeholder={activeWorkspace === "tickets" ? "Buscar atendimento e mensagens" : "Buscar dentro da tela atual"}
                     className="h-11 w-full rounded-full border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white"
                   />
                 </div>
 
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50/60 p-1">
-                    <SidebarIconButton icon={Eye} />
-                    <SidebarIconButton icon={Plus} />
-                    <SidebarIconButton icon={LayoutList} />
-                    <SidebarIconButton icon={Monitor} active />
-                    <SidebarIconButton icon={CheckSquare} />
-                    <SidebarIconButton icon={EyeOff} />
+                    <SidebarIconButton icon={Eye} active={!showOnlyUnread && !showOnlyMine} onClick={() => { setShowOnlyUnread(false); setShowOnlyMine(false); setSearchQuery(""); setActiveWorkspace("tickets"); }} />
+                    <SidebarIconButton icon={Plus} active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace(user.role === "admin" ? "channels" : "tickets"); if (user.role === "admin") setAdminSection("instances"); }} />
+                    <SidebarIconButton icon={LayoutList} active={ticketDensity === "compact"} onClick={() => setTicketDensity("compact")} />
+                    <SidebarIconButton icon={Monitor} active={ticketDensity === "comfortable"} onClick={() => setTicketDensity("comfortable")} />
+                    <SidebarIconButton icon={CheckSquare} active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
+                    <SidebarIconButton icon={EyeOff} active={showOnlyUnread} onClick={() => setShowOnlyUnread((current) => !current)} />
                   </div>
-                  <button type="button" className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-500 transition hover:bg-slate-100">
+                  <button type="button" onClick={() => { setActiveWorkspace("team"); setAdminSection("queues"); }} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-500 transition hover:bg-slate-100">
                     Filas
                     <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
                   </button>
@@ -732,26 +1147,27 @@ export default function HomePage() {
               </div>
 
               <div className="flex items-center border-b border-slate-200 px-2">
-                <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => setActiveTab("atendendo")} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
-                <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => setActiveTab("aguardando")} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
-                <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => setActiveTab("grupos")} icon={<Users className="h-3 w-3" />} color="bg-blue-500" />
+                <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
+                <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
+                <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" />
               </div>
 
               <div className="scrollbar-hide flex-1 overflow-y-auto bg-slate-50/30">
-                {filteredTickets.length === 0 ? (
+                {visibleTickets.length === 0 ? (
                   <div className="p-10 text-center text-xs font-medium text-slate-400">Nenhum atendimento nesta categoria.</div>
                 ) : (
-                  filteredTickets.map((ticket) => {
+                  visibleTickets.map((ticket) => {
                     const selected = ticket.id === selectedTicketId;
+                    const compact = ticketDensity === "compact";
                     return (
                       <button
                         key={ticket.id}
                         type="button"
-                        onClick={() => setSelectedTicketId(ticket.id)}
-                        className={`group relative flex w-full items-start gap-3 border-b border-slate-200 p-3 text-left transition ${selected ? "bg-white shadow-[inset_4px_0_0_0_#1A1C32]" : "bg-white/50 hover:bg-slate-100"}`}
+                        onClick={() => { setSelectedTicketId(ticket.id); setActiveWorkspace("tickets"); setShowTicketDetails(false); }}
+                        className={`group relative flex w-full items-start gap-3 border-b border-slate-200 text-left transition ${selected ? "bg-white shadow-[inset_4px_0_0_0_#1A1C32]" : "bg-white/50 hover:bg-slate-100"} ${compact ? "p-2.5" : "p-3"}`}
                       >
-                        <div className="pt-1">
-                          <div className="grid h-12 w-12 place-items-center rounded-full border bg-[linear-gradient(135deg,#dbe6ef,#bfcbd8)] text-sm font-semibold text-slate-700 shadow-sm">
+                        <div className={compact ? "pt-0.5" : "pt-1"}>
+                          <div className={`grid place-items-center rounded-full border bg-[linear-gradient(135deg,#dbe6ef,#bfcbd8)] text-sm font-semibold text-slate-700 shadow-sm ${compact ? "h-10 w-10" : "h-12 w-12"}`}>
                             {initials(ticket.customerName) || "C"}
                           </div>
                         </div>
@@ -761,10 +1177,10 @@ export default function HomePage() {
                             <div className="min-w-0">
                               <div className="flex items-center gap-1.5">
                                 <Phone className="h-3.5 w-3.5 shrink-0 text-green-500" />
-                                <p className="truncate text-[14px] font-bold text-slate-800">{ticket.customerName}</p>
+                                <p className={`truncate font-bold text-slate-800 ${compact ? "text-[13px]" : "text-[14px]"}`}>{ticket.customerName}</p>
                                 <Eye className="h-3.5 w-3.5 shrink-0 text-blue-500" />
                               </div>
-                              <p className="mt-0.5 truncate text-[13px] font-bold text-slate-900">
+                              <p className={`mt-0.5 truncate font-bold text-slate-900 ${compact ? "text-[12px]" : "text-[13px]"}`}>
                                 {ticket.lastMessagePreview ?? "Sem mensagem registrada"}
                               </p>
                             </div>
@@ -790,7 +1206,7 @@ export default function HomePage() {
                                   {ticket.unreadCount}
                                 </span>
                               ) : null}
-                              <ArrowRightLeft className="h-4 w-4 text-blue-500 transition hover:text-blue-700" />
+                              <ArrowRightLeft className="h-4 w-4 text-blue-500 transition group-hover:text-blue-700" />
                             </div>
                           </div>
                         </div>
@@ -807,97 +1223,7 @@ export default function HomePage() {
                   {panelMessage}
                 </div>
               ) : null}
-
-              {selectedTicket ? (
-                <>
-                  <div className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6">
-                    <div className="flex items-center gap-3">
-                      <div className="grid h-10 w-10 place-items-center rounded-full border bg-slate-100 text-sm font-semibold text-slate-700">
-                        {initials(selectedTicket.customerName) || "C"}
-                      </div>
-                      <div>
-                        <h3 className="text-sm font-semibold uppercase leading-none text-[#1A1C32]">{selectedTicket.customerName}</h3>
-                        <span className="text-[10px] font-bold uppercase text-[#1A9C68]">
-                          {selectedTicket.currentAgent?.name ?? (selectedTicket.isGroup ? "Conversa de grupo" : "Aguardando atendente")}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button type="button" onClick={() => void handleAcceptTicket()} className="inline-flex items-center gap-2 rounded-full bg-green-600 px-4 py-2 text-[11px] font-bold uppercase text-white shadow-sm transition hover:bg-green-700">
-                        <CheckSquare className="h-4 w-4" />
-                        Aceitar atendimento
-                      </button>
-                      <button type="button" onClick={() => void handleCloseTicket()} className="inline-flex items-center gap-1 text-[10px] font-bold uppercase text-red-500 transition hover:text-red-600">
-                        <X className="h-3.5 w-3.5" />
-                        Fechar
-                      </button>
-                      <button type="button" className="text-slate-400 transition hover:text-slate-600">
-                        <Info className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-1 flex-col overflow-hidden">
-                    <div className="scrollbar-hide flex-1 overflow-y-auto px-6 py-6">
-                      <div className="mx-auto flex max-w-4xl flex-col gap-4">
-                        {messageLoading ? (
-                          <div className="text-center text-sm text-slate-500">Carregando mensagens...</div>
-                        ) : messages.length === 0 ? (
-                          <EmptyCenter />
-                        ) : (
-                          messages.map((message) => {
-                            const outgoing = message.direction === "outbound";
-                            const system = message.direction === "system";
-
-                            if (system) {
-                              return (
-                                <div key={message.id} className="self-center rounded-full bg-slate-200 px-4 py-2 text-[11px] font-bold uppercase text-slate-500">
-                                  {message.body ?? "Evento interno"}
-                                </div>
-                              );
-                            }
-
-                            return (
-                              <div key={message.id} className={`flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
-                                <article className={`max-w-[80%] rounded-2xl p-3 text-sm shadow-sm ${outgoing ? "border border-[#C6E9AD] bg-[#DCF8C6] text-slate-800" : "rounded-tl-none border border-slate-200 bg-white text-slate-800"}`}>
-                                  <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.06em] text-slate-400">
-                                    {message.senderName ?? (outgoing ? user.name : selectedTicket.customerName)}
-                                  </div>
-                                  <div className="whitespace-pre-wrap text-sm leading-6">{message.body ?? `[${message.contentType}]`}</div>
-                                  <div className="mt-2 text-right text-[10px] text-slate-400">{formatDateTime(message.createdAt)}</div>
-                                </article>
-                              </div>
-                            );
-                          })
-                        )}
-                      </div>
-                    </div>
-
-                    <form onSubmit={handleSendMessage} className="border-t border-slate-200 bg-white px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <textarea
-                          value={messageInput}
-                          onChange={(event) => setMessageInput(event.target.value)}
-                          rows={2}
-                          placeholder="Digite uma mensagem"
-                          className="min-h-[52px] flex-1 resize-none rounded-full border border-slate-200 bg-slate-50 px-5 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white"
-                        />
-                        <button
-                          type="submit"
-                          disabled={sendLoading || !messageInput.trim()}
-                          className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[#1A1C32] px-5 text-sm font-bold uppercase text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
-                        >
-                          <Send className="h-4 w-4" />
-                          {sendLoading ? "Enviando" : "Enviar"}
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                </>
-              ) : (
-                <EmptyCenter />
-              )}
+              {workspacePanel}
             </section>
 
             {showAdmin ? (
@@ -906,7 +1232,7 @@ export default function HomePage() {
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">Admin</div>
-                      <div className="mt-1 text-lg font-semibold text-slate-900">Configurações</div>
+                      <div className="mt-1 text-lg font-semibold text-slate-900">Configuracoes</div>
                     </div>
                     <button type="button" onClick={() => setShowAdminPanel(false)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-500 transition hover:bg-slate-50">
                       Ocultar
@@ -932,7 +1258,7 @@ export default function HomePage() {
                       </form>
                       <div className="mt-4 space-y-3">
                         {instances.map((instance) => (
-                          <InfoRow key={instance.id} title={instance.name} subtitle={instance.evolutionInstanceName} meta={`${instance.status} · ${instance.phoneNumber ?? "sem telefone"}`} />
+                          <InfoRow key={instance.id} title={instance.name} subtitle={instance.evolutionInstanceName} meta={`${instance.status} | ${instance.phoneNumber ?? "sem telefone"}`} />
                         ))}
                       </div>
                     </AdminPanelCard>
@@ -959,7 +1285,7 @@ export default function HomePage() {
                       </form>
                       <div className="mt-4 space-y-3">
                         {agents.map((agent) => (
-                          <InfoRow key={agent.id} title={agent.name} subtitle={agent.email} meta={`${agent.role} · ${agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}`} />
+                          <InfoRow key={agent.id} title={agent.name} subtitle={agent.email} meta={`${agent.role} | ${agent.queues.map((queue) => queue.name).join(", ") || "sem filas"}`} />
                         ))}
                       </div>
                     </AdminPanelCard>
@@ -1028,11 +1354,12 @@ function RailButton(props: { icon: React.ComponentType<{ className?: string }>; 
   );
 }
 
-function SidebarIconButton(props: { icon: React.ComponentType<{ className?: string }>; active?: boolean }) {
+function SidebarIconButton(props: { icon: React.ComponentType<{ className?: string }>; active?: boolean; onClick?: () => void }) {
   const Icon = props.icon;
   return (
     <button
       type="button"
+      onClick={props.onClick}
       className={`rounded p-1 transition ${props.active ? "border bg-white shadow-sm" : "hover:bg-slate-100"}`}
     >
       <Icon className="h-3.5 w-3.5 text-slate-500" />
@@ -1136,6 +1463,34 @@ function InfoRow(props: { title: string; subtitle: string; meta: string }) {
       <div className="mt-1 text-sm text-slate-500">{props.subtitle}</div>
       <div className="mt-2 text-[11px] uppercase tracking-[0.05em] text-slate-400">{props.meta}</div>
     </div>
+  );
+}
+
+
+function WorkspaceSection(props: { title: string; description: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="mb-4">
+        <h3 className="text-lg font-semibold text-slate-900">{props.title}</h3>
+        <p className="mt-1 text-sm text-slate-500">{props.description}</p>
+      </div>
+      <div className="space-y-4">{props.children}</div>
+    </section>
+  );
+}
+
+function WorkspaceStatCard(props: { title: string; value: string; description: string; accent: "emerald" | "amber" | "blue" | "slate" }) {
+  const accentClass = props.accent === "emerald" ? "bg-emerald-500" : props.accent === "amber" ? "bg-amber-500" : props.accent === "blue" ? "bg-blue-500" : "bg-slate-500";
+
+  return (
+    <article className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-semibold text-slate-600">{props.title}</div>
+        <span className={`h-3 w-3 rounded-full ${accentClass}`} />
+      </div>
+      <div className="mt-4 text-3xl font-semibold tracking-tight text-slate-900">{props.value}</div>
+      <div className="mt-2 text-sm text-slate-500">{props.description}</div>
+    </article>
   );
 }
 

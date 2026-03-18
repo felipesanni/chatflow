@@ -9,8 +9,18 @@ interface SendTextParams {
   quotedMessageId?: string;
 }
 
+function normalizeDestination(remoteJid: string) {
+  if (remoteJid.includes('@g.us')) {
+    return remoteJid;
+  }
+
+  return remoteJid.split('@')[0] ?? remoteJid;
+}
+
 export async function sendEvolutionText(params: SendTextParams) {
   const cleanUrl = params.baseUrl.replace(/\/$/, '');
+  const destination = normalizeDestination(params.remoteJid);
+
   const response = await fetch(`${cleanUrl}/message/sendText/${params.instanceName}`, {
     method: 'POST',
     headers: {
@@ -18,7 +28,7 @@ export async function sendEvolutionText(params: SendTextParams) {
       apikey: params.apiKey,
     },
     body: JSON.stringify({
-      number: params.remoteJid,
+      number: destination,
       text: params.text,
       delay: 300,
       quoted: params.quotedMessageId ? { key: { id: params.quotedMessageId } } : undefined,
