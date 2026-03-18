@@ -369,6 +369,15 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (!webhookSetup.ok) {
+      app.log.error({
+        action: 'configure_webhook',
+        instanceName: body.evolutionInstanceName,
+        baseUrl: body.baseUrl,
+        webhookUrl,
+        status: webhookSetup.status,
+        payload: webhookSetup.payload,
+      }, 'Falha ao configurar webhook da Evolution na criacao da instancia.');
+
       return reply.code(400).send({
         message: 'Falha ao configurar o webhook da Evolution para esta instancia.',
         status: webhookSetup.status,
@@ -440,6 +449,16 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (!webhookSetup.ok) {
+      app.log.error({
+        action: 'configure_webhook',
+        instanceId: params.instanceId,
+        instanceName: body.evolutionInstanceName,
+        baseUrl: body.baseUrl,
+        webhookUrl,
+        status: webhookSetup.status,
+        payload: webhookSetup.payload,
+      }, 'Falha ao atualizar webhook da Evolution.');
+
       return reply.code(400).send({
         message: 'Falha ao atualizar o webhook da Evolution para esta instancia.',
         status: webhookSetup.status,
