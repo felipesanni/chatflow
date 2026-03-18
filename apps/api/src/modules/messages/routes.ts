@@ -5,6 +5,7 @@ import { requirePermission } from '../../lib/auth-guard.js';
 import { sendEvolutionAudio, sendEvolutionMedia, sendEvolutionText } from '../../lib/evolution-client.js';
 import { loadEnv } from '../../config/env.js';
 import { decryptSecret, encryptSecret } from '../../lib/secrets.js';
+import type { PermissionMap } from '../../lib/permissions.js';
 
 const outgoingAttachmentSchema = z.object({
   kind: z.enum(['image', 'audio', 'document']),
@@ -31,14 +32,21 @@ const createMessageBodySchema = z.object({
 const env = loadEnv();
 
 function parseDataUrl(input: string) {
-  const match = input.match(/^data:([^;]+);base64,(.+)$/);
+  const match = input.match(/^data:([^,]+),(.+)$/);
 
   if (!match) {
     throw new Error('Arquivo em formato invalido.');
   }
 
+  const metadata = match[1] ?? '';
+  const mimeType = metadata.split(';')[0] ?? 'application/octet-stream';
+
+  if (!metadata.includes(';base64')) {
+    throw new Error('Arquivo em formato invalido.');
+  }
+
   return {
-    mimeType: match[1] ?? 'application/octet-stream',
+    mimeType,
     base64: match[2] ?? '',
   };
 }
@@ -76,6 +84,18 @@ function pickAttachmentPublicUrl(payload: any) {
     ?? null;
 }
 
+function canViewTicket(viewerId: string, permissions: PermissionMap, ticket: { currentAgentId: string | null }) {
+  if (permissions.tickets.viewAll) {
+    return true;
+  }
+
+  return ticket.currentAgentId === null || ticket.currentAgentId === viewerId;
+}
+
+function canReplyToTicket(viewerId: string, ticket: { currentAgentId: string | null }) {
+  return ticket.currentAgentId === viewerId;
+}
+
 export const messageRoutes: FastifyPluginAsync = async (app) => {
   app.get('/tickets/:ticketId/messages', async (request, reply) => {
     const access = await requirePermission(app, request, reply, 'tickets.view');
@@ -83,6 +103,19 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     const session = access.session;
 
     const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const ticket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      select: { id: true, currentAgentId: true },
+    });
+
+    if (!ticket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canViewTicket(session.userId, access.permissions, ticket)) {
+      return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
+    }
+
     const items = await app.prisma.ticketMessage.findMany({
       where: { ticketId: params.ticketId },
       orderBy: { createdAt: 'asc' },
@@ -137,6 +170,10 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
 
     if (!ticket) {
       return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canReplyToTicket(session.userId, ticket)) {
+      return reply.forbidden('Apenas o agente responsavel pode responder este ticket.');
     }
 
     if (!ticket.externalChatId) {
@@ -216,6 +253,9 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (attachmentInput) {
+      const fallbackPublicUrl = attachmentInput.kind === 'image' ? attachmentInput.dataUrl : null;
+      const resolvedPublicUrl = pickAttachmentPublicUrl(delivery.payload) ?? fallbackPublicUrl;
+
       await app.prisma.attachment.create({
         data: {
           id: randomUUID(),
@@ -224,8 +264,8 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
           mimeType: attachmentInput.mimeType || parsedAttachment?.mimeType || 'application/octet-stream',
           sizeBytes: normalizeSizeBytes(attachmentInput.sizeBytes),
           storage: 'external',
-          storageKey: pickAttachmentPublicUrl(delivery.payload) ?? `outbound:${message.id}:${attachmentInput.fileName}`,
-          publicUrl: pickAttachmentPublicUrl(delivery.payload),
+          storageKey: resolvedPublicUrl ?? `outbound:${message.id}:${attachmentInput.fileName}`,
+          publicUrl: resolvedPublicUrl,
         },
       });
     }

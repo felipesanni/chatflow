@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import { requirePermission } from '../../lib/auth-guard.js';
+import type { PermissionMap } from '../../lib/permissions.js';
 
 const ticketListQuerySchema = z.object({
   status: z.enum(['open', 'pending', 'closed']).optional(),
@@ -87,6 +88,8 @@ function serializeTicket(ticket: any) {
     status: ticket.status,
     customerName: ticket.customerNameSnapshot,
     externalChatId: ticket.externalChatId,
+    externalContactId: ticket.externalContactId,
+    customerAvatarUrl: ticket.customerAvatarUrl,
     lastMessagePreview: ticket.lastMessagePreview,
     unreadCount: ticket.unreadCount,
     currentAgent: ticket.currentAgent ? { id: ticket.currentAgent.id, name: ticket.currentAgent.name } : null,
@@ -97,6 +100,18 @@ function serializeTicket(ticket: any) {
   };
 }
 
+function canViewTicket(viewerId: string, permissions: PermissionMap, ticket: { currentAgentId: string | null }) {
+  if (permissions.tickets.viewAll) {
+    return true;
+  }
+
+  return ticket.currentAgentId === null || ticket.currentAgentId === viewerId;
+}
+
+function canManageTicket(viewerId: string, ticket: { currentAgentId: string | null }) {
+  return ticket.currentAgentId === viewerId;
+}
+
 export const ticketRoutes: FastifyPluginAsync = async (app) => {
   app.get('/tickets', async (request, reply) => {
     const access = await requirePermission(app, request, reply, 'tickets.view');
@@ -104,19 +119,44 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     const session = access.session;
 
     const query = ticketListQuerySchema.parse(request.query);
+    if (!access.permissions.tickets.viewAll && query.agentId && query.agentId !== session.userId) {
+      return {
+        items: [],
+        filters: query,
+        viewer: {
+          id: session.userId,
+          role: session.role,
+        },
+      };
+    }
+
+    const where = {
+      status: query.status,
+      currentAgentId: access.permissions.tickets.viewAll ? query.agentId : undefined,
+      currentQueueId: query.queueId,
+      AND: [
+        ...(!access.permissions.tickets.viewAll
+          ? [{
+              OR: [
+                { currentAgentId: session.userId },
+                { currentAgentId: null },
+              ],
+            }]
+          : []),
+        ...(query.search
+          ? [{
+              OR: [
+                { customerNameSnapshot: { contains: query.search, mode: 'insensitive' as const } },
+                { externalChatId: { contains: query.search, mode: 'insensitive' as const } },
+                { lastMessagePreview: { contains: query.search, mode: 'insensitive' as const } },
+              ],
+            }]
+          : []),
+      ],
+    };
+
     const items = await app.prisma.ticket.findMany({
-      where: {
-        status: query.status,
-        currentAgentId: query.agentId,
-        currentQueueId: query.queueId,
-        OR: query.search
-          ? [
-              { customerNameSnapshot: { contains: query.search, mode: 'insensitive' } },
-              { externalChatId: { contains: query.search, mode: 'insensitive' } },
-              { lastMessagePreview: { contains: query.search, mode: 'insensitive' } },
-            ]
-          : undefined,
-      },
+      where,
       include: {
         currentAgent: true,
         currentQueue: true,
@@ -158,12 +198,18 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
+    if (!canViewTicket(session.userId, access.permissions, ticket)) {
+      return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
+    }
+
     return {
       item: {
         id: ticket.id,
         status: ticket.status,
         customerName: ticket.customerNameSnapshot,
         externalChatId: ticket.externalChatId,
+        externalContactId: ticket.externalContactId,
+        customerAvatarUrl: ticket.customerAvatarUrl,
         lastMessagePreview: ticket.lastMessagePreview,
         unreadCount: ticket.unreadCount,
         closedReason: ticket.closedReason,
@@ -293,6 +339,20 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     const session = access.session;
 
     const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const currentTicket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      include: {
+        currentAgent: true,
+      },
+    });
+
+    if (!currentTicket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (currentTicket.currentAgentId && currentTicket.currentAgentId !== session.userId) {
+      return reply.forbidden('Este ticket ja foi assumido por outro agente.');
+    }
 
     const ticket = await app.prisma.ticket.update({
       where: { id: params.ticketId },
@@ -331,6 +391,18 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
     const parsedBody = closeTicketBodySchema.parse(request.body);
     const reason = parsedBody.reason ?? 'Encerrado pelo agente';
+    const currentTicket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      select: { id: true, currentAgentId: true },
+    });
+
+    if (!currentTicket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canManageTicket(session.userId, currentTicket)) {
+      return reply.forbidden('Apenas o agente responsavel pode encerrar este ticket.');
+    }
 
     const ticket = await app.prisma.ticket.update({
       where: { id: params.ticketId },
@@ -377,6 +449,10 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
 
     if (!currentTicket) {
       return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canManageTicket(session.userId, currentTicket)) {
+      return reply.forbidden('Apenas o agente responsavel pode transferir este ticket.');
     }
 
     if (body.agentId) {

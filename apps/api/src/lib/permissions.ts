@@ -3,6 +3,7 @@ import type { Prisma, UserRole } from '@prisma/client';
 export const permissionDefinitions = [
   { key: 'dashboard.view', group: 'Painel geral', label: 'Visualizar painel geral' },
   { key: 'tickets.view', group: 'Atendimento', label: 'Visualizar atendimento' },
+  { key: 'tickets.viewAll', group: 'Atendimento', label: 'Visualizar todos os tickets' },
   { key: 'tickets.accept', group: 'Atendimento', label: 'Aceitar atendimentos' },
   { key: 'tickets.reply', group: 'Atendimento', label: 'Responder mensagens' },
   { key: 'tickets.close', group: 'Atendimento', label: 'Encerrar atendimentos' },
@@ -45,6 +46,7 @@ export function defaultPermissionsForRole(role: UserRole): PermissionMap {
   return {
     'dashboard.view': true,
     'tickets.view': true,
+    'tickets.viewAll': false,
     'tickets.accept': true,
     'tickets.reply': true,
     'tickets.close': true,

@@ -2,6 +2,11 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Prisma } from '@prisma/client';
 import { parseEvolutionPayload } from './evolution.js';
+import { loadEnv } from '../config/env.js';
+import { decryptSecret } from './secrets.js';
+import { fetchEvolutionProfilePictureUrl } from './evolution-client.js';
+
+const env = loadEnv();
 
 function pickHeaderSecret(value: unknown) {
   if (Array.isArray(value)) {
@@ -23,7 +28,7 @@ function normalizeConnectionPhone(value: unknown) {
 
 async function findOrCreateCustomer(
   prisma: FastifyInstance['prisma'],
-  params: { name: string; phoneE164: string },
+  params: { name: string; phoneE164: string; avatarUrl?: string | null },
 ) {
   const existing = await prisma.customer.findFirst({
     where: { phoneE164: params.phoneE164 },
@@ -31,10 +36,10 @@ async function findOrCreateCustomer(
   });
 
   if (existing) {
-    if (existing.name !== params.name) {
+    if (existing.name !== params.name || existing.avatarUrl !== (params.avatarUrl ?? null)) {
       return prisma.customer.update({
         where: { id: existing.id },
-        data: { name: params.name },
+        data: { name: params.name, avatarUrl: params.avatarUrl ?? null },
       });
     }
 
@@ -46,6 +51,7 @@ async function findOrCreateCustomer(
       id: randomUUID(),
       name: params.name,
       phoneE164: params.phoneE164,
+      avatarUrl: params.avatarUrl ?? null,
     },
   });
 }
@@ -184,11 +190,23 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
   }
 
   try {
+    const decryptedApiKey = decryptSecret(instance.apiKeyEncrypted, env.SESSION_SECRET);
+    const profilePictureResponse = parsed.isGroup || !parsed.remoteJid
+      ? null
+      : await fetchEvolutionProfilePictureUrl({
+          baseUrl: instance.baseUrl,
+          apiKey: decryptedApiKey,
+          instanceName: instance.evolutionInstanceName,
+          remoteJid: parsed.remoteJid,
+        }).catch(() => null);
+    const customerAvatarUrl = profilePictureResponse?.profilePictureUrl ?? null;
+
     const customer = parsed.isGroup || !parsed.phone
       ? null
       : await findOrCreateCustomer(app.prisma, {
           name: parsed.pushName ?? parsed.phone,
           phoneE164: parsed.phone,
+          avatarUrl: customerAvatarUrl,
         });
 
     let ticket = await app.prisma.ticket.findFirst({
@@ -208,6 +226,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           externalChatId: parsed.remoteJid,
           externalContactId: parsed.phone,
           customerNameSnapshot: parsed.isGroup ? (parsed.pushName ?? 'Grupo WhatsApp') : (customer?.name ?? parsed.pushName ?? parsed.phone ?? 'Contato sem nome'),
+          customerAvatarUrl,
           status: parsed.fromMe ? 'open' : 'pending',
           unreadCount: parsed.fromMe ? 0 : 1,
           isGroup: parsed.isGroup,
@@ -229,6 +248,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         data: {
           customerId: customer?.id ?? ticket.customerId,
           customerNameSnapshot: customer?.name ?? parsed.pushName ?? ticket.customerNameSnapshot,
+          customerAvatarUrl: customerAvatarUrl ?? ticket.customerAvatarUrl,
           lastMessagePreview: parsed.body,
           unreadCount: parsed.fromMe ? 0 : { increment: 1 },
           status: parsed.fromMe ? ticket.status : ticket.currentAgentId ? ticket.status : 'pending',

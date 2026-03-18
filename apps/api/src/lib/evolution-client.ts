@@ -38,6 +38,13 @@ interface ConfigureWebhookParams {
   webhookUrl: string;
 }
 
+interface FetchProfilePictureParams {
+  baseUrl: string;
+  apiKey: string;
+  instanceName: string;
+  remoteJid: string;
+}
+
 const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'];
 const WEBSOCKET_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'];
 
@@ -47,6 +54,16 @@ function normalizeDestination(remoteJid: string) {
   }
 
   return remoteJid.split('@')[0] ?? remoteJid;
+}
+
+function pickProfilePictureUrl(payload: any) {
+  return payload?.profilePictureUrl
+    ?? payload?.pictureUrl
+    ?? payload?.url
+    ?? payload?.data?.profilePictureUrl
+    ?? payload?.data?.pictureUrl
+    ?? payload?.data?.url
+    ?? null;
 }
 
 export async function sendEvolutionText(params: SendTextParams) {
@@ -149,6 +166,34 @@ export async function sendEvolutionAudio(params: SendAudioParams) {
     status: response.status,
     payload,
     messageId: payload?.key?.id ?? payload?.message?.key?.id ?? randomUUID(),
+  };
+}
+
+export async function fetchEvolutionProfilePictureUrl(params: FetchProfilePictureParams) {
+  const cleanUrl = params.baseUrl.replace(/\/$/, '');
+  const response = await fetch(`${cleanUrl}/chat/fetchProfilePictureUrl/${params.instanceName}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: params.apiKey,
+    },
+    body: JSON.stringify({
+      number: params.remoteJid,
+    }),
+  });
+
+  let payload: any = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    payload,
+    profilePictureUrl: pickProfilePictureUrl(payload),
   };
 }
 

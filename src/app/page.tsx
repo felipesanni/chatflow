@@ -65,6 +65,8 @@ type TicketItem = {
   status: "open" | "pending" | "closed";
   customerName: string;
   externalChatId: string;
+  externalContactId?: string | null;
+  customerAvatarUrl?: string | null;
   lastMessagePreview: string | null;
   unreadCount: number;
   isGroup: boolean;
@@ -142,6 +144,7 @@ type CustomerItem = {
   id: string;
   name: string;
   phone: string | null;
+  avatarUrl?: string | null;
   email: string | null;
   companyName: string | null;
   notes: string | null;
@@ -167,6 +170,7 @@ type QuickReplyItem = {
 const permissionDefinitions = [
   { key: "dashboard.view", group: "Painel geral", label: "Visualizar painel geral" },
   { key: "tickets.view", group: "Atendimento", label: "Visualizar atendimento" },
+  { key: "tickets.viewAll", group: "Atendimento", label: "Visualizar todos os tickets" },
   { key: "tickets.accept", group: "Atendimento", label: "Aceitar atendimentos" },
   { key: "tickets.reply", group: "Atendimento", label: "Responder mensagens" },
   { key: "tickets.close", group: "Atendimento", label: "Encerrar atendimentos" },
@@ -220,6 +224,7 @@ function defaultPermissionsForRole(role: "admin" | "agent"): PermissionMap {
   return {
     "dashboard.view": true,
     "tickets.view": true,
+    "tickets.viewAll": false,
     "tickets.accept": true,
     "tickets.reply": true,
     "tickets.close": true,
@@ -374,6 +379,20 @@ function formatAudioTime(totalSeconds: number) {
   const minutes = Math.floor(safeSeconds / 60);
   const seconds = safeSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function onlyPhoneDigits(value: string) {
+  return value.replace(/\D/g, "").slice(0, 13);
+}
+
+function formatPhoneInput(value: string) {
+  const digits = onlyPhoneDigits(value);
+
+  if (!digits) return "";
+  if (digits.length <= 2) return `+${digits}`;
+  if (digits.length <= 4) return `+${digits.slice(0, 2)} (${digits.slice(2)}`;
+  if (digits.length <= 9) return `+${digits.slice(0, 2)} (${digits.slice(2, 4)}) ${digits.slice(4)}`;
+  return `+${digits.slice(0, 2)} (${digits.slice(2, 4)}) ${digits.slice(4, 9)}-${digits.slice(9)}`;
 }
 
 function initials(name: string) {
@@ -532,15 +551,33 @@ export default function HomePage() {
   const canViewContacts = currentUser.permissions["contacts.view"];
   const canManageContacts = currentUser.permissions["contacts.manage"];
 
+  const isSelectedTicketOwnedByCurrentUser = Boolean(selectedTicket && selectedTicket.currentAgent?.id === user?.id);
   const canAcceptSelectedTicket = Boolean(
     selectedTicket &&
     selectedTicket.status !== "closed" &&
     selectedTicket.currentAgent?.id !== user?.id &&
-    currentUser.permissions["tickets.accept"],
+    currentUser.permissions["tickets.accept"] &&
+    !selectedTicket.currentAgent,
   );
-  const canCloseSelectedTicket = Boolean(selectedTicket && selectedTicket.status !== "closed" && currentUser.permissions["tickets.close"]);
-  const canSendToSelectedTicket = Boolean(selectedTicket && selectedTicket.status !== "closed" && currentUser.permissions["tickets.reply"]);
-  const canTransferSelectedTicket = Boolean(selectedTicket && selectedTicket.status !== "closed" && canViewTeam && currentUser.permissions["tickets.accept"]);
+  const canCloseSelectedTicket = Boolean(
+    selectedTicket &&
+    selectedTicket.status !== "closed" &&
+    currentUser.permissions["tickets.close"] &&
+    isSelectedTicketOwnedByCurrentUser,
+  );
+  const canSendToSelectedTicket = Boolean(
+    selectedTicket &&
+    selectedTicket.status !== "closed" &&
+    currentUser.permissions["tickets.reply"] &&
+    isSelectedTicketOwnedByCurrentUser,
+  );
+  const canTransferSelectedTicket = Boolean(
+    selectedTicket &&
+    selectedTicket.status !== "closed" &&
+    canViewTeam &&
+    currentUser.permissions["tickets.accept"] &&
+    isSelectedTicketOwnedByCurrentUser,
+  );
 
   const quickReplyCommand = React.useMemo(() => {
     const match = messageInput.match(/(?:^|\s)\/([a-z0-9_-]*)$/i);
@@ -1152,11 +1189,12 @@ export default function HomePage() {
           : "document";
 
     const dataUrl = await readFileAsDataUrl(file);
+    const normalizedMimeType = (file.type.split(";")[0] || "").trim();
 
     return {
       kind,
       fileName: file.name,
-      mimeType: file.type || (kind === "image" ? "image/jpeg" : kind === "audio" ? "audio/webm" : "application/octet-stream"),
+      mimeType: normalizedMimeType || (kind === "image" ? "image/jpeg" : kind === "audio" ? "audio/ogg" : "application/octet-stream"),
       sizeBytes: file.size,
       dataUrl,
     } satisfies ComposerAttachment;
@@ -1205,10 +1243,10 @@ export default function HomePage() {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")
+      const mimeType = MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")
           ? "audio/ogg;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+          ? "audio/webm;codecs=opus"
           : "";
       const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
 
@@ -1252,7 +1290,8 @@ export default function HomePage() {
           return;
         }
 
-        const file = new File([blob], `audio-${Date.now()}.${extension}`, { type: recordedMimeType });
+        const normalizedRecordedMimeType = recordedMimeType.split(";")[0] || recordedMimeType;
+        const file = new File([blob], `audio-${Date.now()}.${extension}`, { type: normalizedRecordedMimeType });
         const attachment = await buildComposerAttachmentFromFile(file);
         setComposerAttachment(attachment);
         setPanelMessage("Áudio gravado e pronto para envio.");
@@ -1711,7 +1750,10 @@ export default function HomePage() {
     try {
       await apiFetch(editingCustomerId ? `/customers/${editingCustomerId}` : "/customers", {
         method: editingCustomerId ? "PUT" : "POST",
-        body: JSON.stringify(customerForm),
+        body: JSON.stringify({
+          ...customerForm,
+          phone: onlyPhoneDigits(customerForm.phone),
+        }),
       });
       resetCustomerForm();
       closeManagementModal();
@@ -1746,7 +1788,7 @@ export default function HomePage() {
         method: "POST",
         body: JSON.stringify({
           customerName: conversationForm.customerName,
-          phone: conversationForm.phone,
+          phone: onlyPhoneDigits(conversationForm.phone),
           whatsappInstanceId: conversationForm.whatsappInstanceId,
           queueId: conversationForm.queueId || null,
         }),
@@ -2605,8 +2647,12 @@ export default function HomePage() {
             <div className="border-b border-slate-200 bg-white px-5 py-3">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
-                  <div className="grid h-12 w-12 place-items-center rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700">
-                    {initials(selectedTicket.customerName) || "C"}
+                  <div className="grid h-12 w-12 place-items-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700">
+                    {selectedTicket.customerAvatarUrl ? (
+                      <img src={selectedTicket.customerAvatarUrl} alt={`Foto de ${selectedTicket.customerName}`} className="h-full w-full object-cover" />
+                    ) : (
+                      initials(selectedTicket.customerName) || "C"
+                    )}
                   </div>
                   <div>
                     <button
@@ -2621,7 +2667,7 @@ export default function HomePage() {
                       <span className="text-slate-300">•</span>
                       <span>{selectedTicket.currentAgent?.name ?? (selectedTicket.isGroup ? "Conversa de grupo" : "Aguardando atendente")}</span>
                       <span className="text-slate-300">•</span>
-                      <span>{selectedTicket.externalChatId}</span>
+                      <span>{formatPhoneInput(selectedTicket.externalContactId ?? selectedTicket.externalChatId)}</span>
                     </div>
                   </div>
                 </div>
@@ -2677,6 +2723,15 @@ export default function HomePage() {
                     messages.map((message) => {
                       const outgoing = message.direction === "outbound";
                       const system = message.direction === "system";
+                      const hasAttachment = Boolean(message.attachments?.length);
+                      const normalizedBody = (message.body ?? "").trim();
+                      const shouldHideMessageBody =
+                        hasAttachment &&
+                        (
+                          !normalizedBody
+                          || /^(imagem|audio|documento|video) recebido$/i.test(normalizedBody)
+                          || /^\[(image|audio|document|video)\]\s/i.test(normalizedBody)
+                        );
 
                       if (system) {
                         return (
@@ -2725,7 +2780,7 @@ export default function HomePage() {
                                 ))}
                               </div>
                             ) : null}
-                            {message.body ? <div className="whitespace-pre-wrap text-[15px] leading-6">{message.body}</div> : null}
+                            {message.body && !shouldHideMessageBody ? <div className="whitespace-pre-wrap text-[15px] leading-6">{message.body}</div> : null}
                             {!message.body && (!message.attachments || message.attachments.length === 0) ? <div className="whitespace-pre-wrap text-[15px] leading-6">{`[${message.contentType}]`}</div> : null}
                             <div className={`mt-2 text-right text-[11px] ${outgoing ? "text-slate-500" : "text-slate-400"}`}>{formatDateTime(message.createdAt)}</div>
                           </article>
@@ -2741,8 +2796,14 @@ export default function HomePage() {
                 {composerAttachment ? (
                   <div className="mb-3 flex items-center justify-between gap-3 rounded-[22px] border border-slate-200 bg-white/90 px-4 py-3 shadow-[0_14px_40px_rgba(148,163,184,0.1)]">
                     <div className="flex min-w-0 items-center gap-3">
-                      <span className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-100 text-slate-500">
-                        {composerAttachment.kind === "image" ? <FileImage className="h-4 w-4" /> : composerAttachment.kind === "audio" ? <FileAudio className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+                      <span className="grid h-10 w-10 place-items-center overflow-hidden rounded-2xl bg-slate-100 text-slate-500">
+                        {composerAttachment.kind === "image" ? (
+                          <img src={composerAttachment.dataUrl} alt={composerAttachment.fileName} className="h-full w-full object-cover" />
+                        ) : composerAttachment.kind === "audio" ? (
+                          <FileAudio className="h-4 w-4" />
+                        ) : (
+                          <FileText className="h-4 w-4" />
+                        )}
                       </span>
                       <div className="min-w-0">
                         <div className="truncate text-sm font-semibold text-slate-800">{composerAttachment.fileName}</div>
@@ -2860,12 +2921,25 @@ export default function HomePage() {
                   </div>
                   <div className="space-y-5 overflow-y-auto px-5 py-5">
                     <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-5">
-                      <div className="mx-auto grid h-24 w-24 place-items-center rounded-full bg-slate-200 text-2xl font-semibold text-slate-600">
-                        {initials(selectedTicket.customerName) || "C"}
+                      <div className="mx-auto grid h-24 w-24 place-items-center overflow-hidden rounded-full bg-slate-200 text-2xl font-semibold text-slate-600">
+                        {selectedTicket.customerAvatarUrl ? (
+                          <img src={selectedTicket.customerAvatarUrl} alt={`Foto de ${selectedTicket.customerName}`} className="h-full w-full object-cover" />
+                        ) : (
+                          initials(selectedTicket.customerName) || "C"
+                        )}
                       </div>
                       <div className="mt-4 text-center">
                         <div className="text-xl font-semibold text-slate-900">{selectedTicket.customerName}</div>
-                        <div className="mt-1 text-sm text-slate-500">{selectedTicket.externalChatId}</div>
+                        <div className="mt-4 grid gap-3 text-left">
+                          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Nome</div>
+                            <div className="mt-1 text-sm font-semibold text-slate-800">{selectedTicket.customerName}</div>
+                          </div>
+                          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Telefone</div>
+                            <div className="mt-1 text-sm font-semibold text-slate-800">{formatPhoneInput(selectedTicket.externalContactId ?? selectedTicket.externalChatId)}</div>
+                          </div>
+                        </div>
                       </div>
                     </div>
 
@@ -2873,7 +2947,7 @@ export default function HomePage() {
                       <InfoRow title="Status" subtitle={traduzirStatusTicket(selectedTicket.status)} meta={`não lidos: ${selectedTicket.unreadCount}`} />
                       <InfoRow title="Fila" subtitle={selectedTicket.currentQueue?.name ?? "Sem fila"} meta={selectedTicket.isGroup ? "conversa em grupo" : "conversa individual"} />
                       <InfoRow title="Responsável" subtitle={selectedTicket.currentAgent?.name ?? "Sem agente"} meta={selectedTicket.whatsappInstance.name} />
-                      <InfoRow title="Atualizado em" subtitle={formatDateTime(selectedTicket.updatedAt)} meta={selectedTicket.externalChatId} />
+                      <InfoRow title="Atualizado em" subtitle={formatDateTime(selectedTicket.updatedAt)} meta={formatPhoneInput(selectedTicket.externalContactId ?? selectedTicket.externalChatId)} />
                     </div>
                   </div>
                 </aside>
@@ -2992,9 +3066,9 @@ export default function HomePage() {
               />
               <CompactField
                 label="Telefone"
-                value={conversationForm.phone}
-                onChange={(value) => setConversationForm((current) => ({ ...current, phone: value }))}
-                placeholder="5511999999999"
+                value={formatPhoneInput(conversationForm.phone)}
+                onChange={(value) => setConversationForm((current) => ({ ...current, phone: onlyPhoneDigits(value) }))}
+                placeholder="+55 (11) 99999-9999"
               />
             </div>
             <div className="grid gap-4 md:grid-cols-2">
@@ -3064,9 +3138,9 @@ export default function HomePage() {
               />
               <CompactField
                 label="Telefone"
-                value={customerForm.phone}
-                onChange={(value) => setCustomerForm((current) => ({ ...current, phone: value }))}
-                placeholder="5511999999999"
+                value={formatPhoneInput(customerForm.phone)}
+                onChange={(value) => setCustomerForm((current) => ({ ...current, phone: onlyPhoneDigits(value) }))}
+                placeholder="+55 (11) 99999-9999"
               />
               <CompactField
                 label="E-mail"
@@ -3506,7 +3580,7 @@ export default function HomePage() {
             </div>
           </aside>
 
-          <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[280px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
+          <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[340px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
             {ticketWorkspaceAtivo ? (
               <div className="flex h-full min-w-0 flex-col border-r border-slate-200 bg-white">
                 <div className="space-y-3 border-b border-slate-200 p-3">
@@ -3551,7 +3625,7 @@ export default function HomePage() {
                 </div>
 
                 <div className="border-b border-slate-200 px-3 py-2">
-                  <div className="flex items-center gap-2">
+                  <div className={`grid items-center gap-2 ${canViewGroups ? "grid-cols-3" : "grid-cols-2"}`}>
                   <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
                   <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
                   {canViewGroups ? <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" /> : null}
@@ -3573,8 +3647,12 @@ export default function HomePage() {
                           className={`group relative mb-1.5 flex w-full min-w-0 items-start gap-2.5 rounded-[18px] border text-left transition ${selected ? "border-slate-300 bg-slate-50 shadow-sm" : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"} ${compact ? "p-2.5" : "p-3"}`}
                         >
                           <div className={compact ? "pt-0.5" : "pt-1"}>
-                            <div className={`grid place-items-center rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700 ${compact ? "h-11 w-11" : "h-12 w-12"}`}>
-                              {initials(ticket.customerName) || "C"}
+                            <div className={`grid place-items-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700 ${compact ? "h-11 w-11" : "h-12 w-12"}`}>
+                              {ticket.customerAvatarUrl ? (
+                                <img src={ticket.customerAvatarUrl} alt={`Foto de ${ticket.customerName}`} className="h-full w-full object-cover" />
+                              ) : (
+                                initials(ticket.customerName) || "C"
+                              )}
                             </div>
                           </div>
 
@@ -3588,6 +3666,9 @@ export default function HomePage() {
                                 </div>
                                 <p className={`mt-0.5 truncate font-medium leading-5 text-slate-600 ${compact ? "text-[12px]" : "text-[13px]"}`}>
                                   {ticket.lastMessagePreview ?? "Sem mensagem registrada"}
+                                </p>
+                                <p className="mt-1 truncate text-[11px] text-slate-400">
+                                  {formatPhoneInput(ticket.externalContactId ?? ticket.externalChatId)}
                                 </p>
                               </div>
                               <span className="whitespace-nowrap text-[11px] font-medium text-slate-400">{formatHour(ticket.updatedAt)}</span>
@@ -3752,13 +3833,13 @@ function StatusTab(props: { label: string; count: number; active: boolean; onCli
     <button
       type="button"
       onClick={props.onClick}
-      className={`relative flex flex-1 items-center justify-center gap-2 rounded-[14px] border px-3 py-2.5 text-[10px] font-bold uppercase tracking-[0.1em] transition-all ${props.active ? "border-[#1A1C32] bg-[#1A1C32] text-white" : "border-transparent text-slate-400 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-700"}`}
+      className={`relative flex min-w-0 items-center justify-center gap-1.5 rounded-[14px] border px-2 py-2.5 text-[10px] font-bold uppercase tracking-[0.08em] transition-all ${props.active ? "border-[#1A1C32] bg-[#1A1C32] text-white" : "border-transparent text-slate-400 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-700"}`}
     >
       <div className="relative">
         {props.icon}
         {props.count > 0 ? <span className={`absolute -right-2 -top-2 min-w-[14px] rounded-full px-1 text-[8px] text-white ${props.color}`}>{props.count}</span> : null}
       </div>
-      {props.label}
+      <span className="min-w-0 truncate">{props.label}</span>
     </button>
   );
 }
@@ -3800,16 +3881,25 @@ function AudioMessagePlayer(props: {
     const handlePlay = () => setIsPlaying(true);
 
     audio.addEventListener("loadedmetadata", syncDuration);
+    audio.addEventListener("loadeddata", syncDuration);
     audio.addEventListener("durationchange", syncDuration);
+    audio.addEventListener("canplay", syncDuration);
     audio.addEventListener("timeupdate", syncTime);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("pause", handlePause);
     audio.addEventListener("play", handlePlay);
 
+    if (audio.readyState >= 1) {
+      syncDuration();
+      syncTime();
+    }
+
     return () => {
       audio.pause();
       audio.removeEventListener("loadedmetadata", syncDuration);
+      audio.removeEventListener("loadeddata", syncDuration);
       audio.removeEventListener("durationchange", syncDuration);
+      audio.removeEventListener("canplay", syncDuration);
       audio.removeEventListener("timeupdate", syncTime);
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("pause", handlePause);

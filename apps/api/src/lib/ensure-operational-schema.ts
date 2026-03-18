@@ -118,12 +118,17 @@ const operationalStatements = [
       id UUID PRIMARY KEY,
       name TEXT NOT NULL,
       phone_e164 TEXT,
+      avatar_url TEXT,
       email TEXT,
       company_name TEXT,
       notes TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+  `,
+  `
+    ALTER TABLE customers
+      ADD COLUMN IF NOT EXISTS avatar_url TEXT;
   `,
   `
     CREATE UNIQUE INDEX IF NOT EXISTS customers_phone_e164_key
