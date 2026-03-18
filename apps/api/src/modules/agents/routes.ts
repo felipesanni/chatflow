@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
-import type { Prisma } from '@prisma/client';
-import { requireSession } from '../../lib/auth-guard.js';
+import { requirePermission } from '../../lib/auth-guard.js';
 import { hashPassword } from '../../lib/password.js';
+import { defaultPermissionsForRole, permissionDefinitions, permissionsToJson, resolvePermissions, type PermissionKey } from '../../lib/permissions.js';
 
 const createAgentSchema = z.object({
   name: z.string().min(2),
@@ -11,6 +11,7 @@ const createAgentSchema = z.object({
   password: z.string().min(8),
   role: z.enum(['admin', 'agent']).default('agent'),
   queueIds: z.array(z.string().uuid()).default([]),
+  permissions: z.record(z.string(), z.boolean()).optional(),
 });
 
 const updateAgentSchema = z.object({
@@ -18,12 +19,26 @@ const updateAgentSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8).optional().or(z.literal('')),
   role: z.enum(['admin', 'agent']).default('agent'),
+  permissions: z.record(z.string(), z.boolean()).optional(),
 });
+
+const validPermissionKeys = new Set(permissionDefinitions.map((item) => item.key));
+
+function sanitizePermissions(input: Record<string, boolean> | undefined, role: 'admin' | 'agent') {
+  const normalized: Partial<Record<PermissionKey, boolean>> = {};
+
+  for (const [key, value] of Object.entries(input ?? {})) {
+    if (validPermissionKeys.has(key as PermissionKey) && typeof value === 'boolean') {
+      normalized[key as PermissionKey] = value;
+    }
+  }
+
+  return permissionsToJson(normalized, role);
+}
 
 export const agentRoutes: FastifyPluginAsync = async (app) => {
   app.get('/agents', async (request, reply) => {
-    const session = requireSession(request, reply);
-    if (!session) return;
+    if (!(await requirePermission(app, request, reply, 'team.view'))) return;
 
     const items = await app.prisma.agent.findMany({
       include: {
@@ -43,6 +58,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         name: agent.name,
         email: agent.user.email,
         role: agent.user.role,
+        permissions: resolvePermissions(agent.user.role, agent.user.permissions),
         presence: agent.presence,
         queues: agent.queueLinks.map((link: any) => ({ id: link.queue.id, name: link.queue.name })),
         createdAt: agent.createdAt,
@@ -51,11 +67,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/agents', async (request, reply) => {
-    const session = requireSession(request, reply);
-    if (!session) return;
-    if (session.role !== 'admin') {
-      return reply.forbidden('Somente administradores podem criar agentes.');
-    }
+    if (!(await requirePermission(app, request, reply, 'agents.manage'))) return;
 
     const body = createAgentSchema.parse(request.body);
     const userId = randomUUID();
@@ -66,6 +78,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         email: body.email.toLowerCase(),
         passwordHash: hashPassword(body.password),
         role: body.role,
+        permissions: sanitizePermissions(body.permissions, body.role),
         status: 'active',
         agent: {
           create: {
@@ -93,7 +106,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (!created) {
-      return reply.internalServerError('Não foi possível persistir o usuário do agente.');
+      return reply.internalServerError('Nao foi possivel persistir o usuario do agente.');
     }
 
     app.io.emit('agent.updated', { agentId: userId, action: 'created' });
@@ -104,6 +117,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         name: created.agent?.name ?? body.name,
         email: created.email,
         role: created.role,
+        permissions: resolvePermissions(created.role, created.permissions),
         presence: created.agent?.presence ?? 'offline',
         queues: created.agent?.queueLinks.map((link: any) => ({ id: link.queue.id, name: link.queue.name })) ?? [],
       },
@@ -111,11 +125,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.put('/agents/:agentId', async (request, reply) => {
-    const session = requireSession(request, reply);
-    if (!session) return;
-    if (session.role !== 'admin') {
-      return reply.forbidden('Somente administradores podem editar agentes.');
-    }
+    if (!(await requirePermission(app, request, reply, 'agents.manage'))) return;
 
     const params = z.object({ agentId: z.string().uuid() }).parse(request.params);
     const body = updateAgentSchema.parse(request.body);
@@ -126,7 +136,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (!existing) {
-      return reply.notFound('Agente não encontrado.');
+      return reply.notFound('Agente nao encontrado.');
     }
 
     const normalizedEmail = body.email.toLowerCase();
@@ -139,7 +149,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (emailConflict) {
-      return reply.conflict('Já existe outro usuário com este e-mail.');
+      return reply.conflict('Ja existe outro usuario com este e-mail.');
     }
 
     await app.prisma.$transaction(async (tx) => {
@@ -148,6 +158,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         data: {
           email: normalizedEmail,
           role: body.role,
+          permissions: sanitizePermissions(body.permissions, body.role),
           ...(body.password ? { passwordHash: hashPassword(body.password) } : {}),
         },
       });
@@ -169,6 +180,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         name: body.name,
         email: normalizedEmail,
         role: body.role,
+        permissions: resolvePermissions(body.role, body.permissions ?? defaultPermissionsForRole(body.role)),
       },
     });
   });

@@ -44,6 +44,8 @@ type AuthUser = {
   email: string;
   role: "admin" | "agent";
   name: string;
+  avatarUrl?: string | null;
+  permissions: PermissionMap;
 };
 
 type AuthResponse = {
@@ -89,6 +91,7 @@ type AgentItem = {
   name: string;
   email: string;
   role: "admin" | "agent";
+  permissions: PermissionMap;
   presence: string;
   queues: Array<{ id: string; name: string }>;
   createdAt: string;
@@ -102,6 +105,127 @@ type QueueItem = {
   openTicketCount: number;
   agents: Array<{ id: string; name: string }>;
 };
+
+type CreateConversationResponse = {
+  item: TicketItem;
+  created: boolean;
+};
+
+type CustomerItem = {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  companyName: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastTicket: {
+    id: string;
+    status: "open" | "pending" | "closed";
+    updatedAt: string;
+    queueName: string | null;
+  } | null;
+};
+
+type QuickReplyItem = {
+  id: string;
+  shortcut: string;
+  content: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+const permissionDefinitions = [
+  { key: "dashboard.view", group: "Painel geral", label: "Visualizar painel geral" },
+  { key: "tickets.view", group: "Atendimento", label: "Visualizar atendimento" },
+  { key: "tickets.accept", group: "Atendimento", label: "Aceitar atendimentos" },
+  { key: "tickets.reply", group: "Atendimento", label: "Responder mensagens" },
+  { key: "tickets.close", group: "Atendimento", label: "Encerrar atendimentos" },
+  { key: "tickets.groups", group: "Atendimento", label: "Visualizar grupos" },
+  { key: "channels.view", group: "Canais e instâncias", label: "Visualizar canais e instâncias" },
+  { key: "channels.manage", group: "Canais e instâncias", label: "Cadastrar e editar instâncias" },
+  { key: "quickReplies.view", group: "Respostas rápidas", label: "Visualizar respostas rápidas" },
+  { key: "quickReplies.manage", group: "Respostas rápidas", label: "Cadastrar e editar respostas rápidas" },
+  { key: "team.view", group: "Equipe e filas", label: "Visualizar equipe e filas" },
+  { key: "agents.manage", group: "Equipe e filas", label: "Cadastrar e editar usuários" },
+  { key: "queues.manage", group: "Equipe e filas", label: "Cadastrar e editar filas" },
+  { key: "queues.assign", group: "Equipe e filas", label: "Associar agentes às filas" },
+  { key: "api.view", group: "API", label: "Visualizar módulo de API" },
+  { key: "contacts.view", group: "Contatos", label: "Visualizar contatos" },
+  { key: "profile.view", group: "Perfil", label: "Visualizar perfil" },
+  { key: "activity.view", group: "Atividade", label: "Visualizar atividade operacional" },
+  { key: "calendar.view", group: "Agenda", label: "Visualizar agenda operacional" },
+  { key: "automations.view", group: "Automações", label: "Visualizar automações" },
+  { key: "settings.view", group: "Configurações", label: "Visualizar configurações" },
+] as const;
+
+type PermissionKey = (typeof permissionDefinitions)[number]["key"];
+type PermissionMap = Record<PermissionKey, boolean>;
+type WorkspaceKey = "dashboard" | "tickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings";
+
+const permissionKeys = permissionDefinitions.map((item) => item.key) as PermissionKey[];
+const workspacePermissions: Record<WorkspaceKey, PermissionKey> = {
+  dashboard: "dashboard.view",
+  tickets: "tickets.view",
+  channels: "channels.view",
+  quickReplies: "quickReplies.view",
+  team: "team.view",
+  api: "api.view",
+  contacts: "contacts.view",
+  profile: "profile.view",
+  activity: "activity.view",
+  calendar: "calendar.view",
+  automations: "automations.view",
+  settings: "settings.view",
+};
+
+function defaultPermissionsForRole(role: "admin" | "agent"): PermissionMap {
+  if (role === "admin") {
+    return permissionKeys.reduce((acc, key) => {
+      acc[key] = true;
+      return acc;
+    }, {} as PermissionMap);
+  }
+
+  return {
+    "dashboard.view": true,
+    "tickets.view": true,
+    "tickets.accept": true,
+    "tickets.reply": true,
+    "tickets.close": true,
+    "tickets.groups": true,
+    "channels.view": true,
+    "channels.manage": false,
+    "quickReplies.view": true,
+    "quickReplies.manage": false,
+    "team.view": false,
+    "agents.manage": false,
+    "queues.manage": false,
+    "queues.assign": false,
+    "api.view": false,
+    "contacts.view": true,
+    "profile.view": true,
+    "activity.view": true,
+    "calendar.view": true,
+    "automations.view": false,
+    "settings.view": false,
+  };
+}
+
+function normalizePermissions(role: "admin" | "agent", raw?: Partial<Record<PermissionKey, boolean>> | null): PermissionMap {
+  const defaults = defaultPermissionsForRole(role);
+  if (!raw) return defaults;
+
+  const normalized = { ...defaults };
+  for (const key of permissionKeys) {
+    if (typeof raw[key] === "boolean") {
+      normalized[key] = raw[key] as boolean;
+    }
+  }
+  return normalized;
+}
 
 const API_URL = "/api-proxy";
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL ?? null;
@@ -203,6 +327,8 @@ export default function HomePage() {
   const [instances, setInstances] = React.useState<InstanceItem[]>([]);
   const [agents, setAgents] = React.useState<AgentItem[]>([]);
   const [queues, setQueues] = React.useState<QueueItem[]>([]);
+  const [customers, setCustomers] = React.useState<CustomerItem[]>([]);
+  const [quickReplies, setQuickReplies] = React.useState<QuickReplyItem[]>([]);
 
   const [ticketLoading, setTicketLoading] = React.useState(false);
   const [messageLoading, setMessageLoading] = React.useState(false);
@@ -210,21 +336,31 @@ export default function HomePage() {
   const [instanceLoading, setInstanceLoading] = React.useState(false);
   const [agentLoading, setAgentLoading] = React.useState(false);
   const [queueLoading, setQueueLoading] = React.useState(false);
+  const [quickReplyLoading, setQuickReplyLoading] = React.useState(false);
+  const [conversationLoading, setConversationLoading] = React.useState(false);
   const [assignmentLoading, setAssignmentLoading] = React.useState<string | null>(null);
   const [editingInstanceId, setEditingInstanceId] = React.useState<string | null>(null);
   const [editingAgentId, setEditingAgentId] = React.useState<string | null>(null);
   const [editingQueueId, setEditingQueueId] = React.useState<string | null>(null);
+  const [editingQuickReplyId, setEditingQuickReplyId] = React.useState<string | null>(null);
+  const [managementModal, setManagementModal] = React.useState<null | "instance" | "agent" | "queue" | "conversation" | "quickReply">(null);
+  const [managementModalTab, setManagementModalTab] = React.useState<"general" | "permissions">("general");
 
   const [messageInput, setMessageInput] = React.useState("");
   const [searchQuery, setSearchQuery] = React.useState("");
   const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "grupos">("atendendo");
-  const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "channels" | "team" | "api" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
+  const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
   const [adminSection, setAdminSection] = React.useState<"instances" | "agents" | "queues">("instances");
   const [showRail, setShowRail] = React.useState(false);
+  const [userMenuOpen, setUserMenuOpen] = React.useState(false);
   const [ticketDensity, setTicketDensity] = React.useState<"comfortable" | "compact">("comfortable");
   const [showOnlyUnread, setShowOnlyUnread] = React.useState(false);
   const [showOnlyMine, setShowOnlyMine] = React.useState(false);
+  const [selectedQueueFilter, setSelectedQueueFilter] = React.useState<string>("all");
   const [showTicketDetails, setShowTicketDetails] = React.useState(false);
+  const [profileName, setProfileName] = React.useState("");
+  const [profileAvatarPreview, setProfileAvatarPreview] = React.useState<string | null>(null);
+  const [profileSaving, setProfileSaving] = React.useState(false);
 
   const [loginForm, setLoginForm] = React.useState({ email: "", password: "" });
   const [bootstrapForm, setBootstrapForm] = React.useState({ name: "", email: "", password: "" });
@@ -240,9 +376,18 @@ export default function HomePage() {
     email: "",
     password: "",
     role: "agent" as "admin" | "agent",
+    permissions: defaultPermissionsForRole("agent"),
   });
   const [queueForm, setQueueForm] = React.useState({ name: "", color: "#1A1C32" });
+  const [quickReplyForm, setQuickReplyForm] = React.useState({ shortcut: "", content: "", isActive: true });
+  const [conversationForm, setConversationForm] = React.useState({
+    customerName: "",
+    phone: "",
+    whatsappInstanceId: "",
+    queueId: "",
+  });
   const socketRef = React.useRef<Socket | null>(null);
+  const userMenuRef = React.useRef<HTMLDivElement | null>(null);
 
   const selectedTicket = React.useMemo(
     () => tickets.find((ticket) => ticket.id === selectedTicketId) ?? null,
@@ -254,11 +399,43 @@ export default function HomePage() {
     email: "",
     role: "agent",
     name: "",
+    avatarUrl: null,
+    permissions: defaultPermissionsForRole("agent"),
   };
 
-  const canAcceptSelectedTicket = Boolean(selectedTicket && selectedTicket.status !== "closed" && selectedTicket.currentAgent?.id !== user?.id);
-  const canCloseSelectedTicket = Boolean(selectedTicket && selectedTicket.status !== "closed");
-  const canSendToSelectedTicket = Boolean(selectedTicket && selectedTicket.status !== "closed");
+  const canViewGroups = currentUser.permissions["tickets.groups"];
+  const canViewChannels = currentUser.permissions["channels.view"];
+  const canViewQuickReplies = currentUser.permissions["quickReplies.view"];
+  const canViewTeam = currentUser.permissions["team.view"];
+  const canManageInstances = currentUser.permissions["channels.manage"];
+  const canManageQuickReplies = currentUser.permissions["quickReplies.manage"];
+  const canManageAgents = currentUser.permissions["agents.manage"];
+  const canManageQueues = currentUser.permissions["queues.manage"];
+  const canAssignQueues = currentUser.permissions["queues.assign"];
+  const canStartConversation = currentUser.permissions["tickets.reply"];
+  const canViewContacts = currentUser.permissions["contacts.view"];
+
+  const canAcceptSelectedTicket = Boolean(
+    selectedTicket &&
+    selectedTicket.status !== "closed" &&
+    selectedTicket.currentAgent?.id !== user?.id &&
+    currentUser.permissions["tickets.accept"],
+  );
+  const canCloseSelectedTicket = Boolean(selectedTicket && selectedTicket.status !== "closed" && currentUser.permissions["tickets.close"]);
+  const canSendToSelectedTicket = Boolean(selectedTicket && selectedTicket.status !== "closed" && currentUser.permissions["tickets.reply"]);
+
+  const quickReplyCommand = React.useMemo(() => {
+    const match = messageInput.match(/(?:^|\s)\/([a-z0-9_-]*)$/i);
+    return match?.[1]?.toLowerCase() ?? null;
+  }, [messageInput]);
+
+  const quickReplyMatches = React.useMemo(() => {
+    if (!quickReplyCommand || !canViewQuickReplies) return [];
+
+    return quickReplies
+      .filter((item) => item.isActive && item.shortcut.toLowerCase().includes(quickReplyCommand))
+      .slice(0, 6);
+  }, [canViewQuickReplies, quickReplies, quickReplyCommand]);
 
   const visibleTickets = React.useMemo(() => {
     const search = searchQuery.trim().toLowerCase();
@@ -283,6 +460,14 @@ export default function HomePage() {
         return false;
       }
 
+      if (selectedQueueFilter === "without-queue") {
+        if (ticket.currentQueue) {
+          return false;
+        }
+      } else if (selectedQueueFilter !== "all" && ticket.currentQueue?.id !== selectedQueueFilter) {
+        return false;
+      }
+
       if (!search) {
         return true;
       }
@@ -293,12 +478,12 @@ export default function HomePage() {
         ticket.lastMessagePreview ?? "",
         ticket.currentAgent?.name ?? "",
         ticket.currentQueue?.name ?? "",
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(search);
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(search);
     });
-  }, [activeTab, searchQuery, showOnlyMine, showOnlyUnread, tickets, user?.id]);
+  }, [activeTab, searchQuery, selectedQueueFilter, showOnlyMine, showOnlyUnread, tickets, user?.id]);
 
   const counters = React.useMemo(
     () => ({
@@ -341,6 +526,51 @@ export default function HomePage() {
     );
   }, [managementSearch, queues]);
 
+  const filteredCustomers = React.useMemo(() => {
+    if (!managementSearch) return customers;
+    return customers.filter((customer) =>
+      [customer.name, customer.phone ?? "", customer.email ?? "", customer.companyName ?? "", customer.notes ?? ""]
+        .join(" ")
+        .toLowerCase()
+        .includes(managementSearch),
+    );
+  }, [customers, managementSearch]);
+
+  const filteredQuickReplies = React.useMemo(() => {
+    if (!managementSearch) return quickReplies;
+    return quickReplies.filter((item) =>
+      [item.shortcut, item.content, item.isActive ? "ativa" : "inativa"]
+        .join(" ")
+        .toLowerCase()
+        .includes(managementSearch),
+    );
+  }, [managementSearch, quickReplies]);
+
+  const agendaItems = React.useMemo(() => {
+    return tickets
+      .filter((ticket) => ticket.status !== "closed")
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .map((ticket) => ({
+        id: ticket.id,
+        contato: ticket.customerName,
+        fila: ticket.currentQueue?.name ?? "Sem fila",
+        responsavel: ticket.currentAgent?.name ?? "Sem agente",
+        status: traduzirStatusTicket(ticket.status),
+        proximaAcao:
+          ticket.status === "pending"
+            ? "Assumir atendimento"
+            : ticket.unreadCount > 0
+              ? "Responder cliente"
+              : "Acompanhar conversa",
+        atualizadoEm: ticket.updatedAt,
+      }))
+      .filter((item) =>
+        !managementSearch
+          ? true
+          : [item.contato, item.fila, item.responsavel, item.status, item.proximaAcao].join(" ").toLowerCase().includes(managementSearch),
+      );
+  }, [managementSearch, tickets]);
+
   React.useEffect(() => {
     if (visibleTickets.length === 0) {
       setSelectedTicketId(null);
@@ -359,8 +589,67 @@ export default function HomePage() {
   }, [activeWorkspace, showTicketDetails]);
 
   React.useEffect(() => {
+    if (!userMenuOpen) return;
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!userMenuRef.current) return;
+      if (!userMenuRef.current.contains(event.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setUserMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [userMenuOpen]);
+
+  React.useEffect(() => {
+    setProfileName(user?.name ?? "");
+    setProfileAvatarPreview(user?.avatarUrl ?? null);
+  }, [user?.name, user?.avatarUrl]);
+
+  React.useEffect(() => {
+    const preferredWorkspaces: WorkspaceKey[] = [
+      "tickets",
+      "dashboard",
+      "channels",
+      "quickReplies",
+      "team",
+      "api",
+      "contacts",
+      "profile",
+      "activity",
+      "calendar",
+      "automations",
+      "settings",
+    ];
+
+    if (currentUser.id && !currentUser.permissions[workspacePermissions[activeWorkspace]]) {
+      const fallback = preferredWorkspaces.find((workspace) => currentUser.permissions[workspacePermissions[workspace]]);
+      if (fallback && fallback !== activeWorkspace) {
+        setActiveWorkspace(fallback);
+      }
+    }
+  }, [activeWorkspace, currentUser.id, currentUser.permissions]);
+
+  React.useEffect(() => {
     setShowTicketDetails(false);
   }, [selectedTicketId]);
+
+  React.useEffect(() => {
+    if (activeTab === "grupos" && !canViewGroups) {
+      setActiveTab("atendendo");
+    }
+  }, [activeTab, canViewGroups]);
 
   const refreshAuth = React.useCallback(async () => {
     setLoadingAuth(true);
@@ -409,7 +698,7 @@ export default function HomePage() {
   }, [user]);
 
   const refreshInstances = React.useCallback(async () => {
-    if (!user || user.role !== "admin") return;
+    if (!user || !normalizePermissions(user.role, user.permissions)["channels.view"]) return;
     try {
       const payload = await apiFetch<{ items: InstanceItem[] }>("/whatsapp/instances", { method: "GET" });
       setInstances(payload.items);
@@ -419,7 +708,7 @@ export default function HomePage() {
   }, [user]);
 
   const refreshAgents = React.useCallback(async () => {
-    if (!user || user.role !== "admin") return;
+    if (!user || !normalizePermissions(user.role, user.permissions)["team.view"]) return;
     try {
       const payload = await apiFetch<{ items: AgentItem[] }>("/agents", { method: "GET" });
       setAgents(payload.items);
@@ -429,12 +718,32 @@ export default function HomePage() {
   }, [user]);
 
   const refreshQueues = React.useCallback(async () => {
-    if (!user || user.role !== "admin") return;
+    if (!user || !normalizePermissions(user.role, user.permissions)["team.view"]) return;
     try {
       const payload = await apiFetch<{ items: QueueItem[] }>("/queues", { method: "GET" });
       setQueues(payload.items);
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar filas.");
+    }
+  }, [user]);
+
+  const refreshCustomers = React.useCallback(async () => {
+    if (!user || !normalizePermissions(user.role, user.permissions)["contacts.view"]) return;
+    try {
+      const payload = await apiFetch<{ items: CustomerItem[] }>("/customers", { method: "GET" });
+      setCustomers(payload.items);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar contatos.");
+    }
+  }, [user]);
+
+  const refreshQuickReplies = React.useCallback(async () => {
+    if (!user || !normalizePermissions(user.role, user.permissions)["quickReplies.view"]) return;
+    try {
+      const payload = await apiFetch<{ items: QuickReplyItem[] }>("/quick-replies", { method: "GET" });
+      setQuickReplies(payload.items);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar respostas rápidas.");
     }
   }, [user]);
 
@@ -446,7 +755,9 @@ export default function HomePage() {
     await refreshInstances();
     await refreshAgents();
     await refreshQueues();
-  }, [refreshAgents, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId]);
+    await refreshCustomers();
+    await refreshQuickReplies();
+  }, [refreshAgents, refreshCustomers, refreshInstances, refreshMessages, refreshQueues, refreshQuickReplies, refreshTickets, selectedTicketId]);
 
   React.useEffect(() => {
     void refreshAuth();
@@ -459,17 +770,27 @@ export default function HomePage() {
       setInstances([]);
       setAgents([]);
       setQueues([]);
+      setCustomers([]);
+      setQuickReplies([]);
       setSelectedTicketId(null);
       return;
     }
 
     void refreshTickets();
-    if (user.role === "admin") {
+    if (canViewChannels) {
       void refreshInstances();
+    }
+    if (canViewTeam) {
       void refreshAgents();
       void refreshQueues();
     }
-  }, [refreshAgents, refreshInstances, refreshQueues, refreshTickets, user]);
+    if (canViewContacts) {
+      void refreshCustomers();
+    }
+    if (canViewQuickReplies) {
+      void refreshQuickReplies();
+    }
+  }, [canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshCustomers, refreshInstances, refreshQueues, refreshQuickReplies, refreshTickets, user]);
 
   React.useEffect(() => {
     if (!selectedTicketId || !user) {
@@ -563,20 +884,90 @@ export default function HomePage() {
   }
 
   async function handleLogout() {
-    await apiFetch("/auth/logout", { method: "POST" });
+    try {
+      await apiFetch("/auth/logout", { method: "POST" });
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao encerrar a sessão.");
+      return;
+    }
+    setUser(null);
+    setMessages([]);
+    setTickets([]);
+    setSelectedTicketId(null);
+    setActiveWorkspace("tickets");
+    setUserMenuOpen(false);
+    setAuthError(null);
       setPanelMessage("Sessão encerrada.");
     await refreshAuth();
+  }
+
+  async function handleProfileAvatarChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.currentTarget.value = "";
+
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setPanelMessage("Selecione um arquivo de imagem válido para o avatar.");
+      return;
+    }
+
+    if (file.size > 1_500_000) {
+      setPanelMessage("O avatar deve ter no máximo 1,5 MB.");
+      return;
+    }
+
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.onerror = () => reject(new Error("Falha ao ler o arquivo do avatar."));
+      reader.readAsDataURL(file);
+    });
+
+    setProfileAvatarPreview(dataUrl);
+    setPanelMessage("Avatar pronto para salvar.");
+  }
+
+  async function handleSaveProfile() {
+    if (!user) return;
+
+    setProfileSaving(true);
+    try {
+      const payload = await apiFetch<{ message: string; user: AuthUser }>("/auth/me/profile", {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: profileName.trim(),
+          avatarUrl: profileAvatarPreview,
+        }),
+      });
+
+      setUser(payload.user);
+      setProfileName(payload.user.name);
+      setProfileAvatarPreview(payload.user.avatarUrl ?? null);
+      setPanelMessage(payload.message);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao atualizar o perfil.");
+    } finally {
+      setProfileSaving(false);
+    }
   }
 
   async function handleSendMessage(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedTicketId || !messageInput.trim()) return;
 
+    const trimmedInput = messageInput.trim();
+    const shortcutMatch = trimmedInput.match(/^\/([a-z0-9_-]+)$/i);
+    const resolvedBody =
+      shortcutMatch
+        ? quickReplies.find((item) => item.isActive && item.shortcut.toLowerCase() === shortcutMatch[1].toLowerCase())?.content ?? trimmedInput
+        : trimmedInput;
+
     setSendLoading(true);
     try {
       await apiFetch(`/tickets/${selectedTicketId}/messages`, {
         method: "POST",
-        body: JSON.stringify({ body: messageInput.trim() }),
+        body: JSON.stringify({ body: resolvedBody }),
       });
       setMessageInput("");
       await refreshMessages(selectedTicketId);
@@ -610,6 +1001,10 @@ export default function HomePage() {
     }
   }
 
+  function applyQuickReply(item: QuickReplyItem) {
+    setMessageInput((current) => current.replace(/(?:^|\s)\/([a-z0-9_-]*)$/i, (match) => match.replace(/\/([a-z0-9_-]*)$/i, item.content)));
+  }
+
   function resetInstanceForm() {
     setEditingInstanceId(null);
     setInstanceForm({
@@ -623,12 +1018,27 @@ export default function HomePage() {
 
   function resetAgentForm() {
     setEditingAgentId(null);
-    setAgentForm({ name: "", email: "", password: "", role: "agent" });
+    setAgentForm({ name: "", email: "", password: "", role: "agent", permissions: defaultPermissionsForRole("agent") });
+    setManagementModalTab("general");
   }
 
   function resetQueueForm() {
     setEditingQueueId(null);
     setQueueForm({ name: "", color: "#1A1C32" });
+  }
+
+  function resetQuickReplyForm() {
+    setEditingQuickReplyId(null);
+    setQuickReplyForm({ shortcut: "", content: "", isActive: true });
+  }
+
+  function resetConversationForm() {
+    setConversationForm({
+      customerName: "",
+      phone: "",
+      whatsappInstanceId: instances[0]?.id ?? "",
+      queueId: "",
+    });
   }
 
   function startEditInstance(instance: InstanceItem) {
@@ -641,6 +1051,7 @@ export default function HomePage() {
       webhookSecret: "",
     });
     setActiveWorkspace("channels");
+    setManagementModal("instance");
   }
 
   function startEditAgent(agent: AgentItem) {
@@ -650,9 +1061,12 @@ export default function HomePage() {
       email: agent.email,
       password: "",
       role: agent.role,
+      permissions: normalizePermissions(agent.role, agent.permissions),
     });
     setActiveWorkspace("team");
     setAdminSection("agents");
+    setManagementModalTab("general");
+    setManagementModal("agent");
   }
 
   function startEditQueue(queue: QueueItem) {
@@ -663,6 +1077,112 @@ export default function HomePage() {
     });
     setActiveWorkspace("team");
     setAdminSection("queues");
+    setManagementModal("queue");
+  }
+
+  function startEditQuickReply(item: QuickReplyItem) {
+    setEditingQuickReplyId(item.id);
+    setQuickReplyForm({
+      shortcut: item.shortcut,
+      content: item.content,
+      isActive: item.isActive,
+    });
+    setActiveWorkspace("quickReplies");
+    setManagementModal("quickReply");
+  }
+
+  function openCreateInstanceModal() {
+    resetInstanceForm();
+    setManagementModalTab("general");
+    setManagementModal("instance");
+    setActiveWorkspace("channels");
+  }
+
+  function openCreateAgentModal() {
+    resetAgentForm();
+    setManagementModalTab("general");
+    setManagementModal("agent");
+    setActiveWorkspace("team");
+    setAdminSection("agents");
+  }
+
+  function openCreateQueueModal() {
+    resetQueueForm();
+    setManagementModalTab("general");
+    setManagementModal("queue");
+    setActiveWorkspace("team");
+    setAdminSection("queues");
+  }
+
+  function openCreateQuickReplyModal() {
+    resetQuickReplyForm();
+    setManagementModalTab("general");
+    setManagementModal("quickReply");
+    setActiveWorkspace("quickReplies");
+  }
+
+  function openCreateConversationModal() {
+    if (!canStartConversation) {
+      return;
+    }
+
+    if (instances.length === 0) {
+      setPanelMessage("Cadastre uma instância antes de iniciar uma nova conversa.");
+      return;
+    }
+
+    resetConversationForm();
+    setManagementModal("conversation");
+    setActiveWorkspace("tickets");
+  }
+
+  function closeManagementModal() {
+    setManagementModal(null);
+    setManagementModalTab("general");
+    setEditingInstanceId(null);
+    setEditingAgentId(null);
+    setEditingQueueId(null);
+    setEditingQuickReplyId(null);
+    setInstanceForm({
+      name: "",
+      evolutionInstanceName: "",
+      baseUrl: "",
+      apiKey: "",
+      webhookSecret: "",
+    });
+    setAgentForm({
+      name: "",
+      email: "",
+      password: "",
+      role: "agent",
+      permissions: defaultPermissionsForRole("agent"),
+    });
+    setQueueForm({ name: "", color: "#1A1C32" });
+    setQuickReplyForm({ shortcut: "", content: "", isActive: true });
+    setConversationForm({
+      customerName: "",
+      phone: "",
+      whatsappInstanceId: instances[0]?.id ?? "",
+      queueId: "",
+    });
+  }
+
+  function updateAgentRole(role: "admin" | "agent") {
+    setAgentForm((current) => ({
+      ...current,
+      role,
+      permissions: defaultPermissionsForRole(role),
+    }));
+  }
+
+  function toggleAgentPermission(permission: PermissionKey) {
+    setAgentForm((current) => ({
+      ...current,
+      permissions: {
+        ...current.permissions,
+        [permission]: !current.permissions[permission],
+      },
+    }));
   }
 
   async function handleCreateInstance(event: React.FormEvent<HTMLFormElement>) {
@@ -674,6 +1194,7 @@ export default function HomePage() {
         body: JSON.stringify(instanceForm),
       });
       resetInstanceForm();
+      closeManagementModal();
       setPanelMessage(editingInstanceId ? "Instância Evolution atualizada." : "Instância Evolution cadastrada.");
       await refreshInstances();
     } catch (error) {
@@ -689,9 +1210,10 @@ export default function HomePage() {
     try {
       await apiFetch(editingAgentId ? `/agents/${editingAgentId}` : "/agents", {
         method: editingAgentId ? "PUT" : "POST",
-        body: JSON.stringify({ ...agentForm, queueIds: [] }),
+        body: JSON.stringify({ ...agentForm, queueIds: [], permissions: agentForm.permissions }),
       });
       resetAgentForm();
+      closeManagementModal();
       setPanelMessage(editingAgentId ? "Agente atualizado." : "Agente criado.");
       await refreshAgents();
     } catch (error) {
@@ -710,12 +1232,72 @@ export default function HomePage() {
         body: JSON.stringify(queueForm),
       });
       resetQueueForm();
+      closeManagementModal();
       setPanelMessage(editingQueueId ? "Fila atualizada." : "Fila criada.");
       await refreshQueues();
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao criar fila.");
     } finally {
       setQueueLoading(false);
+    }
+  }
+
+  async function handleCreateQuickReply(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setQuickReplyLoading(true);
+    try {
+      await apiFetch(editingQuickReplyId ? `/quick-replies/${editingQuickReplyId}` : "/quick-replies", {
+        method: editingQuickReplyId ? "PUT" : "POST",
+        body: JSON.stringify(quickReplyForm),
+      });
+      resetQuickReplyForm();
+      closeManagementModal();
+      setPanelMessage(editingQuickReplyId ? "Resposta rápida atualizada." : "Resposta rápida criada.");
+      await refreshQuickReplies();
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao salvar resposta rápida.");
+    } finally {
+      setQuickReplyLoading(false);
+    }
+  }
+
+  async function handleDeleteQuickReply(quickReplyId: string) {
+    if (!canManageQuickReplies) return;
+
+    try {
+      await apiFetch(`/quick-replies/${quickReplyId}`, {
+        method: "DELETE",
+      });
+      setPanelMessage("Resposta rápida excluída.");
+      await refreshQuickReplies();
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao excluir resposta rápida.");
+    }
+  }
+
+  async function handleCreateConversation(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setConversationLoading(true);
+    try {
+      const payload = await apiFetch<CreateConversationResponse>("/tickets", {
+        method: "POST",
+        body: JSON.stringify({
+          customerName: conversationForm.customerName,
+          phone: conversationForm.phone,
+          whatsappInstanceId: conversationForm.whatsappInstanceId,
+          queueId: conversationForm.queueId || null,
+        }),
+      });
+
+      closeManagementModal();
+      await refreshTickets();
+      setSelectedTicketId(payload.item.id);
+      setActiveWorkspace("tickets");
+      setPanelMessage(payload.created ? "Nova conversa iniciada." : "Conversa existente aberta.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao iniciar conversa.");
+    } finally {
+      setConversationLoading(false);
     }
   }
 
@@ -745,16 +1327,20 @@ export default function HomePage() {
         ? "Atendimento"
         : activeWorkspace === "channels"
           ? "Canais e instâncias"
+          : activeWorkspace === "quickReplies"
+            ? "Respostas rápidas"
           : activeWorkspace === "team"
             ? "Equipe e filas"
             : activeWorkspace === "api"
               ? "API"
+            : activeWorkspace === "contacts"
+              ? "Contatos"
             : activeWorkspace === "profile"
               ? "Perfil"
               : activeWorkspace === "activity"
                 ? "Atividade operacional"
                 : activeWorkspace === "calendar"
-                  ? "Agenda operacional"
+                  ? "Agendamentos"
                   : activeWorkspace === "automations"
                     ? "Automações"
                     : "Configurações";
@@ -766,16 +1352,20 @@ export default function HomePage() {
         ? "Caixa de entrada de conversas com a operação em tempo real."
         : activeWorkspace === "channels"
           ? "Instâncias Evolution e orientações de conexão."
+          : activeWorkspace === "quickReplies"
+            ? "Mensagens prontas para atalho com barra dentro do atendimento."
           : activeWorkspace === "team"
             ? "Gestão de agentes e distribuição por filas."
             : activeWorkspace === "api"
               ? "Endpoints, autenticação e testes rápidos da API própria."
+            : activeWorkspace === "contacts"
+              ? "Base de contatos atendidos e últimos vínculos com tickets."
             : activeWorkspace === "profile"
               ? "Dados da sessão e atalhos pessoais."
               : activeWorkspace === "activity"
                 ? "Leitura operacional do volume e das pendências."
                 : activeWorkspace === "calendar"
-                  ? "Passos operacionais e rotinas de acompanhamento."
+                  ? "Lista operacional de acompanhamentos e próximos passos."
                   : activeWorkspace === "automations"
                     ? "Webhook, tempo real e fluxo da integração."
                     : "Ajustes administrativos e visão de ambiente.";
@@ -826,31 +1416,10 @@ export default function HomePage() {
               searchValue={searchQuery}
               searchPlaceholder="Pesquisar instância, telefone ou status"
               onSearchChange={setSearchQuery}
-              actionLabel={currentUser.role === "admin" ? "Nova conexão" : undefined}
-              onActionClick={currentUser.role === "admin" ? resetInstanceForm : undefined}
+              actionLabel={canManageInstances ? "Nova conexão" : undefined}
+              onActionClick={canManageInstances ? openCreateInstanceModal : undefined}
               actionIcon={Plus}
             />
-
-            {currentUser.role === "admin" ? (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="mb-4 text-sm font-semibold uppercase tracking-[0.08em] text-slate-500">Cadastro rápido</div>
-                <form onSubmit={handleCreateInstance} className="grid gap-3 xl:grid-cols-[1.1fr_1.1fr_1.2fr_1fr_1fr_auto] xl:items-end">
-                  <CompactField label="Nome interno" value={instanceForm.name} onChange={(value) => setInstanceForm((current) => ({ ...current, name: value }))} />
-                  <CompactField label="Nome na Evolution" value={instanceForm.evolutionInstanceName} onChange={(value) => setInstanceForm((current) => ({ ...current, evolutionInstanceName: value }))} />
-                  <CompactField label="URL base" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder="https://evolution.seudominio.com" />
-                  <CompactField label="Chave da API" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} />
-                  <CompactField label="Segredo do webhook" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
-                  <div className="xl:w-[180px]">
-                    <PrimaryAction disabled={instanceLoading}>{instanceLoading ? "Salvando..." : editingInstanceId ? "Salvar edição" : "Adicionar"}</PrimaryAction>
-                  </div>
-                </form>
-                {editingInstanceId ? (
-                  <button type="button" onClick={resetInstanceForm} className="mt-3 text-sm font-medium text-slate-500 transition hover:text-slate-800">
-                    Cancelar edição
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
 
             <DataTable columns={["Nome", "Evolution", "Status", "Telefone", "URL base", "Criado em", "Ações"]} emptyMessage="Nenhuma instância cadastrada.">
               {filteredInstances.length === 0 ? (
@@ -873,7 +1442,7 @@ export default function HomePage() {
                     <DataCell subtle>{instance.baseUrl}</DataCell>
                     <DataCell subtle>{formatDateTime(instance.createdAt)}</DataCell>
                     <DataCell>
-                      {currentUser.role === "admin" ? (
+                      {canManageInstances ? (
                         <button type="button" onClick={() => startEditInstance(instance)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
                           <Pencil className="h-4 w-4" />
                           Editar
@@ -894,6 +1463,65 @@ export default function HomePage() {
       );
     }
 
+    if (activeWorkspace === "quickReplies") {
+      return (
+        <div className="flex h-full flex-col gap-4 p-6">
+          <WorkspaceSection title="Respostas rápidas" description="Cadastre mensagens padrão e use atalhos com barra dentro das conversas.">
+            <ModuleToolbar
+              title="Atalhos"
+              count={filteredQuickReplies.length}
+              searchValue={searchQuery}
+              searchPlaceholder="Pesquisar atalho ou conteúdo"
+              onSearchChange={setSearchQuery}
+              actionLabel={canManageQuickReplies ? "Adicionar resposta" : undefined}
+              onActionClick={canManageQuickReplies ? openCreateQuickReplyModal : undefined}
+              actionIcon={Zap}
+            />
+
+            <DataTable columns={["Atalho", "Mensagem", "Status", "Atualizado em", "Ações"]} emptyMessage="Nenhuma resposta rápida cadastrada.">
+              {filteredQuickReplies.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-5 py-8 text-sm text-slate-500">
+                    Nenhuma resposta rápida cadastrada.
+                  </td>
+                </tr>
+              ) : (
+                filteredQuickReplies.map((item) => (
+                  <DataRow key={item.id}>
+                    <DataCell>
+                      <span className="font-semibold text-slate-900">/{item.shortcut}</span>
+                    </DataCell>
+                    <DataCell subtle>{item.content}</DataCell>
+                    <DataCell>
+                      <StatusChip tone={item.isActive ? "success" : "warning"}>{item.isActive ? "Ativa" : "Inativa"}</StatusChip>
+                    </DataCell>
+                    <DataCell subtle>{formatDateTime(item.updatedAt)}</DataCell>
+                    <DataCell>
+                      <div className="flex items-center gap-4">
+                        {canManageQuickReplies ? (
+                          <button type="button" onClick={() => startEditQuickReply(item)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                            <Pencil className="h-4 w-4" />
+                            Editar
+                          </button>
+                        ) : null}
+                        {canManageQuickReplies ? (
+                          <button type="button" onClick={() => void handleDeleteQuickReply(item.id)} className="text-sm font-medium text-red-600 transition hover:text-red-700">
+                            Excluir
+                          </button>
+                        ) : null}
+                      </div>
+                    </DataCell>
+                  </DataRow>
+                ))
+              )}
+            </DataTable>
+
+            <InfoRow title="Uso no atendimento" subtitle="Digite /atalho na caixa de mensagem para aplicar a resposta." meta="Exemplo: /bomdia" />
+          </WorkspaceSection>
+        </div>
+      );
+    }
+
     if (activeWorkspace === "team") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
@@ -909,35 +1537,10 @@ export default function HomePage() {
                 searchValue={searchQuery}
                 searchPlaceholder="Pesquisar nome, e-mail ou fila"
                 onSearchChange={setSearchQuery}
-                actionLabel={currentUser.role === "admin" ? "Adicionar usuário" : undefined}
-                onActionClick={currentUser.role === "admin" ? resetAgentForm : undefined}
+                actionLabel={canManageAgents ? "Adicionar usuário" : undefined}
+                onActionClick={canManageAgents ? openCreateAgentModal : undefined}
                 actionIcon={UserPlus}
               />
-
-              {currentUser.role === "admin" ? (
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <form onSubmit={handleCreateAgent} className="grid gap-3 xl:grid-cols-[1.1fr_1.2fr_1fr_220px_auto] xl:items-end">
-                    <CompactField label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} />
-                    <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} />
-                    <CompactField label="Senha" type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} />
-                    <label className="block text-sm font-medium text-slate-600">
-                      Perfil
-                      <select value={agentForm.role} onChange={(event) => setAgentForm((current) => ({ ...current, role: event.target.value as "admin" | "agent" }))} className="mt-2 h-11 w-full rounded-md border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none">
-                        <option value="agent">Agente</option>
-                        <option value="admin">Administrador</option>
-                      </select>
-                    </label>
-                    <div className="xl:w-[180px]">
-                      <PrimaryAction disabled={agentLoading}>{agentLoading ? "Salvando..." : editingAgentId ? "Salvar edição" : "Adicionar"}</PrimaryAction>
-                    </div>
-                  </form>
-                  {editingAgentId ? (
-                    <button type="button" onClick={resetAgentForm} className="mt-3 text-sm font-medium text-slate-500 transition hover:text-slate-800">
-                      Cancelar edição
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
 
               <DataTable columns={["Nome", "E-mail", "Perfil", "Presença", "Filas", "Ações"]} emptyMessage="Nenhum agente cadastrado.">
                 {filteredAgents.length === 0 ? (
@@ -957,7 +1560,7 @@ export default function HomePage() {
                       <DataCell subtle>{agent.presence}</DataCell>
                       <DataCell subtle>{agent.queues.map((queue) => queue.name).join(", ") || "Sem filas"}</DataCell>
                       <DataCell>
-                        {currentUser.role === "admin" ? (
+                        {canManageAgents ? (
                           <button type="button" onClick={() => startEditAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
                             <Pencil className="h-4 w-4" />
                             Editar
@@ -977,27 +1580,10 @@ export default function HomePage() {
                 searchValue={searchQuery}
                 searchPlaceholder="Pesquisar fila ou membro"
                 onSearchChange={setSearchQuery}
-                actionLabel={currentUser.role === "admin" ? "Adicionar fila" : undefined}
-                onActionClick={currentUser.role === "admin" ? resetQueueForm : undefined}
+                actionLabel={canManageQueues ? "Adicionar fila" : undefined}
+                onActionClick={canManageQueues ? openCreateQueueModal : undefined}
                 actionIcon={Workflow}
               />
-
-              {currentUser.role === "admin" ? (
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <form onSubmit={handleCreateQueue} className="grid gap-3 xl:grid-cols-[1fr_220px_auto] xl:items-end">
-                    <CompactField label="Nome da fila" value={queueForm.name} onChange={(value) => setQueueForm((current) => ({ ...current, name: value }))} />
-                    <CompactField label="Cor" value={queueForm.color} onChange={(value) => setQueueForm((current) => ({ ...current, color: value }))} placeholder="#1A1C32" />
-                    <div className="xl:w-[180px]">
-                      <PrimaryAction disabled={queueLoading}>{queueLoading ? "Salvando..." : editingQueueId ? "Salvar edição" : "Adicionar"}</PrimaryAction>
-                    </div>
-                  </form>
-                  {editingQueueId ? (
-                    <button type="button" onClick={resetQueueForm} className="mt-3 text-sm font-medium text-slate-500 transition hover:text-slate-800">
-                      Cancelar edição
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
 
               <DataTable columns={["Fila", "Cor", "Agentes", "Tickets abertos", "Ações"]} emptyMessage="Nenhuma fila cadastrada.">
                 {filteredQueues.length === 0 ? (
@@ -1019,7 +1605,7 @@ export default function HomePage() {
                       <DataCell subtle>{queue.agents.map((agent) => agent.name).join(", ") || "Sem membros"}</DataCell>
                       <DataCell subtle>{queue.openTicketCount}</DataCell>
                       <DataCell>
-                        {currentUser.role === "admin" ? (
+                        {canManageQueues ? (
                           <button type="button" onClick={() => startEditQueue(queue)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
                             <Pencil className="h-4 w-4" />
                             Editar
@@ -1033,7 +1619,7 @@ export default function HomePage() {
 
               <div className="grid gap-3">
                 {filteredQueues.map((queue) => (
-                  <QueueEditor key={queue.id} queue={queue} agents={agents} loading={assignmentLoading === queue.id} onSave={handleAssignQueueAgents} onChange={setQueues} />
+                  <QueueEditor key={queue.id} queue={queue} agents={agents} loading={assignmentLoading === queue.id} canEdit={canAssignQueues} onSave={handleAssignQueueAgents} onChange={setQueues} />
                 ))}
               </div>
             </WorkspaceSection>
@@ -1048,6 +1634,8 @@ export default function HomePage() {
         ["POST", "/api/auth/login", "Entrar no painel", "Autenticação com cookie seguro"],
         ["GET", "/api/tickets", "Listar atendimentos", "Base da caixa de entrada do módulo Atendimento"],
         ["POST", "/api/tickets/:ticketId/messages", "Enviar resposta", "Usa a instância vinculada ao ticket"],
+        ["GET", "/api/quick-replies", "Listar respostas rápidas", "Base usada pelos atalhos com barra no atendimento"],
+        ["POST", "/api/quick-replies", "Criar resposta rápida", "Cadastro administrativo de atalhos"],
         ["POST", "/api/webhooks/evolution", "Receber eventos", "Webhook público da Evolution"],
       ].filter((row) => row.join(" ").toLowerCase().includes(managementSearch || row.join(" ").toLowerCase()));
 
@@ -1106,16 +1694,92 @@ export default function HomePage() {
       );
     }
 
+    if (activeWorkspace === "contacts") {
+      return (
+        <div className="flex h-full flex-col gap-4 p-6">
+          <WorkspaceSection title="Contatos" description="Visualizacao em lista dos contatos atendidos pela operacao.">
+            <ModuleToolbar
+              title="Contatos"
+              count={filteredCustomers.length}
+              searchValue={searchQuery}
+              searchPlaceholder="Pesquisar contato, telefone ou empresa"
+              onSearchChange={setSearchQuery}
+            />
+
+            <DataTable columns={["Nome", "Telefone", "E-mail", "Empresa", "Ultimo ticket", "Atualizado em"]} emptyMessage="Nenhum contato encontrado.">
+              {filteredCustomers.map((customer) => (
+                <DataRow key={customer.id}>
+                  <DataCell>{customer.name}</DataCell>
+                  <DataCell subtle>{customer.phone ?? "Sem telefone"}</DataCell>
+                  <DataCell subtle>{customer.email ?? "Sem e-mail"}</DataCell>
+                  <DataCell subtle>{customer.companyName ?? "Sem empresa"}</DataCell>
+                  <DataCell subtle>
+                    {customer.lastTicket ? (
+                      <div className="space-y-1">
+                        <div>{traduzirStatusTicket(customer.lastTicket.status)}</div>
+                        <div className="text-xs text-slate-400">{customer.lastTicket.queueName ?? "Sem fila"}</div>
+                      </div>
+                    ) : (
+                      "Sem historico"
+                    )}
+                  </DataCell>
+                  <DataCell subtle>{formatDateTime(customer.updatedAt)}</DataCell>
+                </DataRow>
+              ))}
+            </DataTable>
+          </WorkspaceSection>
+        </div>
+      );
+    }
+
     if (activeWorkspace === "profile") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
           <WorkspaceSection title="Meu perfil" description="Informações da sessão atual e atalhos pessoais.">
             <div className="grid gap-4">
               <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="grid h-20 w-20 place-items-center rounded-full bg-[#1A1C32] text-2xl font-bold text-white">{initials(currentUser.name) || "CF"}</div>
-                <div className="mt-4 text-xl font-semibold text-slate-900">{currentUser.name}</div>
-                <div className="mt-1 text-sm text-slate-500">{currentUser.email}</div>
-                <div className="mt-4 inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase text-slate-600">{traduzirPerfil(currentUser.role)}</div>
+                <div className="flex flex-col gap-4 md:flex-row md:items-center">
+                  {profileAvatarPreview ? (
+                    <img src={profileAvatarPreview} alt={`Avatar de ${currentUser.name}`} className="h-24 w-24 rounded-full border border-slate-200 object-cover shadow-sm" />
+                  ) : (
+                    <div className="grid h-24 w-24 place-items-center rounded-full bg-[#1A1C32] text-3xl font-bold text-white">{initials(currentUser.name) || "CF"}</div>
+                  )}
+                  <div className="flex-1">
+                    <div className="text-xl font-semibold text-slate-900">{currentUser.name}</div>
+                    <div className="mt-1 text-sm text-slate-500">{currentUser.email}</div>
+                    <div className="mt-4 inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase text-slate-600">{traduzirPerfil(currentUser.role)}</div>
+                  </div>
+                </div>
+                <div className="mt-6 grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                  <label className="grid gap-2 text-sm font-medium text-slate-700">
+                    Nome do usuário
+                    <input
+                      value={profileName}
+                      onChange={(event) => setProfileName(event.target.value)}
+                      className="h-12 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-[#1A1C32]"
+                      placeholder="Seu nome de exibição"
+                    />
+                  </label>
+                  <div className="flex flex-wrap items-end gap-3">
+                    <label className="inline-flex h-12 cursor-pointer items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                      Enviar avatar
+                      <input type="file" accept="image/*" className="hidden" onChange={(event) => void handleProfileAvatarChange(event)} />
+                    </label>
+                    {profileAvatarPreview ? (
+                      <button type="button" onClick={() => setProfileAvatarPreview(null)} className="inline-flex h-12 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                        Remover avatar
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveProfile()}
+                      disabled={profileSaving || !profileName.trim()}
+                      className="inline-flex h-12 items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#23274a] disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      {profileSaving ? "Salvando..." : "Salvar perfil"}
+                    </button>
+                  </div>
+                </div>
               </div>
               <div className="grid gap-3">
                 <InfoRow title="Sessão" subtitle="Autenticação ativa" meta="cookie httpOnly + backend próprio" />
@@ -1161,28 +1825,27 @@ export default function HomePage() {
     if (activeWorkspace === "calendar") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Rotina operacional" description="Checklist simples para o uso interno do sistema.">
-            <DataTable columns={["Etapa", "Objetivo", "Checklist"]} emptyMessage="Nenhuma rotina cadastrada.">
-              <DataRow>
-                <DataCell>Início do turno</DataCell>
-                <DataCell subtle>Conferir login, socket e instâncias</DataCell>
-                <DataCell subtle>1. abrir painel | 2. validar saúde da API | 3. conferir instâncias</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Durante o atendimento</DataCell>
-                <DataCell subtle>Monitorar aguardando e não lidos</DataCell>
-                <DataCell subtle>1. assumir tickets | 2. responder | 3. encerrar quando concluir</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Evolution</DataCell>
-                <DataCell subtle>Validar webhook e telefone vinculado</DataCell>
-                <DataCell subtle>URL pública + segredo opcional</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Encerramento</DataCell>
-                <DataCell subtle>Revisar tickets fechados e pendentes</DataCell>
-                <DataCell subtle>Registrar ajustes ou incidentes</DataCell>
-              </DataRow>
+          <WorkspaceSection title="Agendamentos" description="Lista operacional de acompanhamentos e proximas acoes do dia.">
+            <ModuleToolbar
+              title="Agendamentos"
+              count={agendaItems.length}
+              searchValue={searchQuery}
+              searchPlaceholder="Pesquisar contato, fila ou responsavel"
+              onSearchChange={setSearchQuery}
+            />
+            <DataTable columns={["Contato", "Fila", "Responsavel", "Status", "Proxima acao", "Atualizado em"]} emptyMessage="Nenhum agendamento operacional encontrado.">
+              {agendaItems.map((item) => (
+                <DataRow key={item.id}>
+                  <DataCell>{item.contato}</DataCell>
+                  <DataCell subtle>{item.fila}</DataCell>
+                  <DataCell subtle>{item.responsavel}</DataCell>
+                  <DataCell>
+                    <StatusChip tone={item.status === "Atendendo" ? "success" : "warning"}>{item.status}</StatusChip>
+                  </DataCell>
+                  <DataCell subtle>{item.proximaAcao}</DataCell>
+                  <DataCell subtle>{formatDateTime(item.atualizadoEm)}</DataCell>
+                </DataRow>
+              ))}
             </DataTable>
           </WorkspaceSection>
         </div>
@@ -1359,15 +2022,42 @@ export default function HomePage() {
               </div>
 
               <form onSubmit={handleSendMessage} className="border-t border-slate-200 bg-white px-6 py-4">
-                <div className="flex items-center gap-3">
-                  <textarea
-                    value={messageInput}
-                    onChange={(event) => setMessageInput(event.target.value)}
-                    rows={2}
-                    placeholder={canSendToSelectedTicket ? "Digite uma mensagem" : "Ticket fechado para envio"}
-                    disabled={!canSendToSelectedTicket}
-                    className="min-h-[52px] flex-1 resize-none rounded-full border border-slate-200 bg-slate-50 px-5 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-                  />
+                <div className="flex items-end gap-3">
+                  <div className="relative flex-1">
+                    <textarea
+                      value={messageInput}
+                      onChange={(event) => setMessageInput(event.target.value)}
+                      rows={2}
+                      placeholder={canSendToSelectedTicket ? "Digite uma mensagem ou use /atalho" : "Ticket fechado para envio"}
+                      disabled={!canSendToSelectedTicket}
+                      className="min-h-[52px] w-full resize-none rounded-full border border-slate-200 bg-slate-50 px-5 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                    />
+                    {quickReplyMatches.length > 0 && canSendToSelectedTicket ? (
+                      <div className="absolute bottom-[calc(100%+0.75rem)] left-0 z-20 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.12)]">
+                        <div className="border-b border-slate-100 px-4 py-3 text-xs font-bold uppercase tracking-[0.12em] text-slate-400">
+                          Respostas rápidas
+                        </div>
+                        <div className="max-h-72 overflow-y-auto py-2">
+                          {quickReplyMatches.map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => applyQuickReply(item)}
+                              className="flex w-full flex-col items-start gap-1 px-4 py-3 text-left transition hover:bg-slate-50"
+                            >
+                              <div className="text-sm font-semibold text-slate-900">/{item.shortcut}</div>
+                              <div className="max-w-full text-sm text-slate-500">{item.content}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {canViewQuickReplies && canSendToSelectedTicket ? (
+                      <div className="mt-2 pl-4 text-xs text-slate-400">
+                        Use <span className="font-semibold text-slate-500">/atalho</span> para aplicar uma resposta rápida.
+                      </div>
+                    ) : null}
+                  </div>
                   <button
                     type="submit"
                     aria-label="Enviar mensagem"
@@ -1386,6 +2076,286 @@ export default function HomePage() {
         )}
       </>
     );
+  })();
+
+  const managementModalContent = (() => {
+    if (!managementModal) {
+      return null;
+    }
+
+    if (managementModal === "conversation") {
+      if (!canStartConversation) {
+        return null;
+      }
+
+      return {
+        title: "Nova conversa",
+        description: "Abra um atendimento manual informando contato, instância e fila opcional.",
+        content: (
+          <form onSubmit={handleCreateConversation} className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <CompactField
+                label="Nome do contato"
+                value={conversationForm.customerName}
+                onChange={(value) => setConversationForm((current) => ({ ...current, customerName: value }))}
+                placeholder="Nome do cliente"
+              />
+              <CompactField
+                label="Telefone"
+                value={conversationForm.phone}
+                onChange={(value) => setConversationForm((current) => ({ ...current, phone: value }))}
+                placeholder="5511999999999"
+              />
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="block text-sm font-medium text-slate-600">
+                Instância
+                <select
+                  value={conversationForm.whatsappInstanceId}
+                  onChange={(event) => setConversationForm((current) => ({ ...current, whatsappInstanceId: event.target.value }))}
+                  className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                >
+                  <option value="">Selecione uma instância</option>
+                  {instances.map((instance) => (
+                    <option key={instance.id} value={instance.id}>
+                      {instance.name} · {traduzirStatusInstancia(instance.status)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-sm font-medium text-slate-600">
+                Fila
+                <select
+                  value={conversationForm.queueId}
+                  onChange={(event) => setConversationForm((current) => ({ ...current, queueId: event.target.value }))}
+                  className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                >
+                  <option value="">Sem fila inicial</option>
+                  {queues.map((queue) => (
+                    <option key={queue.id} value={queue.id}>
+                      {queue.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+              Depois de criar a conversa, o ticket será aberto automaticamente no atendimento para você enviar a primeira mensagem.
+            </div>
+            <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button type="button" onClick={closeManagementModal} className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
+                Cancelar
+              </button>
+              <PrimaryAction disabled={conversationLoading} className="sm:w-auto sm:px-6">
+                {conversationLoading ? "Iniciando..." : "Iniciar conversa"}
+              </PrimaryAction>
+            </div>
+          </form>
+        ),
+      };
+    }
+
+    if (managementModal === "quickReply") {
+      if (!canManageQuickReplies) {
+        return null;
+      }
+
+      return {
+        title: editingQuickReplyId ? "Editar resposta rápida" : "Adicionar resposta rápida",
+        description: "Cadastre atalhos como /bomdia para preencher mensagens prontas dentro da conversa.",
+        content: (
+          <form onSubmit={handleCreateQuickReply} className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-[220px_minmax(0,1fr)]">
+              <CompactField
+                label="Atalho"
+                value={quickReplyForm.shortcut}
+                onChange={(value) => setQuickReplyForm((current) => ({ ...current, shortcut: value.replace(/^\/+/, "") }))}
+                placeholder="bomdia"
+              />
+              <label className="flex items-end gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <input
+                  type="checkbox"
+                  checked={quickReplyForm.isActive}
+                  onChange={(event) => setQuickReplyForm((current) => ({ ...current, isActive: event.target.checked }))}
+                  className="h-4 w-4 rounded border-slate-300"
+                />
+                <div>
+                  <div className="text-sm font-semibold text-slate-700">Atalho ativo</div>
+                  <div className="text-xs text-slate-500">Somente respostas ativas aparecem ao digitar barra.</div>
+                </div>
+              </label>
+            </div>
+            <label className="block text-sm font-medium text-slate-600">
+              Conteúdo da mensagem
+              <textarea
+                value={quickReplyForm.content}
+                onChange={(event) => setQuickReplyForm((current) => ({ ...current, content: event.target.value }))}
+                rows={6}
+                placeholder="Digite aqui a mensagem que será aplicada quando o agente usar /atalho."
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+              />
+            </label>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+              Exemplo de uso no atendimento: <span className="font-semibold text-slate-700">/{quickReplyForm.shortcut || "bomdia"}</span>
+            </div>
+            <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button type="button" onClick={closeManagementModal} className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
+                Cancelar
+              </button>
+              <PrimaryAction disabled={quickReplyLoading} className="sm:w-auto sm:px-6">
+                {quickReplyLoading ? "Salvando..." : editingQuickReplyId ? "Salvar alterações" : "Cadastrar resposta"}
+              </PrimaryAction>
+            </div>
+          </form>
+        ),
+      };
+    }
+
+    if (managementModal === "instance") {
+      if (!canManageInstances) {
+        return null;
+      }
+
+      return {
+        title: editingInstanceId ? "Editar conexão" : "Nova conexão",
+        description: "Cadastre ou atualize a instância da Evolution usada pela operação.",
+        content: (
+          <form onSubmit={handleCreateInstance} className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <CompactField label="Nome interno" value={instanceForm.name} onChange={(value) => setInstanceForm((current) => ({ ...current, name: value }))} placeholder="Comercial" />
+              <CompactField label="Nome na Evolution" value={instanceForm.evolutionInstanceName} onChange={(value) => setInstanceForm((current) => ({ ...current, evolutionInstanceName: value }))} placeholder="1519-0000" />
+              <CompactField label="URL base" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder="https://api.projeto.app.br/" />
+              <CompactField label="Chave da API" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} placeholder="Token da Evolution" />
+            </div>
+            <CompactField label="Segredo do webhook" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
+            <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button type="button" onClick={closeManagementModal} className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
+                Cancelar
+              </button>
+              <PrimaryAction disabled={instanceLoading} className="sm:w-auto sm:px-6">{instanceLoading ? "Salvando..." : editingInstanceId ? "Salvar alterações" : "Cadastrar conexão"}</PrimaryAction>
+            </div>
+          </form>
+        ),
+      };
+    }
+
+    if (managementModal === "agent") {
+      if (!canManageAgents) {
+        return null;
+      }
+
+      const permissionsByGroup = permissionDefinitions.reduce<Record<string, Array<(typeof permissionDefinitions)[number]>>>((acc, item) => {
+        if (!acc[item.group]) {
+          acc[item.group] = [];
+        }
+        acc[item.group].push(item);
+        return acc;
+      }, {});
+
+      return {
+        title: editingAgentId ? "Editar usuário" : "Adicionar usuário",
+        description: "Cadastre agentes e administradores do painel operacional, com acesso granular por módulo e ação.",
+        content: (
+          <form onSubmit={handleCreateAgent} className="space-y-4">
+            <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
+              <AdminTab label="Geral" active={managementModalTab === "general"} onClick={() => setManagementModalTab("general")} />
+              <AdminTab label="Permissões" active={managementModalTab === "permissions"} onClick={() => setManagementModalTab("permissions")} />
+            </div>
+
+            {managementModalTab === "general" ? (
+              <div className="grid gap-4 md:grid-cols-2">
+                <CompactField label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} placeholder="Nome completo" />
+                <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} placeholder="usuario@empresa.com" />
+                <CompactField label={editingAgentId ? "Nova senha" : "Senha"} type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} placeholder={editingAgentId ? "Opcional para manter a atual" : "Senha de acesso"} />
+                <label className="block text-sm font-medium text-slate-600">
+                  Perfil
+                  <select
+                    value={agentForm.role}
+                    onChange={(event) => updateAgentRole(event.target.value as "admin" | "agent")}
+                    className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                  >
+                    <option value="agent">Agente</option>
+                    <option value="admin">Administrador</option>
+                  </select>
+                </label>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  {agentForm.role === "admin"
+                    ? "Administradores recebem acesso completo. Você pode revisar a matriz abaixo, mas todas as permissões permanecem habilitadas."
+                    : "Defina exatamente quais módulos e ações este usuário poderá acessar no painel."}
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {Object.entries(permissionsByGroup).map(([group, items]) => (
+                    <section key={group} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="mb-3 text-sm font-semibold text-slate-900">{group}</div>
+                      <div className="space-y-2">
+                        {items.map((permission) => (
+                          <label key={permission.key} className={`flex items-start gap-3 rounded-xl border px-3 py-3 text-sm transition ${agentForm.permissions[permission.key] ? "border-[#1A1C32]/20 bg-[#1A1C32]/5" : "border-slate-200 bg-slate-50"} ${agentForm.role === "admin" ? "cursor-not-allowed opacity-70" : "cursor-pointer hover:border-slate-300 hover:bg-white"}`}>
+                            <input
+                              type="checkbox"
+                              checked={agentForm.permissions[permission.key]}
+                              disabled={agentForm.role === "admin"}
+                              onChange={() => toggleAgentPermission(permission.key)}
+                              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#1A1C32] focus:ring-[#1A1C32]"
+                            />
+                            <span>
+                              <span className="block font-medium text-slate-800">{permission.label}</span>
+                              <span className="mt-0.5 block text-xs text-slate-500">{permission.key}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button type="button" onClick={closeManagementModal} className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
+                Cancelar
+              </button>
+              <PrimaryAction disabled={agentLoading} className="sm:w-auto sm:px-6">{agentLoading ? "Salvando..." : editingAgentId ? "Salvar alterações" : "Cadastrar usuário"}</PrimaryAction>
+            </div>
+          </form>
+        ),
+      };
+    }
+
+    if (!canManageQueues) {
+      return null;
+    }
+
+    return {
+      title: editingQueueId ? "Editar fila" : "Adicionar fila",
+      description: "Cadastre filas operacionais para distribuição dos atendimentos.",
+      content: (
+        <form onSubmit={handleCreateQueue} className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
+            <CompactField label="Nome da fila" value={queueForm.name} onChange={(value) => setQueueForm((current) => ({ ...current, name: value }))} placeholder="Comercial" />
+            <label className="block text-sm font-medium text-slate-600">
+              Cor
+              <div className="mt-2 flex h-11 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3">
+                <input
+                  type="color"
+                  value={queueForm.color}
+                  onChange={(event) => setQueueForm((current) => ({ ...current, color: event.target.value }))}
+                  className="h-7 w-10 cursor-pointer rounded border-0 bg-transparent p-0"
+                />
+                <span className="text-sm text-slate-600">{queueForm.color.toUpperCase()}</span>
+              </div>
+            </label>
+          </div>
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button type="button" onClick={closeManagementModal} className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
+              Cancelar
+            </button>
+            <PrimaryAction disabled={queueLoading} className="sm:w-auto sm:px-6">{queueLoading ? "Salvando..." : editingQueueId ? "Salvar alterações" : "Cadastrar fila"}</PrimaryAction>
+          </div>
+        </form>
+      ),
+    };
   })();
 
   if (loadingAuth) {
@@ -1479,9 +2449,9 @@ export default function HomePage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#ebf1f4] text-slate-800">
-      <div className="flex min-h-screen flex-col">
-        <header className="flex h-[60px] items-center justify-between bg-[#1A1C32] px-5 text-white shadow-sm">
+    <main className="h-screen overflow-hidden bg-[#ebf1f4] text-slate-800">
+      <div className="flex h-screen flex-col overflow-hidden">
+        <header className="z-20 flex h-[60px] shrink-0 items-center justify-between bg-[#1A1C32] px-5 text-white shadow-sm">
           <div className="flex items-center gap-6">
             <button type="button" aria-label={showRail ? "Recolher menu lateral" : "Expandir menu lateral"} title={showRail ? "Recolher menu lateral" : "Expandir menu lateral"} onClick={() => setShowRail((current) => !current)} className="text-white/90 transition hover:text-white">
               <Menu className="h-6 w-6" />
@@ -1508,41 +2478,77 @@ export default function HomePage() {
               <RefreshCw className={`h-4 w-4 ${ticketLoading || messageLoading ? "animate-spin" : ""}`} />
               Atualizar
             </button>
-            <button type="button" aria-label="Abrir perfil" title="Abrir perfil" onClick={() => setActiveWorkspace("profile")} className="grid h-10 w-10 place-items-center overflow-hidden rounded-full border border-white/10 bg-white/10 text-sm font-semibold uppercase transition hover:bg-white/15">
-              {initials(currentUser.name) || "CF"}
-            </button>
+            <div ref={userMenuRef} className="relative">
+              <button
+                type="button"
+                aria-label="Abrir menu do usuário"
+                title="Abrir menu do usuário"
+                aria-expanded={userMenuOpen}
+                onClick={() => setUserMenuOpen((current) => !current)}
+                className="grid h-10 w-10 place-items-center overflow-hidden rounded-full border border-white/10 bg-white/10 text-sm font-semibold uppercase transition hover:bg-white/15"
+              >
+                {currentUser.avatarUrl ? (
+                  <img src={currentUser.avatarUrl} alt={`Avatar de ${currentUser.name}`} className="h-full w-full object-cover" />
+                ) : (
+                  initials(currentUser.name) || "CF"
+                )}
+              </button>
+              {userMenuOpen ? (
+                <div className="absolute right-0 top-[calc(100%+0.75rem)] z-40 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white py-2 text-left shadow-[0_20px_50px_rgba(15,23,42,0.18)]">
+                  <div className="border-b border-slate-100 px-4 pb-3 pt-2">
+                    <div className="text-sm font-semibold text-slate-900">{currentUser.name || "Usuário"}</div>
+                    <div className="mt-0.5 text-xs text-slate-500">{currentUser.email}</div>
+                  </div>
+                  {currentUser.permissions["profile.view"] ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveWorkspace("profile");
+                        setUserMenuOpen(false);
+                      }}
+                      className="flex w-full items-center gap-3 px-4 py-3 text-sm text-slate-700 transition hover:bg-slate-50"
+                    >
+                      <User className="h-4 w-4 text-slate-400" />
+                      Meu perfil
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUserMenuOpen(false);
+                      void handleLogout();
+                    }}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-sm text-red-600 transition hover:bg-red-50"
+                  >
+                    <LogIn className="h-4 w-4 rotate-180 text-red-400" />
+                    Sair do painel
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
         </header>
 
-        <div className="flex min-h-[calc(100vh-60px)]">
-          <aside className={`hidden shrink-0 border-r border-slate-200 bg-white transition-[width] duration-200 md:flex md:flex-col md:justify-between md:py-4 ${showRail ? "w-[220px]" : "w-14"}`}>
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <aside className={`hidden h-full shrink-0 border-r border-slate-200 bg-white transition-[width] duration-200 md:flex md:flex-col md:justify-between md:py-4 ${showRail ? "w-[220px]" : "w-14"}`}>
             <div className="flex w-full flex-col gap-1 px-2">
-              <RailButton icon={LayoutGrid} label="Painel geral" expanded={showRail} active={activeWorkspace === "dashboard"} onClick={() => setActiveWorkspace("dashboard")} />
-              <RailButton icon={Phone} label="Atendimento" expanded={showRail} active={activeWorkspace === "tickets"} onClick={() => setActiveWorkspace("tickets")} />
-              <RailButton icon={Cable} label="Canais e instâncias" expanded={showRail} active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} />
-              <RailButton icon={UserCog} label="Equipe e filas" expanded={showRail} active={activeWorkspace === "team"} onClick={() => { setActiveWorkspace("team"); setAdminSection("agents"); }} />
-              <RailButton icon={Code2} label="API" expanded={showRail} active={activeWorkspace === "api"} onClick={() => setActiveWorkspace("api")} />
-              <RailButton icon={User} label="Perfil" expanded={showRail} active={activeWorkspace === "profile"} onClick={() => setActiveWorkspace("profile")} />
-              <RailButton icon={Activity} label="Atividade operacional" expanded={showRail} active={activeWorkspace === "activity"} onClick={() => setActiveWorkspace("activity")} />
-              <RailButton icon={Calendar} label="Agenda operacional" expanded={showRail} active={activeWorkspace === "calendar"} onClick={() => setActiveWorkspace("calendar")} />
-              <RailButton icon={Workflow} label="Automações" expanded={showRail} active={activeWorkspace === "automations"} onClick={() => setActiveWorkspace("automations")} />
+              {currentUser.permissions["dashboard.view"] ? <RailButton icon={LayoutGrid} label="Painel geral" expanded={showRail} active={activeWorkspace === "dashboard"} onClick={() => setActiveWorkspace("dashboard")} /> : null}
+              {currentUser.permissions["tickets.view"] ? <RailButton icon={WhatsAppIcon} label="Atendimento" expanded={showRail} active={activeWorkspace === "tickets"} onClick={() => setActiveWorkspace("tickets")} /> : null}
+              {currentUser.permissions["channels.view"] ? <RailButton icon={Cable} label="Canais e instâncias" expanded={showRail} active={activeWorkspace === "channels"} onClick={() => { setActiveWorkspace("channels"); setAdminSection("instances"); }} /> : null}
+              {currentUser.permissions["quickReplies.view"] ? <RailButton icon={Zap} label="Respostas rápidas" expanded={showRail} active={activeWorkspace === "quickReplies"} onClick={() => setActiveWorkspace("quickReplies")} /> : null}
+              {currentUser.permissions["team.view"] ? <RailButton icon={UserCog} label="Equipe e filas" expanded={showRail} active={activeWorkspace === "team"} onClick={() => { setActiveWorkspace("team"); setAdminSection("agents"); }} /> : null}
+              {currentUser.permissions["api.view"] ? <RailButton icon={Code2} label="API" expanded={showRail} active={activeWorkspace === "api"} onClick={() => setActiveWorkspace("api")} /> : null}
+              {currentUser.permissions["contacts.view"] ? <RailButton icon={Users} label="Contatos" expanded={showRail} active={activeWorkspace === "contacts"} onClick={() => setActiveWorkspace("contacts")} /> : null}
+              {currentUser.permissions["activity.view"] ? <RailButton icon={Activity} label="Atividade operacional" expanded={showRail} active={activeWorkspace === "activity"} onClick={() => setActiveWorkspace("activity")} /> : null}
+              {currentUser.permissions["calendar.view"] ? <RailButton icon={Calendar} label="Agendamentos" expanded={showRail} active={activeWorkspace === "calendar"} onClick={() => setActiveWorkspace("calendar")} /> : null}
+              {currentUser.permissions["automations.view"] ? <RailButton icon={Workflow} label="Automações" expanded={showRail} active={activeWorkspace === "automations"} onClick={() => setActiveWorkspace("automations")} /> : null}
             </div>
             <div className="flex w-full flex-col gap-1 px-2">
-              <RailButton icon={Settings} label="Configurações" expanded={showRail} active={activeWorkspace === "settings"} onClick={() => setActiveWorkspace("settings")} />
-              <button
-                type="button"
-                aria-label="Encerrar sessão"
-                title="Encerrar sessão"
-                onClick={() => void handleLogout()}
-                className={`flex items-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700 ${showRail ? "gap-3 px-3 py-2.5" : "h-10 w-10 justify-center self-center"}`}
-              >
-                <LogIn className="h-5 w-5 rotate-180" />
-                {showRail ? <span className="text-sm font-medium text-slate-600">Sair</span> : null}
-              </button>
+              {currentUser.permissions["settings.view"] ? <RailButton icon={Settings} label="Configurações" expanded={showRail} active={activeWorkspace === "settings"} onClick={() => setActiveWorkspace("settings")} /> : null}
             </div>
           </aside>
 
-          <section className={`grid min-w-0 flex-1 ${ticketWorkspaceAtivo ? "xl:grid-cols-[380px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
+          <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[380px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
             {ticketWorkspaceAtivo ? (
               <div className="flex h-full flex-col border-r border-slate-200 bg-white">
                 <div className="space-y-3 border-b border-slate-200 p-3">
@@ -1564,24 +2570,37 @@ export default function HomePage() {
 
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50/60 p-1">
-                      <SidebarIconButton icon={Eye} label="Limpar filtros e voltar à caixa de entrada" active={!showOnlyUnread && !showOnlyMine} onClick={() => { setShowOnlyUnread(false); setShowOnlyMine(false); setSearchQuery(""); setActiveWorkspace("tickets"); }} />
-                      <SidebarIconButton icon={Plus} label="Abrir canais e instâncias" active={false} onClick={() => { setActiveWorkspace(currentUser.role === "admin" ? "channels" : "tickets"); if (currentUser.role === "admin") setAdminSection("instances"); }} />
+                      <SidebarIconButton icon={Eye} label="Limpar filtros e voltar à caixa de entrada" active={!showOnlyUnread && !showOnlyMine && selectedQueueFilter === "all"} onClick={() => { setShowOnlyUnread(false); setShowOnlyMine(false); setSelectedQueueFilter("all"); setSearchQuery(""); setActiveWorkspace("tickets"); }} />
+                      {canStartConversation ? <SidebarIconButton icon={Plus} label="Iniciar nova conversa" active={false} onClick={openCreateConversationModal} /> : null}
                       <SidebarIconButton icon={LayoutList} label="Usar lista compacta" active={ticketDensity === "compact"} onClick={() => setTicketDensity("compact")} />
                       <SidebarIconButton icon={Monitor} label="Usar lista confortável" active={ticketDensity === "comfortable"} onClick={() => setTicketDensity("comfortable")} />
                       <SidebarIconButton icon={CheckSquare} label="Mostrar apenas meus atendimentos" active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
                       <SidebarIconButton icon={EyeOff} label="Mostrar apenas não lidos" active={showOnlyUnread} onClick={() => setShowOnlyUnread((current) => !current)} />
                     </div>
-                    <button type="button" aria-label="Abrir gestão de filas" title="Abrir gestão de filas" onClick={() => { setActiveWorkspace("team"); setAdminSection("queues"); }} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-500 transition hover:bg-slate-100">
-                      Filas
+                    <label className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-500 transition hover:bg-slate-100">
+                      <select
+                        aria-label="Filtrar atendimentos por fila"
+                        value={selectedQueueFilter}
+                        onChange={(event) => setSelectedQueueFilter(event.target.value)}
+                        className="bg-transparent pr-4 text-[11px] text-slate-600 outline-none"
+                      >
+                        <option value="all">Todas as filas</option>
+                        <option value="without-queue">Sem fila</option>
+                        {queues.map((queue) => (
+                          <option key={queue.id} value={queue.id}>
+                            {queue.name}
+                          </option>
+                        ))}
+                      </select>
                       <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
-                    </button>
+                    </label>
                   </div>
                 </div>
 
                 <div className="flex items-center border-b border-slate-200 px-2">
                   <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
                   <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
-                  <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" />
+                  {canViewGroups ? <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" /> : null}
                 </div>
 
                 <div className="scrollbar-hide flex-1 overflow-y-auto bg-slate-50/30">
@@ -1650,7 +2669,7 @@ export default function HomePage() {
               </div>
             ) : null}
 
-            <section className="flex min-w-0 flex-col bg-[#ebf1f4]">
+            <section className="flex min-h-0 min-w-0 flex-col overflow-y-auto bg-[#ebf1f4]">
               {panelMessage ? (
                 <div className="flex items-start justify-between gap-3 border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-800">
                   <div>{panelMessage}</div>
@@ -1670,6 +2689,31 @@ export default function HomePage() {
           </section>
         </div>
       </div>
+
+      {managementModalContent ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-8">
+          <div className="absolute inset-0" onClick={closeManagementModal} aria-hidden="true" />
+          <section className="relative z-10 w-full max-w-3xl rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_25px_80px_rgba(15,23,42,0.28)]">
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Cadastro</div>
+                <h2 className="mt-1 text-2xl font-semibold tracking-[-0.03em] text-slate-900">{managementModalContent.title}</h2>
+                <p className="mt-2 text-sm text-slate-500">{managementModalContent.description}</p>
+              </div>
+              <button
+                type="button"
+                onClick={closeManagementModal}
+                aria-label="Fechar popup"
+                title="Fechar"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {managementModalContent.content}
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -1697,6 +2741,22 @@ function AuthField(props: { label: string; value: string; onChange: (value: stri
         className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white"
       />
     </label>
+  );
+}
+
+function WhatsAppIcon(props: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={props.className} fill="none">
+      <path
+        d="M12 3.25C7.17 3.25 3.25 7.08 3.25 11.8c0 1.74.54 3.43 1.56 4.87L3.5 20.75l4.22-1.28a8.87 8.87 0 0 0 4.28 1.08c4.83 0 8.75-3.83 8.75-8.75S16.83 3.25 12 3.25Z"
+        className="fill-emerald-500/12 stroke-current"
+        strokeWidth="1.5"
+      />
+      <path
+        d="M8.96 8.63c.18-.41.37-.42.54-.43.15-.01.33-.01.5-.01.16 0 .42.06.64.3.22.24.83.81.83 1.97 0 1.15-.85 2.27-.97 2.42-.12.15-.24.35-.1.56.14.21.63 1.02 1.36 1.65.94.82 1.73 1.07 1.98 1.19.25.12.4.1.55-.06.15-.16.62-.71.78-.95.16-.24.33-.2.56-.12.23.08 1.45.68 1.7.81.25.12.41.18.47.29.06.11.06.64-.15 1.26-.21.62-1.24 1.18-1.72 1.22-.44.04-.99.06-1.6-.13-.37-.12-.85-.28-1.46-.54-2.57-1.11-4.25-3.81-4.38-3.99-.12-.18-1.04-1.39-1.04-2.65 0-1.26.66-1.88.89-2.13Z"
+        className="fill-current"
+      />
+    </svg>
   );
 }
 
@@ -1823,12 +2883,12 @@ function CompactField(props: { label: string; value: string; onChange: (value: s
   );
 }
 
-function PrimaryAction(props: { disabled?: boolean; children: React.ReactNode }) {
+function PrimaryAction(props: { disabled?: boolean; children: React.ReactNode; className?: string }) {
   return (
     <button
       type="submit"
       disabled={props.disabled}
-      className="w-full rounded-2xl bg-[#1A1C32] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
+      className={`w-full rounded-2xl bg-[#1A1C32] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300 ${props.className ?? ""}`}
     >
       {props.children}
     </button>
@@ -1965,6 +3025,7 @@ function QueueEditor(props: {
   queue: QueueItem;
   agents: AgentItem[];
   loading: boolean;
+  canEdit: boolean;
   onSave: (queueId: string, agentIds: string[]) => Promise<void>;
   onChange: React.Dispatch<React.SetStateAction<QueueItem[]>>;
 }) {
@@ -1990,6 +3051,7 @@ function QueueEditor(props: {
                 <input
                   type="checkbox"
                   checked={checked}
+                  disabled={!props.canEdit}
                   onChange={(event) => {
                     const next = event.target.checked ? [...selectedIds, agent.id] : selectedIds.filter((id) => id !== agent.id);
                     props.onChange((current) =>
@@ -2017,10 +3079,10 @@ function QueueEditor(props: {
       <button
         type="button"
         onClick={() => void props.onSave(props.queue.id, props.queue.agents.map((agent) => agent.id))}
-        disabled={props.loading}
+        disabled={props.loading || !props.canEdit}
         className="mt-4 w-full rounded-2xl bg-[#1A1C32] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
       >
-        {props.loading ? "Salvando membros..." : "Salvar membros da fila"}
+        {props.loading ? "Salvando membros..." : props.canEdit ? "Salvar membros da fila" : "Sem permissão para editar membros"}
       </button>
     </div>
   );

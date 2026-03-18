@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
-import { requireSession } from '../../lib/auth-guard.js';
+import { requirePermission } from '../../lib/auth-guard.js';
 
 const createQueueSchema = z.object({
   name: z.string().min(2),
@@ -19,8 +19,7 @@ const assignQueueAgentsSchema = z.object({
 
 export const queueRoutes: FastifyPluginAsync = async (app) => {
   app.get('/queues', async (request, reply) => {
-    const session = requireSession(request, reply);
-    if (!session) return;
+    if (!(await requirePermission(app, request, reply, 'team.view'))) return;
 
     const items = await app.prisma.queue.findMany({
       include: {
@@ -50,11 +49,7 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/queues', async (request, reply) => {
-    const session = requireSession(request, reply);
-    if (!session) return;
-    if (session.role !== 'admin') {
-      return reply.forbidden('Somente administradores podem criar filas.');
-    }
+    if (!(await requirePermission(app, request, reply, 'queues.manage'))) return;
 
     const body = createQueueSchema.parse(request.body);
     const item = await app.prisma.queue.create({
@@ -71,11 +66,7 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.put('/queues/:queueId', async (request, reply) => {
-    const session = requireSession(request, reply);
-    if (!session) return;
-    if (session.role !== 'admin') {
-      return reply.forbidden('Somente administradores podem editar filas.');
-    }
+    if (!(await requirePermission(app, request, reply, 'queues.manage'))) return;
 
     const params = z.object({ queueId: z.string().uuid() }).parse(request.params);
     const body = updateQueueSchema.parse(request.body);
@@ -86,7 +77,7 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (!existing) {
-      return reply.notFound('Fila não encontrada.');
+      return reply.notFound('Fila nao encontrada.');
     }
 
     const item = await app.prisma.queue.update({
@@ -106,11 +97,7 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/queues/:queueId/agents', async (request, reply) => {
-    const session = requireSession(request, reply);
-    if (!session) return;
-    if (session.role !== 'admin') {
-      return reply.forbidden('Somente administradores podem atualizar os membros da fila.');
-    }
+    if (!(await requirePermission(app, request, reply, 'queues.assign'))) return;
 
     const params = z.object({ queueId: z.string().uuid() }).parse(request.params);
     const body = assignQueueAgentsSchema.parse(request.body);
@@ -122,7 +109,7 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (!queue) {
-      return reply.notFound('Fila não encontrada.');
+      return reply.notFound('Fila nao encontrada.');
     }
 
     if (uniqueAgentIds.length > 0) {
@@ -134,7 +121,7 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
       });
 
       if (existingAgents.length !== uniqueAgentIds.length) {
-        return reply.badRequest('Um ou mais agentes selecionados não existem mais. Atualize a tela e tente novamente.');
+        return reply.badRequest('Um ou mais agentes selecionados nao existem mais. Atualize a tela e tente novamente.');
       }
     }
 

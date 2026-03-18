@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
-import { requireSession } from '../../lib/auth-guard.js';
+import { requirePermission } from '../../lib/auth-guard.js';
 import { sendEvolutionText } from '../../lib/evolution-client.js';
 import { loadEnv } from '../../config/env.js';
 import { decryptSecret, encryptSecret } from '../../lib/secrets.js';
@@ -15,8 +15,9 @@ const env = loadEnv();
 
 export const messageRoutes: FastifyPluginAsync = async (app) => {
   app.get('/tickets/:ticketId/messages', async (request, reply) => {
-    const session = requireSession(request, reply);
-    if (!session) return;
+    const access = await requirePermission(app, request, reply, 'tickets.view');
+    if (!access) return;
+    const session = access.session;
 
     const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
     const items = await app.prisma.ticketMessage.findMany({
@@ -46,8 +47,9 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/tickets/:ticketId/messages', async (request, reply) => {
-    const session = requireSession(request, reply);
-    if (!session) return;
+    const access = await requirePermission(app, request, reply, 'tickets.reply');
+    if (!access) return;
+    const session = access.session;
 
     const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
     const body = createMessageBodySchema.parse(request.body);

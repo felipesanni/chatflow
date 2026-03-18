@@ -3,9 +3,10 @@ import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import type { Prisma } from '@prisma/client';
 import { parseEvolutionWebhook } from '../../lib/evolution.js';
-import { requireSession } from '../../lib/auth-guard.js';
+import { requirePermission } from '../../lib/auth-guard.js';
 import { loadEnv } from '../../config/env.js';
-import { encryptSecret } from '../../lib/secrets.js';
+import { decryptSecret, encryptSecret } from '../../lib/secrets.js';
+import { configureEvolutionWebhook } from '../../lib/evolution-client.js';
 
 const webhookBodySchema = z.object({
   event: z.string().optional(),
@@ -41,6 +42,85 @@ function pickHeaderSecret(value: string | string[] | undefined) {
   }
 
   return typeof value === 'string' ? value : null;
+}
+
+function resolvePublicApiBase(request: { headers: Record<string, unknown> }) {
+  if (env.API_PUBLIC_URL) {
+    return env.API_PUBLIC_URL.replace(/\/$/, '');
+  }
+
+  const forwardedProto = pickHeaderSecret(request.headers['x-forwarded-proto']) ?? 'https';
+  const forwardedHost = pickHeaderSecret(request.headers['x-forwarded-host']);
+  const host = pickHeaderSecret(request.headers.host);
+  const origin = pickHeaderSecret(request.headers.origin);
+  const referer = pickHeaderSecret(request.headers.referer);
+
+  if (forwardedHost && !forwardedHost.includes(':3333') && !forwardedHost.includes('api:')) {
+    return `${forwardedProto}://${forwardedHost}`.replace(/\/$/, '');
+  }
+
+  if (host && !host.includes(':3333') && !host.includes('api:')) {
+    return `${forwardedProto}://${host}`.replace(/\/$/, '');
+  }
+
+  const candidate = origin ?? referer;
+  if (candidate) {
+    const parsed = candidate.replace(/\/$/, '');
+    if (parsed.includes('chatflow-web.')) {
+      return parsed.replace('chatflow-web.', 'chatflow-api.');
+    }
+  }
+
+  return null;
+}
+
+function normalizeConnectionPhone(value: unknown) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const digits = value.replace(/[^0-9]/g, '');
+  return digits.length > 0 ? digits : null;
+}
+
+function resolveInstanceSnapshot(event: string, payload: Prisma.InputJsonValue | Record<string, unknown>) {
+  const raw = payload as Record<string, any>;
+  const data = (raw?.data && typeof raw.data === 'object' ? raw.data : {}) as Record<string, any>;
+  const stateCandidate = [
+    data.state,
+    data.status,
+    data.connection,
+    data.instance?.state,
+    data.instance?.status,
+  ].find((value) => typeof value === 'string') as string | undefined;
+
+  const phoneCandidate = [
+    data.number,
+    data.phone,
+    data.owner,
+    data.instance?.number,
+    data.instance?.owner,
+  ].find((value) => typeof value === 'string');
+
+  const normalizedState = stateCandidate?.toLowerCase() ?? '';
+  let status: 'connected' | 'disconnected' | 'pairing' | 'error' | null = null;
+
+  if (event === 'QRCODE_UPDATED') {
+    status = 'pairing';
+  } else if (['open', 'connected'].includes(normalizedState)) {
+    status = 'connected';
+  } else if (['close', 'closed', 'disconnected', 'disconnect'].includes(normalizedState)) {
+    status = 'disconnected';
+  } else if (['connecting', 'pairing', 'qr', 'qrcode'].includes(normalizedState)) {
+    status = 'pairing';
+  } else if (['error', 'refused', 'timeout'].includes(normalizedState)) {
+    status = 'error';
+  }
+
+  return {
+    status,
+    phoneNumber: normalizeConnectionPhone(phoneCandidate),
+  };
 }
 
 export const whatsappRoutes: FastifyPluginAsync = async (app) => {
@@ -92,6 +172,31 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(401).send({
         message: 'Segredo do webhook invalido.',
       });
+    }
+
+    if (instance) {
+      const snapshot = resolveInstanceSnapshot(parsed.event, parsed.rawPayload);
+      if (snapshot.status || snapshot.phoneNumber) {
+        const updatedInstance = await app.prisma.whatsAppInstance.update({
+          where: { id: instance.id },
+          data: {
+            ...(snapshot.status ? { status: snapshot.status } : {}),
+            ...(snapshot.phoneNumber ? { phoneNumber: snapshot.phoneNumber } : {}),
+            lastSeenAt: new Date(),
+          },
+          select: {
+            id: true,
+            status: true,
+            phoneNumber: true,
+          },
+        });
+
+        app.io.emit('instance.updated', {
+          instanceId: updatedInstance.id,
+          status: updatedInstance.status,
+          phoneNumber: updatedInstance.phoneNumber,
+        });
+      }
     }
 
     if (!instance || !parsed.remoteJid) {
@@ -222,8 +327,7 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/whatsapp/instances', async (request, reply) => {
-    const session = requireSession(request, reply);
-    if (!session) return;
+    if (!(await requirePermission(app, request, reply, 'channels.view'))) return;
 
     const items = await app.prisma.whatsAppInstance.findMany({
       orderBy: { createdAt: 'desc' },
@@ -243,13 +347,34 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/whatsapp/instances', async (request, reply) => {
-    const session = requireSession(request, reply);
-    if (!session) return;
-    if (session.role !== 'admin') {
-      return reply.forbidden('Somente administradores podem criar instancias do WhatsApp.');
-    }
+    if (!(await requirePermission(app, request, reply, 'channels.manage'))) return;
 
     const body = createInstanceSchema.parse(request.body);
+    const publicApiBase = resolvePublicApiBase(request);
+
+    if (!publicApiBase) {
+      return reply.badRequest('Nao foi possivel resolver a URL publica da API. Defina API_PUBLIC_URL no backend.');
+    }
+
+    const webhookUrl = body.webhookSecret
+      ? `${publicApiBase}/api/webhooks/evolution?secret=${encodeURIComponent(body.webhookSecret)}`
+      : `${publicApiBase}/api/webhooks/evolution`;
+
+    const webhookSetup = await configureEvolutionWebhook({
+      baseUrl: body.baseUrl,
+      apiKey: body.apiKey,
+      instanceName: body.evolutionInstanceName,
+      webhookUrl,
+    });
+
+    if (!webhookSetup.ok) {
+      return reply.code(400).send({
+        message: 'Falha ao configurar o webhook da Evolution para esta instancia.',
+        status: webhookSetup.status,
+        payload: webhookSetup.payload,
+      });
+    }
+
     const item = await app.prisma.whatsAppInstance.create({
       data: {
         id: randomUUID(),
@@ -258,7 +383,7 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
         baseUrl: body.baseUrl,
         apiKeyEncrypted: encryptSecret(body.apiKey, env.SESSION_SECRET),
         webhookSecret: body.webhookSecret,
-        status: 'connected',
+        status: 'disconnected',
       },
       select: {
         id: true,
@@ -278,22 +403,47 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.put('/whatsapp/instances/:instanceId', async (request, reply) => {
-    const session = requireSession(request, reply);
-    if (!session) return;
-    if (session.role !== 'admin') {
-      return reply.forbidden('Somente administradores podem editar instâncias do WhatsApp.');
-    }
+    if (!(await requirePermission(app, request, reply, 'channels.manage'))) return;
 
     const params = z.object({ instanceId: z.string().uuid() }).parse(request.params);
     const body = updateInstanceSchema.parse(request.body);
+    const publicApiBase = resolvePublicApiBase(request);
+
+    if (!publicApiBase) {
+      return reply.badRequest('Nao foi possivel resolver a URL publica da API. Defina API_PUBLIC_URL no backend.');
+    }
 
     const existing = await app.prisma.whatsAppInstance.findUnique({
       where: { id: params.instanceId },
-      select: { id: true },
+      select: { id: true, apiKeyEncrypted: true, webhookSecret: true },
     });
 
     if (!existing) {
       return reply.notFound('Instância não encontrada.');
+    }
+
+    const apiKey = body.apiKey && body.apiKey.trim().length > 0
+      ? body.apiKey
+      : decryptSecret(existing.apiKeyEncrypted, env.SESSION_SECRET);
+
+    const webhookSecret = body.webhookSecret ?? existing.webhookSecret ?? undefined;
+    const webhookUrl = webhookSecret
+      ? `${publicApiBase}/api/webhooks/evolution?secret=${encodeURIComponent(webhookSecret)}`
+      : `${publicApiBase}/api/webhooks/evolution`;
+
+    const webhookSetup = await configureEvolutionWebhook({
+      baseUrl: body.baseUrl,
+      apiKey,
+      instanceName: body.evolutionInstanceName,
+      webhookUrl,
+    });
+
+    if (!webhookSetup.ok) {
+      return reply.code(400).send({
+        message: 'Falha ao atualizar o webhook da Evolution para esta instancia.',
+        status: webhookSetup.status,
+        payload: webhookSetup.payload,
+      });
     }
 
     const item = await app.prisma.whatsAppInstance.update({

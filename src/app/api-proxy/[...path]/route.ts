@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 const API_TARGET = process.env.API_PROXY_TARGET ?? 'http://api:3333/api';
 
@@ -15,11 +15,22 @@ async function proxy(request: NextRequest, params: { path: string[] }) {
   });
 
   const body = await response.text();
-
-  return new NextResponse(body, {
+  const nextResponse = new NextResponse(body, {
     status: response.status,
-    headers: response.headers,
   });
+
+  response.headers.forEach((value, key) => {
+    if (key.toLowerCase() !== 'set-cookie') {
+      nextResponse.headers.set(key, value);
+    }
+  });
+
+  const setCookie = response.headers.get('set-cookie');
+  if (setCookie) {
+    nextResponse.headers.set('set-cookie', setCookie);
+  }
+
+  return nextResponse;
 }
 
 export async function GET(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {

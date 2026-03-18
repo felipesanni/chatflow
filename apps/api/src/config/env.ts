@@ -5,6 +5,7 @@ const envSchema = z.object({
   API_HOST: z.string().default('0.0.0.0'),
   API_PORT: z.coerce.number().int().positive().default(3333),
   API_LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  API_PUBLIC_URL: z.string().url().optional(),
   DATABASE_URL: z.string().min(1),
   SESSION_SECRET: z.string().min(8),
   WEB_APP_URL: z.string().url(),

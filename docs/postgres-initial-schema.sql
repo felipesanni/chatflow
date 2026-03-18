@@ -25,6 +25,7 @@ CREATE TABLE users (
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   role "UserRole" NOT NULL DEFAULT 'agent',
+  permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
   status "UserStatus" NOT NULL DEFAULT 'active',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -64,6 +65,17 @@ CREATE TABLE queues (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE quick_replies (
+  id UUID PRIMARY KEY,
+  shortcut TEXT NOT NULL UNIQUE,
+  content TEXT NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX quick_replies_shortcut_idx ON quick_replies(shortcut);
 
 CREATE TABLE whatsapp_instances (
   id UUID PRIMARY KEY,
