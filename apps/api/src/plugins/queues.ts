@@ -18,6 +18,7 @@ declare module 'fastify' {
 
 export const queuesPlugin = fp(async (app: FastifyInstance) => {
   const env = loadEnv();
+  const redisConnection = { url: env.REDIS_URL } as any;
 
   if (!env.REDIS_URL) {
     app.decorate('jobs', {
@@ -29,7 +30,7 @@ export const queuesPlugin = fp(async (app: FastifyInstance) => {
   }
 
   const evolutionEventQueue = new Queue<EvolutionEventJobPayload>(EVOLUTION_EVENT_QUEUE, {
-    connection: env.REDIS_URL,
+    connection: redisConnection,
     defaultJobOptions: {
       attempts: 5,
       backoff: {
@@ -53,7 +54,7 @@ export const queuesPlugin = fp(async (app: FastifyInstance) => {
       return result.body;
     },
     {
-      connection: env.REDIS_URL,
+      connection: redisConnection,
       concurrency: env.QUEUE_WEBHOOK_CONCURRENCY,
     },
   );
@@ -69,7 +70,7 @@ export const queuesPlugin = fp(async (app: FastifyInstance) => {
   app.decorate('jobs', {
     enabled: true,
     enqueueEvolutionEvent: async (payload: EvolutionEventJobPayload) => {
-      const job = await evolutionEventQueue.add('process-evolution-event' as never, payload);
+      const job = await (evolutionEventQueue as any).add('process-evolution-event', payload);
       return job.id ? String(job.id) : null;
     },
   });
