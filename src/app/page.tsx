@@ -602,6 +602,7 @@ export default function HomePage() {
   });
   const socketRef = React.useRef<Socket | null>(null);
   const userMenuRef = React.useRef<HTMLDivElement | null>(null);
+  const messageMenuRef = React.useRef<HTMLDivElement | null>(null);
   const attachmentUploadRef = React.useRef<HTMLInputElement | null>(null);
   const messagesViewportRef = React.useRef<HTMLDivElement | null>(null);
   const shouldStickMessagesToBottomRef = React.useRef(true);
@@ -966,13 +967,20 @@ export default function HomePage() {
   }, [canSendToSelectedTicket, replyToMessageId]);
 
   React.useEffect(() => {
-    const handlePointerDown = () => {
+    if (!openMessageMenuId) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!messageMenuRef.current) return;
+      if (messageMenuRef.current.contains(event.target as Node)) {
+        return;
+      }
+
       setOpenMessageMenuId(null);
     };
 
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, []);
+  }, [openMessageMenuId]);
 
   React.useEffect(() => {
     setShowTransferPanel(false);
@@ -3181,26 +3189,32 @@ export default function HomePage() {
                                 </div>
                               ) : null}
                               </div>
-                              {canEditMessage || canDeleteMessage || canDeleteMessageForMe || canReplyToMessage ? (
-                                <div className="relative mt-1">
-                                  <button
-                                    type="button"
-                                    aria-label="Abrir ações da mensagem"
-                                    title="Mais opções"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      setOpenMessageMenuId((current) => current === message.id ? null : message.id);
-                                    }}
-                                    className={`grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-slate-700 ${openMessageMenuId === message.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+                                {canEditMessage || canDeleteMessage || canDeleteMessageForMe || canReplyToMessage ? (
+                                  <div
+                                    ref={openMessageMenuId === message.id ? messageMenuRef : null}
+                                    onPointerDown={(event) => event.stopPropagation()}
+                                    className="relative mt-1"
                                   >
-                                    <ChevronDown className="h-3.5 w-3.5" />
-                                  </button>
-
-                                  {openMessageMenuId === message.id ? (
-                                    <div
-                                      onClick={(event) => event.stopPropagation()}
-                                      className={`absolute z-20 mt-2 w-56 rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_18px_48px_rgba(15,23,42,0.16)] ${outgoing ? "right-0" : "left-0"}`}
+                                    <button
+                                      type="button"
+                                      aria-label="Abrir ações da mensagem"
+                                      title="Mais opções"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        setOpenMessageMenuId((current) => current === message.id ? null : message.id);
+                                      }}
+                                      onPointerDown={(event) => event.stopPropagation()}
+                                      className={`grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-slate-700 ${openMessageMenuId === message.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
                                     >
+                                      <ChevronDown className="h-3.5 w-3.5" />
+                                    </button>
+  
+                                    {openMessageMenuId === message.id ? (
+                                      <div
+                                        onPointerDown={(event) => event.stopPropagation()}
+                                        onClick={(event) => event.stopPropagation()}
+                                        className={`absolute z-20 mt-2 w-56 rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_18px_48px_rgba(15,23,42,0.16)] ${outgoing ? "right-0" : "left-0"}`}
+                                      >
                                       {canReplyToMessage ? (
                                         <div className="mb-2 flex flex-wrap gap-1 rounded-2xl bg-slate-50 p-1">
                                           {MESSAGE_REACTION_LIBRARY.map((emoji) => (
