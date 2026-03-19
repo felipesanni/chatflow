@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
+import type { TicketStatus } from '@prisma/client';
 import { requirePermission } from '../../lib/auth-guard.js';
 import type { PermissionMap } from '../../lib/permissions.js';
 
@@ -199,7 +200,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       AND: [
         ...(!access.permissions['tickets.closedView']
           ? [{
-              status: { in: ['open', 'pending'] as const },
+              status: { in: ['open', 'pending'] as TicketStatus[] },
             }]
           : []),
         ...(!access.permissions['tickets.viewAll']
