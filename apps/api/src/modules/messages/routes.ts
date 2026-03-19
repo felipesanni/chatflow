@@ -774,7 +774,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canReplyToTicket(session.userId, session.permissions, session.queueIds, ticket)) {
+    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Apenas o agente responsavel pode editar mensagens deste ticket.');
     }
 
@@ -919,7 +919,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canReplyToTicket(session.userId, session.permissions, session.queueIds, ticket)) {
+    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Apenas o agente responsavel pode reagir neste ticket.');
     }
 
@@ -1006,7 +1006,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canReplyToTicket(session.userId, session.permissions, session.queueIds, ticket)) {
+    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Apenas o agente responsavel pode apagar mensagens neste ticket.');
     }
 
@@ -1243,7 +1243,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canReplyToTicket(session.userId, session.permissions, session.queueIds, ticket)) {
+    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Apenas o agente responsavel pode responder este ticket.');
     }
 

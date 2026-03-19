@@ -534,7 +534,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         ticketId: ticket.id,
         eventType: 'reopened',
         actorUserId: session.userId,
-        metadata: null,
+        metadata: Prisma.JsonNull,
       },
     });
 
