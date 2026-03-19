@@ -1,7 +1,6 @@
 import fp from 'fastify-plugin';
 import type { FastifyInstance } from 'fastify';
 import { Queue, Worker } from 'bullmq';
-import { Redis } from 'ioredis';
 import { loadEnv } from '../config/env.js';
 import { processEvolutionEvent } from '../lib/evolution-events.js';
 import { EVOLUTION_EVENT_QUEUE, type EvolutionEventJobPayload } from '../lib/queue-jobs.js';
@@ -29,17 +28,8 @@ export const queuesPlugin = fp(async (app: FastifyInstance) => {
     return;
   }
 
-  const queueConnection = new Redis(env.REDIS_URL, {
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false,
-  });
-  const workerConnection = new Redis(env.REDIS_URL, {
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false,
-  });
-
   const evolutionEventQueue = new Queue<EvolutionEventJobPayload>(EVOLUTION_EVENT_QUEUE, {
-    connection: queueConnection,
+    connection: env.REDIS_URL,
     defaultJobOptions: {
       attempts: 5,
       backoff: {
@@ -63,7 +53,7 @@ export const queuesPlugin = fp(async (app: FastifyInstance) => {
       return result.body;
     },
     {
-      connection: workerConnection,
+      connection: env.REDIS_URL,
       concurrency: env.QUEUE_WEBHOOK_CONCURRENCY,
     },
   );
@@ -79,7 +69,7 @@ export const queuesPlugin = fp(async (app: FastifyInstance) => {
   app.decorate('jobs', {
     enabled: true,
     enqueueEvolutionEvent: async (payload: EvolutionEventJobPayload) => {
-      const job = await evolutionEventQueue.add('process-evolution-event', payload);
+      const job = await evolutionEventQueue.add('process-evolution-event' as never, payload);
       return job.id ? String(job.id) : null;
     },
   });
@@ -87,7 +77,5 @@ export const queuesPlugin = fp(async (app: FastifyInstance) => {
   app.addHook('onClose', async () => {
     await evolutionEventWorker.close();
     await evolutionEventQueue.close();
-    await queueConnection.quit();
-    await workerConnection.quit();
   });
 });
