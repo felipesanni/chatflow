@@ -193,6 +193,14 @@ function serializeDeletedState(rawPayload: unknown) {
   };
 }
 
+function normalizeHiddenForUserIds(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as string[];
+  }
+
+  return value.flatMap((item) => typeof item === 'string' && item.trim().length > 0 ? [item.trim()] : []);
+}
+
 function withStoredReaction(
   rawPayload: Prisma.JsonValue | null | undefined,
   reaction: {
@@ -230,6 +238,16 @@ function withDeletedMessage(rawPayload: Prisma.JsonValue | null | undefined) {
     scope: 'everyone',
   };
 
+  return payload as Prisma.InputJsonValue;
+}
+
+function withMessageHiddenForUser(rawPayload: Prisma.JsonValue | null | undefined, userId: string) {
+  const payload = rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
+    ? { ...(rawPayload as Record<string, unknown>) }
+    : {};
+
+  const current = normalizeHiddenForUserIds(payload.chatflowHiddenForUserIds);
+  payload.chatflowHiddenForUserIds = Array.from(new Set([...current, userId]));
   return payload as Prisma.InputJsonValue;
 }
 
@@ -367,7 +385,9 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return {
-      items: items.map((message: any) => ({
+      items: items
+        .filter((message: any) => !normalizeHiddenForUserIds(message.rawPayload?.chatflowHiddenForUserIds).includes(session.userId))
+        .map((message: any) => ({
         id: message.id,
         ticketId: message.ticketId,
         direction: message.direction,
@@ -379,6 +399,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         createdAt: message.createdAt,
         reactions: serializeMessageReactions(message.rawPayload),
         deleted: serializeDeletedState(message.rawPayload),
+        hiddenForMe: normalizeHiddenForUserIds(message.rawPayload?.chatflowHiddenForUserIds).includes(session.userId),
         replyToMessage: message.replyToMessage
           ? {
               id: message.replyToMessage.id,
@@ -388,6 +409,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
               senderName: message.replyToMessage.senderNameSnapshot,
               createdAt: message.replyToMessage.createdAt,
               deleted: serializeDeletedState(message.replyToMessage.rawPayload),
+              hiddenForMe: normalizeHiddenForUserIds(message.replyToMessage.rawPayload?.chatflowHiddenForUserIds).includes(session.userId),
               attachments: message.replyToMessage.attachments.map((attachment: any) => ({
                 id: attachment.id,
                 fileName: attachment.fileName,
@@ -745,6 +767,64 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       item: {
         id: updatedMessage.id,
         deleted: serializeDeletedState(updatedMessage.rawPayload),
+      },
+    });
+  });
+
+  app.post('/tickets/:ticketId/messages/:messageId/delete-local', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.view');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({
+      ticketId: z.string().uuid(),
+      messageId: z.string().uuid(),
+    }).parse(request.params);
+
+    const ticket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      select: {
+        id: true,
+        currentAgentId: true,
+      },
+    });
+
+    if (!ticket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canViewTicket(session.userId, access.permissions, ticket)) {
+      return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
+    }
+
+    const message = await app.prisma.ticketMessage.findFirst({
+      where: {
+        id: params.messageId,
+        ticketId: params.ticketId,
+      },
+    });
+
+    if (!message) {
+      return reply.notFound('Mensagem nao encontrada.');
+    }
+
+    const updatedMessage = await app.prisma.ticketMessage.update({
+      where: { id: message.id },
+      data: {
+        rawPayload: withMessageHiddenForUser(message.rawPayload, session.userId),
+      },
+    });
+
+    app.io.emit('message.updated', {
+      ticketId: ticket.id,
+      messageId: updatedMessage.id,
+      direction: updatedMessage.direction,
+    });
+
+    return reply.code(201).send({
+      item: {
+        id: updatedMessage.id,
+        hiddenForMe: true,
       },
     });
   });

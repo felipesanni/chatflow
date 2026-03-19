@@ -86,6 +86,7 @@ type MessageItem = {
   replyToMessage?: ReplyMessageItem | null;
   reactions?: MessageReactionItem[];
   deleted?: MessageDeletedState | null;
+  hiddenForMe?: boolean;
   attachments?: AttachmentItem[];
 };
 
@@ -111,6 +112,7 @@ type ReplyMessageItem = {
   senderName: string | null;
   createdAt: string;
   deleted?: MessageDeletedState | null;
+  hiddenForMe?: boolean;
   attachments?: AttachmentItem[];
 };
 
@@ -1686,6 +1688,26 @@ export default function HomePage() {
     }
   }
 
+  async function handleDeleteMessageForMe(messageId: string) {
+    if (!selectedTicketId) {
+      return;
+    }
+
+    if (typeof window !== "undefined" && !window.confirm("Apagar esta mensagem apenas para você?")) {
+      return;
+    }
+
+    try {
+      await apiFetch(`/tickets/${selectedTicketId}/messages/${messageId}/delete-local`, {
+        method: "POST",
+      });
+      await refreshMessages(selectedTicketId);
+      setPanelMessage("Mensagem apagada para você.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao apagar a mensagem para você.");
+    }
+  }
+
   function insertEmoji(emoji: string) {
     setMessageInput((current) => `${current}${emoji}`);
     setShowEmojiPicker(false);
@@ -2700,7 +2722,7 @@ export default function HomePage() {
                   <div className="flex items-center gap-4">
                     {shouldRenderBrandImage ? (
                       <div className="flex min-h-[64px] min-w-[200px] items-center px-2 py-2">
-                        <img src={brandLogoPreview} alt="Logo do painel" className="max-h-11 w-auto object-contain" />
+                        <img src={brandLogoPreview ?? undefined} alt="Logo do painel" className="max-h-11 w-auto object-contain" />
                       </div>
                     ) : shouldRenderBrandText ? (
                       <div className="flex min-h-[64px] min-w-[200px] items-center px-2 py-2">
@@ -3047,6 +3069,7 @@ export default function HomePage() {
                           Boolean(message.senderName?.trim());
                         const canEditMessage = outgoing && canSendToSelectedTicket && !hasAttachment && Boolean(normalizedBody) && !isDeletedMessage;
                         const canDeleteMessage = outgoing && canSendToSelectedTicket && !isDeletedMessage;
+                        const canDeleteMessageForMe = !system;
                         const canReplyToMessage = !system && canSendToSelectedTicket && !isEditingMessage && !isDeletedMessage;
                         const groupedReactions = (message.reactions ?? []).reduce<Record<string, number>>((acc, reaction) => {
                           acc[reaction.emoji] = (acc[reaction.emoji] ?? 0) + 1;
@@ -3147,7 +3170,7 @@ export default function HomePage() {
                                 </div>
                               ) : null}
                               </div>
-                              {canEditMessage || canDeleteMessage || canReplyToMessage ? (
+                              {canEditMessage || canDeleteMessage || canDeleteMessageForMe || canReplyToMessage ? (
                               <div className="mt-1 flex flex-col gap-2 opacity-0 transition group-hover:opacity-100">
                                 {canEditMessage ? (
                                   <button
@@ -3169,6 +3192,17 @@ export default function HomePage() {
                                     className="grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-red-600"
                                   >
                                     <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                ) : null}
+                                {canDeleteMessageForMe ? (
+                                  <button
+                                    type="button"
+                                    aria-label="Apagar para mim"
+                                    title="Apagar para mim"
+                                    onClick={() => void handleDeleteMessageForMe(message.id)}
+                                    className="grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-slate-700"
+                                  >
+                                    <EyeOff className="h-3.5 w-3.5" />
                                   </button>
                                 ) : null}
                                 {canReplyToMessage ? (
@@ -3920,7 +3954,7 @@ export default function HomePage() {
             {shouldRenderBrandImage ? (
               <div className="flex items-center gap-3">
                 <div className="flex h-10 min-w-[180px] items-center px-2">
-                  <img src={brandLogoPreview} alt="Logo do painel" className="max-h-8 w-auto object-contain" />
+                  <img src={brandLogoPreview ?? undefined} alt="Logo do painel" className="max-h-8 w-auto object-contain" />
                 </div>
                 <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">{workspaceTitle}</div>
               </div>
