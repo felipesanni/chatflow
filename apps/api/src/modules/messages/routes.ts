@@ -84,6 +84,22 @@ function pickAttachmentPublicUrl(payload: any) {
     ?? null;
 }
 
+function resolveExternalAttachmentUrl(baseUrl: string, candidate: string | null) {
+  if (!candidate) {
+    return null;
+  }
+
+  if (candidate.startsWith('data:')) {
+    return candidate;
+  }
+
+  try {
+    return new URL(candidate).toString();
+  } catch {
+    return new URL(candidate.replace(/^\.\//, ''), `${baseUrl.replace(/\/$/, '')}/`).toString();
+  }
+}
+
 function canViewTicket(viewerId: string, permissions: PermissionMap, ticket: { currentAgentId: string | null }) {
   if (permissions['tickets.viewAll']) {
     return true;
@@ -97,6 +113,94 @@ function canReplyToTicket(viewerId: string, ticket: { currentAgentId: string | n
 }
 
 export const messageRoutes: FastifyPluginAsync = async (app) => {
+  app.get('/tickets/:ticketId/attachments/:attachmentId/content', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.view');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({
+      ticketId: z.string().uuid(),
+      attachmentId: z.string().uuid(),
+    }).parse(request.params);
+
+    const attachment = await app.prisma.attachment.findFirst({
+      where: {
+        id: params.attachmentId,
+        message: {
+          ticketId: params.ticketId,
+        },
+      },
+      include: {
+        message: {
+          include: {
+            ticket: {
+              include: {
+                whatsappInstance: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!attachment) {
+      return reply.notFound('Anexo nao encontrado.');
+    }
+
+    if (!canViewTicket(session.userId, access.permissions, attachment.message.ticket)) {
+      return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
+    }
+
+    const source = attachment.publicUrl ?? attachment.storageKey;
+    if (!source) {
+      return reply.notFound('Conteudo do anexo indisponivel.');
+    }
+
+    if (source.startsWith('data:')) {
+      const parsed = parseDataUrl(source);
+      reply.header('Content-Type', parsed.mimeType || attachment.mimeType);
+      reply.header('Cache-Control', 'private, max-age=300');
+      return reply.send(Buffer.from(parsed.base64, 'base64'));
+    }
+
+    const decryptedApiKey = decryptSecret(attachment.message.ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
+    const targetUrl = resolveExternalAttachmentUrl(attachment.message.ticket.whatsappInstance.baseUrl, source);
+
+    if (!targetUrl) {
+      return reply.notFound('Conteudo do anexo indisponivel.');
+    }
+
+    const mediaResponse = await fetch(targetUrl, {
+      headers: {
+        apikey: decryptedApiKey,
+      },
+    });
+
+    if (!mediaResponse.ok) {
+      return reply.code(mediaResponse.status).send({
+        message: 'Falha ao carregar o anexo externo.',
+      });
+    }
+
+    const arrayBuffer = await mediaResponse.arrayBuffer();
+    const contentType = mediaResponse.headers.get('content-type') ?? attachment.mimeType;
+    const contentLength = mediaResponse.headers.get('content-length');
+    const contentDisposition = attachment.fileName
+      ? `inline; filename="${encodeURIComponent(attachment.fileName)}"`
+      : undefined;
+
+    reply.header('Content-Type', contentType);
+    reply.header('Cache-Control', 'private, max-age=300');
+    if (contentLength) {
+      reply.header('Content-Length', contentLength);
+    }
+    if (contentDisposition) {
+      reply.header('Content-Disposition', contentDisposition);
+    }
+
+    return reply.send(Buffer.from(arrayBuffer));
+  });
+
   app.get('/tickets/:ticketId/messages', async (request, reply) => {
     const access = await requirePermission(app, request, reply, 'tickets.view');
     if (!access) return;

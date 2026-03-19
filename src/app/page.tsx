@@ -393,6 +393,14 @@ function formatPhoneInput(value: string) {
   return `+${digits.slice(0, 2)} (${digits.slice(2, 4)}) ${digits.slice(4, 9)}-${digits.slice(9)}`;
 }
 
+function resolveAttachmentUrl(ticketId: string, attachment: AttachmentItem) {
+  if (attachment.publicUrl?.startsWith("data:")) {
+    return attachment.publicUrl;
+  }
+
+  return `${API_URL}/tickets/${ticketId}/attachments/${attachment.id}/content`;
+}
+
 function initials(name: string) {
   return name
     .split(" ")
@@ -2749,29 +2757,22 @@ export default function HomePage() {
                       return (
                         <div key={message.id} className={`flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
                           <article className={`max-w-[85%] rounded-[18px] px-4 py-3 text-sm shadow-sm md:max-w-[70%] ${outgoing ? "border border-[#cfe9ad] bg-[#dcf8c6] text-slate-800" : "rounded-tl-[8px] border border-[#ece4d8] bg-white text-slate-800"}`}>
-                            <div className={`mb-1 text-[12px] font-semibold leading-tight ${outgoing ? "text-slate-700/85" : "text-slate-500"}`}>
-                              {outgoing ? `${currentUser.name}:` : (message.senderName ?? selectedTicket.customerName)}
-                            </div>
                             {message.attachments && message.attachments.length > 0 ? (
-                              <div className="mb-3 space-y-3">
+                              <div className={`${message.body && !shouldHideMessageBody ? "mb-3" : ""} space-y-3`}>
                                 {message.attachments.map((attachment) => (
                                   <div key={attachment.id} className="overflow-hidden rounded-[20px] border border-slate-200/80 bg-white/70">
-                                    {attachment.mimeType.startsWith("image/") && attachment.publicUrl ? (
-                                      <a href={attachment.publicUrl} target="_blank" rel="noreferrer" className="block">
-                                        <img src={attachment.publicUrl} alt={attachment.fileName ?? "Imagem"} className="max-h-72 w-full object-cover" />
+                                    {attachment.mimeType.startsWith("image/") ? (
+                                      <a href={resolveAttachmentUrl(selectedTicket.id, attachment)} target="_blank" rel="noreferrer" className="block">
+                                        <img src={resolveAttachmentUrl(selectedTicket.id, attachment)} alt={attachment.fileName ?? "Imagem"} className="max-h-72 w-full object-cover" />
                                       </a>
-                                    ) : attachment.mimeType.startsWith("audio/") && attachment.publicUrl ? (
+                                    ) : attachment.mimeType.startsWith("audio/") ? (
                                       <div className="p-3">
                                         <AudioMessagePlayer
-                                          src={attachment.publicUrl}
-                                          fileName={attachment.fileName ?? "Áudio"}
-                                          outgoing={outgoing}
-                                          avatarLabel={outgoing ? currentUser.name : (message.senderName ?? selectedTicket.customerName)}
-                                          timestamp={formatHour(message.createdAt)}
+                                          src={resolveAttachmentUrl(selectedTicket.id, attachment)}
                                         />
                                       </div>
                                     ) : (
-                                      <a href={attachment.publicUrl ?? "#"} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-3 transition hover:bg-slate-50">
+                                      <a href={resolveAttachmentUrl(selectedTicket.id, attachment)} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-3 transition hover:bg-slate-50">
                                         <span className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-100 text-slate-500">
                                           <FileText className="h-4 w-4" />
                                         </span>
@@ -2787,7 +2788,6 @@ export default function HomePage() {
                             ) : null}
                             {message.body && !shouldHideMessageBody ? <div className="whitespace-pre-wrap text-[15px] leading-6">{message.body}</div> : null}
                             {!message.body && (!message.attachments || message.attachments.length === 0) ? <div className="whitespace-pre-wrap text-[15px] leading-6">{`[${message.contentType}]`}</div> : null}
-                            <div className={`mt-2 text-right text-[11px] ${outgoing ? "text-slate-500" : "text-slate-400"}`}>{formatDateTime(message.createdAt)}</div>
                           </article>
                         </div>
                       );
@@ -3853,10 +3853,6 @@ function MiniBadge(props: { text: string; className: string }) {
 
 function AudioMessagePlayer(props: {
   src: string;
-  fileName: string;
-  outgoing: boolean;
-  avatarLabel: string;
-  timestamp: string;
 }) {
   const audioRef = React.useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = React.useState(false);
@@ -3937,9 +3933,7 @@ function AudioMessagePlayer(props: {
 
   return (
     <div
-      className={`relative overflow-hidden rounded-[24px] border px-3 py-3 shadow-[0_10px_30px_rgba(15,23,42,0.08)] ${
-        props.outgoing ? "border-[#cfe9ad] bg-[#eef9df]" : "border-[#e8dfd3] bg-white"
-      }`}
+      className="relative overflow-hidden rounded-[24px] border border-[#e8dfd3] bg-white px-3 py-3 shadow-[0_10px_30px_rgba(15,23,42,0.08)]"
     >
       <audio ref={audioRef} preload="metadata" src={props.src}>
         Seu navegador não suporta áudio.
@@ -3954,10 +3948,6 @@ function AudioMessagePlayer(props: {
           {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="ml-0.5 h-4 w-4" />}
         </button>
         <div className="min-w-0 flex-1">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <div className="truncate text-[12px] font-semibold text-slate-700">{props.fileName}</div>
-            <div className="shrink-0 text-[11px] text-slate-400">{props.timestamp}</div>
-          </div>
           <div className="relative">
             <div className="pointer-events-none flex h-8 items-center gap-[3px]">
               {waveform.map((height, index) => (
@@ -3984,11 +3974,6 @@ function AudioMessagePlayer(props: {
           <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
             <span>{formatAudioTime(currentTime)}</span>
             <span>{formatAudioTime(duration)}</span>
-          </div>
-        </div>
-        <div className="hidden shrink-0 md:flex">
-          <div className="grid h-11 w-11 place-items-center rounded-full border border-white/70 bg-white text-sm font-semibold text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.08)]">
-            {initials(props.avatarLabel) || "A"}
           </div>
         </div>
       </div>

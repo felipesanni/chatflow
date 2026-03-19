@@ -213,7 +213,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
       where: {
         whatsappInstanceId: instance.id,
         externalChatId: parsed.remoteJid,
-        ...(parsed.fromMe ? {} : { status: { in: ['open', 'pending'] } }),
+        status: { in: ['open', 'pending'] },
       },
       orderBy: {
         updatedAt: 'desc',
@@ -232,7 +232,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
             ? (parsed.groupName ?? 'Grupo WhatsApp')
             : (customer?.name ?? parsed.pushName ?? parsed.phone ?? 'Contato sem nome'),
           customerAvatarUrl,
-          status: parsed.fromMe ? 'open' : 'pending',
+          status: 'pending',
           unreadCount: parsed.fromMe ? 0 : 1,
           isGroup: parsed.isGroup,
           lastMessagePreview: parsed.body,
@@ -258,11 +258,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           customerAvatarUrl: customerAvatarUrl ?? ticket.customerAvatarUrl,
           lastMessagePreview: parsed.body,
           unreadCount: parsed.fromMe ? 0 : { increment: 1 },
-          status: parsed.fromMe
-            ? (ticket.status === 'closed' ? 'open' : ticket.status)
-            : ticket.currentAgentId ? ticket.status : 'pending',
-          closedAt: parsed.fromMe && ticket.status === 'closed' ? null : ticket.closedAt,
-          closedReason: parsed.fromMe && ticket.status === 'closed' ? null : ticket.closedReason,
+          status: parsed.fromMe ? ticket.status : ticket.currentAgentId ? ticket.status : 'pending',
           updatedAt: new Date(),
         },
       });
