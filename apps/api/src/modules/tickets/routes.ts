@@ -26,6 +26,10 @@ const transferTicketBodySchema = z.object({
   message: 'Informe um agente, uma fila ou ambos para transferir o ticket.',
 });
 
+const bulkDeleteTicketsBodySchema = z.object({
+  ticketIds: z.array(z.string().uuid()).min(1, 'Selecione ao menos um ticket.').max(100, 'Limite de 100 tickets por lote.'),
+});
+
 const closeTicketBodySchema = z.preprocess((value) => {
   if (value == null || value === '') {
     return {};
@@ -99,12 +103,40 @@ function serializeTicket(ticket: any) {
   };
 }
 
-function canViewTicket(viewerId: string, permissions: PermissionMap, ticket: { currentAgentId: string | null }) {
+function canViewTicket(
+  viewerId: string,
+  permissions: PermissionMap,
+  viewerQueueIds: string[],
+  ticket: { currentAgentId: string | null; currentQueueId: string | null; status?: string | null },
+) {
+  if (ticket.status === 'closed' && !permissions['tickets.closedView']) {
+    return false;
+  }
+
   if (permissions['tickets.viewAll']) {
     return true;
   }
 
-  return ticket.currentAgentId === null || ticket.currentAgentId === viewerId;
+  if (ticket.currentAgentId === viewerId) {
+    return true;
+  }
+
+  const canViewOtherUsers = permissions['tickets.viewOthers'];
+  const isQueueScoped = ticket.currentQueueId ? viewerQueueIds.includes(ticket.currentQueueId) : false;
+
+  if (ticket.currentQueueId) {
+    if (!isQueueScoped) {
+      return false;
+    }
+
+    return ticket.currentAgentId === null || canViewOtherUsers;
+  }
+
+  if (!permissions['tickets.viewUnassigned']) {
+    return false;
+  }
+
+  return ticket.currentAgentId === null || canViewOtherUsers;
 }
 
 function canManageTicket(viewerId: string, ticket: { currentAgentId: string | null }) {
@@ -118,7 +150,12 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     const session = access.session;
 
     const query = ticketListQuerySchema.parse(request.query);
-    if (!access.permissions['tickets.viewAll'] && query.agentId && query.agentId !== session.userId) {
+    if (
+      !access.permissions['tickets.viewAll']
+      && !access.permissions['tickets.viewOthers']
+      && query.agentId
+      && query.agentId !== session.userId
+    ) {
       return {
         items: [],
         filters: query,
@@ -129,17 +166,45 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       };
     }
 
+    const visibilityFilters = [
+      { currentAgentId: session.userId },
+      ...(access.queueIds.length > 0
+        ? [{
+            ...(access.permissions['tickets.viewOthers']
+              ? {}
+              : { currentAgentId: null }),
+            currentQueueId: { in: access.queueIds },
+          }]
+        : []),
+      ...(access.permissions['tickets.viewUnassigned']
+        ? [{
+            ...(access.permissions['tickets.viewOthers']
+              ? {}
+              : { currentAgentId: null }),
+            currentQueueId: null,
+          }]
+        : []),
+    ];
+
     const where = {
       status: query.status,
-      currentAgentId: access.permissions['tickets.viewAll'] ? query.agentId : undefined,
+      currentAgentId: access.permissions['tickets.viewAll']
+        ? query.agentId
+        : access.permissions['tickets.viewOthers']
+          ? query.agentId
+          : query.agentId === session.userId
+            ? query.agentId
+            : undefined,
       currentQueueId: query.queueId,
       AND: [
+        ...(!access.permissions['tickets.closedView']
+          ? [{
+              status: { in: ['open', 'pending'] as const },
+            }]
+          : []),
         ...(!access.permissions['tickets.viewAll']
           ? [{
-              OR: [
-                { currentAgentId: session.userId },
-                { currentAgentId: null },
-              ],
+              OR: visibilityFilters,
             }]
           : []),
         ...(query.search
@@ -197,7 +262,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, ticket)) {
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
     }
 
@@ -350,6 +415,10 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, currentTicket)) {
+      return reply.forbidden('Voce nao possui permissao para assumir este ticket.');
+    }
+
     if (currentTicket.currentAgentId && currentTicket.currentAgentId !== session.userId) {
       return reply.forbidden('Este ticket ja foi assumido por outro agente.');
     }
@@ -431,7 +500,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/tickets/:ticketId/transfer', async (request, reply) => {
-    const access = await requirePermission(app, request, reply, 'tickets.accept');
+    const access = await requirePermission(app, request, reply, 'tickets.transfer');
     if (!access) return;
     const session = access.session;
 
@@ -534,5 +603,46 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     return {
       item: serializeTicket(ticket),
     };
+  });
+
+  app.post('/tickets/bulk-delete', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.bulkDelete');
+    if (!access) return;
+    const session = access.session;
+    const body = bulkDeleteTicketsBodySchema.parse(request.body ?? {});
+
+    const tickets = await app.prisma.ticket.findMany({
+      where: {
+        id: { in: body.ticketIds },
+      },
+      select: {
+        id: true,
+        currentAgentId: true,
+        currentQueueId: true,
+      },
+    });
+
+    const allowedIds = tickets
+      .filter((ticket) => canViewTicket(session.userId, access.permissions, access.queueIds, ticket))
+      .map((ticket) => ticket.id);
+
+    if (allowedIds.length === 0) {
+      return reply.forbidden('Nenhum dos tickets selecionados pode ser apagado por este usuário.');
+    }
+
+    await app.prisma.ticket.deleteMany({
+      where: {
+        id: { in: allowedIds },
+      },
+    });
+
+    app.io.emit('ticket.updated', {
+      bulkDeletedTicketIds: allowedIds,
+    });
+
+    return reply.code(201).send({
+      deletedCount: allowedIds.length,
+      deletedTicketIds: allowedIds,
+    });
   });
 };

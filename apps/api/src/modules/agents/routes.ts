@@ -19,6 +19,7 @@ const updateAgentSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8).optional().or(z.literal('')),
   role: z.enum(['admin', 'agent']).default('agent'),
+  queueIds: z.array(z.string().uuid()).default([]),
   permissions: z.record(z.string(), z.boolean()).optional(),
 });
 
@@ -167,8 +168,21 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         where: { id: params.agentId },
         data: {
           name: body.name,
+          queueLinks: {
+            deleteMany: {},
+            create: body.queueIds.map((queueId) => ({ queueId })),
+          },
         },
       });
+    });
+
+    const updated = await app.prisma.agent.findUnique({
+      where: { id: params.agentId },
+      include: {
+        queueLinks: {
+          include: { queue: true },
+        },
+      },
     });
 
     app.io.emit('agent.updated', { agentId: params.agentId, action: 'updated' });
@@ -181,6 +195,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         email: normalizedEmail,
         role: body.role,
         permissions: resolvePermissions(body.role, body.permissions ?? defaultPermissionsForRole(body.role)),
+        queues: updated?.queueLinks.map((link: any) => ({ id: link.queue.id, name: link.queue.name })) ?? [],
       },
     });
   });

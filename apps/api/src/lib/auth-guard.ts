@@ -29,6 +29,15 @@ export async function requirePermission(app: FastifyInstance, request: FastifyRe
       id: true,
       role: true,
       permissions: true,
+      agent: {
+        select: {
+          queueLinks: {
+            select: {
+              queueId: true,
+            },
+          },
+        },
+      },
     },
   });
 
@@ -46,5 +55,6 @@ export async function requirePermission(app: FastifyInstance, request: FastifyRe
     session,
     user,
     permissions: resolvePermissions(user.role, user.permissions),
+    queueIds: user.agent?.queueLinks.map((link) => link.queueId) ?? [],
   };
 }

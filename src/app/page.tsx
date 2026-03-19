@@ -6,6 +6,7 @@ import AudioPlayer from "react-h5-audio-player";
 import { PhotoProvider, PhotoView } from "react-photo-view";
 import {
   Activity,
+  Archive,
   ArrowRightLeft,
   Calendar,
   CheckSquare,
@@ -205,9 +206,15 @@ const permissionDefinitions = [
   { key: "dashboard.view", group: "Painel geral", label: "Visualizar painel geral" },
   { key: "tickets.view", group: "Atendimento", label: "Visualizar atendimento" },
   { key: "tickets.viewAll", group: "Atendimento", label: "Visualizar todos os tickets" },
+  { key: "tickets.viewOthers", group: "Atendimento", label: "Visualizar tickets de outros usuários" },
+  { key: "tickets.viewUnassigned", group: "Atendimento", label: "Visualizar tickets sem fila" },
   { key: "tickets.accept", group: "Atendimento", label: "Aceitar atendimentos" },
   { key: "tickets.reply", group: "Atendimento", label: "Responder mensagens" },
+  { key: "tickets.transfer", group: "Atendimento", label: "Transferir atendimentos" },
   { key: "tickets.close", group: "Atendimento", label: "Encerrar atendimentos" },
+  { key: "tickets.closedView", group: "Atendimento", label: "Visualizar módulo de tickets fechados" },
+  { key: "tickets.bulkDelete", group: "Atendimento", label: "Apagar tickets em lote" },
+  { key: "messages.bulkDelete", group: "Atendimento", label: "Apagar mensagens em lote" },
   { key: "tickets.groups", group: "Atendimento", label: "Visualizar grupos" },
   { key: "channels.view", group: "Canais e instâncias", label: "Visualizar canais e instâncias" },
   { key: "channels.manage", group: "Canais e instâncias", label: "Cadastrar e editar instâncias" },
@@ -229,12 +236,13 @@ const permissionDefinitions = [
 
 type PermissionKey = (typeof permissionDefinitions)[number]["key"];
 type PermissionMap = Record<PermissionKey, boolean>;
-type WorkspaceKey = "dashboard" | "tickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings";
+type WorkspaceKey = "dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings";
 
 const permissionKeys = permissionDefinitions.map((item) => item.key) as PermissionKey[];
 const workspacePermissions: Record<WorkspaceKey, PermissionKey> = {
   dashboard: "dashboard.view",
   tickets: "tickets.view",
+  closedTickets: "tickets.closedView",
   channels: "channels.view",
   quickReplies: "quickReplies.view",
   team: "team.view",
@@ -259,9 +267,15 @@ function defaultPermissionsForRole(role: "admin" | "agent"): PermissionMap {
     "dashboard.view": true,
     "tickets.view": true,
     "tickets.viewAll": false,
+    "tickets.viewOthers": false,
+    "tickets.viewUnassigned": true,
     "tickets.accept": true,
     "tickets.reply": true,
+    "tickets.transfer": true,
     "tickets.close": true,
+    "tickets.closedView": false,
+    "tickets.bulkDelete": false,
+    "messages.bulkDelete": false,
     "tickets.groups": true,
     "channels.view": true,
     "channels.manage": false,
@@ -624,8 +638,8 @@ export default function HomePage() {
   const [editingMessageId, setEditingMessageId] = React.useState<string | null>(null);
   const [replyToMessageId, setReplyToMessageId] = React.useState<string | null>(null);
   const [searchQuery, setSearchQuery] = React.useState("");
-  const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "fechados" | "grupos">("atendendo");
-  const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
+  const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "grupos">("atendendo");
+  const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
   const [adminSection, setAdminSection] = React.useState<"instances" | "agents" | "queues">("instances");
   const [showRail, setShowRail] = React.useState(false);
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
@@ -648,6 +662,11 @@ export default function HomePage() {
   const [publicUrls, setPublicUrls] = React.useState(resolvePublicUrls);
   const [profileSaving, setProfileSaving] = React.useState(false);
   const [transferLoading, setTransferLoading] = React.useState(false);
+  const [ticketBulkSelectionMode, setTicketBulkSelectionMode] = React.useState(false);
+  const [selectedTicketIdsForBulkDelete, setSelectedTicketIdsForBulkDelete] = React.useState<string[]>([]);
+  const [messageBulkSelectionMode, setMessageBulkSelectionMode] = React.useState(false);
+  const [selectedMessageIdsForBulkDelete, setSelectedMessageIdsForBulkDelete] = React.useState<string[]>([]);
+  const [bulkDeleteLoading, setBulkDeleteLoading] = React.useState(false);
 
   const [loginForm, setLoginForm] = React.useState({ email: "", password: "" });
   const [bootstrapForm, setBootstrapForm] = React.useState({ name: "", email: "", password: "" });
@@ -663,6 +682,7 @@ export default function HomePage() {
     email: "",
     password: "",
     role: "agent" as "admin" | "agent",
+    queueIds: [] as string[],
     permissions: defaultPermissionsForRole("agent"),
   });
   const [queueForm, setQueueForm] = React.useState({ name: "", color: "#1A1C32" });
@@ -739,6 +759,7 @@ export default function HomePage() {
   const canViewChannels = currentUser.permissions["channels.view"];
   const canViewQuickReplies = currentUser.permissions["quickReplies.view"];
   const canViewTeam = currentUser.permissions["team.view"];
+  const canTransferTickets = currentUser.permissions["tickets.transfer"];
   const canManageInstances = currentUser.permissions["channels.manage"];
   const canManageQuickReplies = currentUser.permissions["quickReplies.manage"];
   const canManageAgents = currentUser.permissions["agents.manage"];
@@ -747,6 +768,10 @@ export default function HomePage() {
   const canStartConversation = currentUser.permissions["tickets.reply"];
   const canViewContacts = currentUser.permissions["contacts.view"];
   const canManageContacts = currentUser.permissions["contacts.manage"];
+  const canBulkDeleteTickets = currentUser.permissions["tickets.bulkDelete"];
+  const canBulkDeleteMessages = currentUser.permissions["messages.bulkDelete"];
+  const canViewClosedTickets = currentUser.permissions["tickets.closedView"];
+  const isClosedTicketsWorkspace = activeWorkspace === "closedTickets";
 
   const isSelectedTicketOwnedByCurrentUser = Boolean(selectedTicket && selectedTicket.currentAgent?.id === user?.id);
   const canAcceptSelectedTicket = Boolean(
@@ -781,8 +806,7 @@ export default function HomePage() {
   const canTransferSelectedTicket = Boolean(
     selectedTicket &&
     selectedTicket.status !== "closed" &&
-    canViewTeam &&
-    currentUser.permissions["tickets.accept"] &&
+    canTransferTickets &&
     isSelectedTicketOwnedByCurrentUser,
   );
   const ticketDensity: "compact" = "compact";
@@ -805,12 +829,12 @@ export default function HomePage() {
     const search = searchQuery.trim().toLowerCase();
 
     return tickets.filter((ticket) => {
-      const matchesTab = showAllTickets
+      const matchesTab = isClosedTicketsWorkspace
+        ? ticket.status === "closed" && !ticket.isGroup
+        : showAllTickets
         ? true
         : activeTab === "grupos"
           ? ticket.isGroup
-          : activeTab === "fechados"
-            ? ticket.status === "closed" && !ticket.isGroup
           : activeTab === "aguardando"
             ? ticket.status === "pending" && !ticket.isGroup
             : ticket.status === "open" && !ticket.isGroup;
@@ -850,7 +874,7 @@ export default function HomePage() {
           .toLowerCase()
           .includes(search);
     });
-  }, [activeTab, searchQuery, selectedQueueFilter, showAllTickets, showOnlyMine, showOnlyUnread, tickets, user?.id]);
+  }, [activeTab, isClosedTicketsWorkspace, searchQuery, selectedQueueFilter, showAllTickets, showOnlyMine, showOnlyUnread, tickets, user?.id]);
 
   const counters = React.useMemo(
     () => ({
@@ -951,7 +975,7 @@ export default function HomePage() {
   }, [selectedTicketId, tickets, visibleTickets]);
 
   React.useEffect(() => {
-    if (activeWorkspace !== "tickets" && showTicketDetails) {
+    if (activeWorkspace !== "tickets" && activeWorkspace !== "closedTickets" && showTicketDetails) {
       setShowTicketDetails(false);
     }
   }, [activeWorkspace, showTicketDetails]);
@@ -1019,6 +1043,7 @@ export default function HomePage() {
   React.useEffect(() => {
     const preferredWorkspaces: WorkspaceKey[] = [
       "tickets",
+      "closedTickets",
       "dashboard",
       "channels",
       "quickReplies",
@@ -1171,7 +1196,8 @@ export default function HomePage() {
   }, [user]);
 
   const refreshAgents = React.useCallback(async () => {
-    if (!user || !normalizePermissions(user.role, user.permissions)["team.view"]) return;
+    const permissions = user ? normalizePermissions(user.role, user.permissions) : null;
+    if (!user || !(permissions?.["team.view"] || permissions?.["tickets.transfer"])) return;
     try {
       const payload = await apiFetch<{ items: AgentItem[] }>("/agents", { method: "GET" });
       setAgents(payload.items);
@@ -1181,7 +1207,8 @@ export default function HomePage() {
   }, [user]);
 
   const refreshQueues = React.useCallback(async () => {
-    if (!user || !normalizePermissions(user.role, user.permissions)["team.view"]) return;
+    const permissions = user ? normalizePermissions(user.role, user.permissions) : null;
+    if (!user || !(permissions?.["team.view"] || permissions?.["tickets.transfer"])) return;
     try {
       const payload = await apiFetch<{ items: QueueItem[] }>("/queues", { method: "GET" });
       setQueues(payload.items);
@@ -1266,6 +1293,34 @@ export default function HomePage() {
   }, [refreshMessages, selectedTicketId, user]);
 
   React.useEffect(() => {
+    setSelectedTicketIdsForBulkDelete((current) => current.filter((ticketId) => tickets.some((ticket) => ticket.id === ticketId)));
+  }, [tickets]);
+
+  React.useEffect(() => {
+    setSelectedMessageIdsForBulkDelete((current) => current.filter((messageId) => messages.some((message) => message.id === messageId)));
+  }, [messages]);
+
+  React.useEffect(() => {
+    setMessageBulkSelectionMode(false);
+    setSelectedMessageIdsForBulkDelete([]);
+  }, [selectedTicketId]);
+
+  React.useEffect(() => {
+    if (activeWorkspace !== "tickets" && activeWorkspace !== "closedTickets") {
+      setTicketBulkSelectionMode(false);
+      setSelectedTicketIdsForBulkDelete([]);
+      setMessageBulkSelectionMode(false);
+      setSelectedMessageIdsForBulkDelete([]);
+    }
+  }, [activeWorkspace]);
+
+  React.useEffect(() => {
+    if (isClosedTicketsWorkspace) {
+      setShowAllTickets(false);
+    }
+  }, [isClosedTicketsWorkspace]);
+
+  React.useEffect(() => {
     if (!user || !SOCKET_URL) return;
 
     const socket = io(SOCKET_URL, {
@@ -1277,11 +1332,18 @@ export default function HomePage() {
 
     const refreshForTicket = (payload?: { ticketId?: string }) => {
       void refreshTickets();
-      if (payload?.ticketId && payload.ticketId === selectedTicketId) {
-        void refreshMessages(payload.ticketId, { silent: true });
+      const ticketIdToRefresh = payload?.ticketId ?? selectedTicketId;
+      if (ticketIdToRefresh) {
+        void refreshMessages(ticketIdToRefresh, { silent: true });
       }
     };
 
+    socket.on("connect", () => {
+      void refreshTickets();
+      if (selectedTicketId) {
+        void refreshMessages(selectedTicketId, { silent: true });
+      }
+    });
     socket.on("connect_error", () => {
       setPanelMessage("Conexão em tempo real indisponível. O painel continua funcionando por atualização periódica.");
     });
@@ -1303,8 +1365,12 @@ export default function HomePage() {
     if (!user) return;
 
     const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+
       void refreshTickets();
-      if (selectedTicketId && !socketRef.current?.connected) {
+      if (selectedTicketId) {
         void refreshMessages(selectedTicketId, { silent: true });
       }
 
@@ -1313,10 +1379,38 @@ export default function HomePage() {
         void refreshAgents();
         void refreshQueues();
       }
-    }, 20000);
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [refreshAgents, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
+
+  React.useEffect(() => {
+    if (!user) return;
+
+    const handleVisibilityOrFocus = () => {
+      void refreshTickets();
+      if (selectedTicketId) {
+        void refreshMessages(selectedTicketId, { silent: true });
+      }
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", handleVisibilityOrFocus);
+    }
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+    }
+
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", handleVisibilityOrFocus);
+      }
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+      }
+    };
+  }, [refreshMessages, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!messagesViewportRef.current || !shouldStickMessagesToBottomRef.current) {
@@ -1367,13 +1461,20 @@ export default function HomePage() {
       return;
     }
     setUser(null);
+    setMode("login");
+    setLoadingAuth(false);
     setMessages([]);
     setTickets([]);
+    setInstances([]);
+    setAgents([]);
+    setQueues([]);
+    setCustomers([]);
+    setQuickReplies([]);
     setSelectedTicketId(null);
     setActiveWorkspace("tickets");
     setUserMenuOpen(false);
     setAuthError(null);
-      setPanelMessage("Sessão encerrada.");
+    setPanelMessage("Sessão encerrada.");
     await refreshAuth();
   }
 
@@ -1575,6 +1676,10 @@ export default function HomePage() {
     outgoing: boolean;
     estimatedHeight: number;
   }) {
+    if (messageBulkSelectionMode) {
+      return;
+    }
+
     params.event.stopPropagation();
 
     if (openMessageMenuId === params.messageId) {
@@ -1596,6 +1701,22 @@ export default function HomePage() {
 
     setMessageMenuPosition({ top, left });
     setOpenMessageMenuId(params.messageId);
+  }
+
+  function toggleTicketBulkSelection(ticketId: string) {
+    setSelectedTicketIdsForBulkDelete((current) =>
+      current.includes(ticketId)
+        ? current.filter((id) => id !== ticketId)
+        : [...current, ticketId],
+    );
+  }
+
+  function toggleMessageBulkSelection(messageId: string) {
+    setSelectedMessageIdsForBulkDelete((current) =>
+      current.includes(messageId)
+        ? current.filter((id) => id !== messageId)
+        : [...current, messageId],
+    );
   }
 
   async function handleToggleAudioRecording() {
@@ -1866,6 +1987,97 @@ export default function HomePage() {
     }
   }
 
+  function startTicketBulkSelectionMode() {
+    setTicketBulkSelectionMode(true);
+    setSelectedTicketIdsForBulkDelete([]);
+    setPanelMessage("Selecione os tickets que deseja apagar em lote.");
+  }
+
+  function cancelTicketBulkSelectionMode() {
+    setTicketBulkSelectionMode(false);
+    setSelectedTicketIdsForBulkDelete([]);
+  }
+
+  function startMessageBulkSelectionMode() {
+    if (!selectedTicketId) {
+      return;
+    }
+
+    setMessageBulkSelectionMode(true);
+    setSelectedMessageIdsForBulkDelete([]);
+    setOpenMessageMenuId(null);
+    setMessageMenuPosition(null);
+    setPanelMessage("Selecione as mensagens que deseja apagar em lote.");
+  }
+
+  function cancelMessageBulkSelectionMode() {
+    setMessageBulkSelectionMode(false);
+    setSelectedMessageIdsForBulkDelete([]);
+  }
+
+  async function handleBulkDeleteTickets() {
+    if (!canBulkDeleteTickets || selectedTicketIdsForBulkDelete.length === 0) {
+      return;
+    }
+
+    const confirmed = typeof window === "undefined"
+      ? true
+      : window.confirm(`Apagar ${selectedTicketIdsForBulkDelete.length} ticket(s) selecionado(s)? Esta ação remove o histórico desses tickets no painel.`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setBulkDeleteLoading(true);
+    try {
+      await apiFetch("/tickets/bulk-delete", {
+        method: "POST",
+        body: JSON.stringify({
+          ticketIds: selectedTicketIdsForBulkDelete,
+        }),
+      });
+      cancelTicketBulkSelectionMode();
+      await refreshTickets();
+      setPanelMessage("Tickets apagados em lote.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao apagar tickets em lote.");
+    } finally {
+      setBulkDeleteLoading(false);
+    }
+  }
+
+  async function handleBulkDeleteMessages() {
+    if (!selectedTicketId || !canBulkDeleteMessages || selectedMessageIdsForBulkDelete.length === 0) {
+      return;
+    }
+
+    const confirmed = typeof window === "undefined"
+      ? true
+      : window.confirm(`Apagar ${selectedMessageIdsForBulkDelete.length} mensagem(ns) selecionada(s)? Esta ação remove essas mensagens do ticket no painel.`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setBulkDeleteLoading(true);
+    try {
+      await apiFetch(`/tickets/${selectedTicketId}/messages/bulk-delete`, {
+        method: "POST",
+        body: JSON.stringify({
+          messageIds: selectedMessageIdsForBulkDelete,
+        }),
+      });
+      cancelMessageBulkSelectionMode();
+      await refreshMessages(selectedTicketId);
+      await refreshTickets();
+      setPanelMessage("Mensagens apagadas em lote.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao apagar mensagens em lote.");
+    } finally {
+      setBulkDeleteLoading(false);
+    }
+  }
+
   function insertEmoji(emoji: string) {
     setMessageInput((current) => `${current}${emoji}`);
     setShowEmojiPicker(false);
@@ -1899,7 +2111,7 @@ export default function HomePage() {
 
   function resetAgentForm() {
     setEditingAgentId(null);
-    setAgentForm({ name: "", email: "", password: "", role: "agent", permissions: defaultPermissionsForRole("agent") });
+    setAgentForm({ name: "", email: "", password: "", role: "agent", queueIds: [], permissions: defaultPermissionsForRole("agent") });
     setManagementModalTab("general");
   }
 
@@ -1954,6 +2166,7 @@ export default function HomePage() {
       email: agent.email,
       password: "",
       role: agent.role,
+      queueIds: agent.queues.map((queue) => queue.id),
       permissions: normalizePermissions(agent.role, agent.permissions),
     });
     setActiveWorkspace("settings");
@@ -2070,6 +2283,7 @@ export default function HomePage() {
       email: "",
       password: "",
       role: "agent",
+      queueIds: [],
       permissions: defaultPermissionsForRole("agent"),
     });
     setQueueForm({ name: "", color: "#1A1C32" });
@@ -2093,6 +2307,7 @@ export default function HomePage() {
     setAgentForm((current) => ({
       ...current,
       role,
+      queueIds: role === "admin" ? queues.map((queue) => queue.id) : current.queueIds,
       permissions: defaultPermissionsForRole(role),
     }));
   }
@@ -2104,6 +2319,15 @@ export default function HomePage() {
         ...current.permissions,
         [permission]: !current.permissions[permission],
       },
+    }));
+  }
+
+  function toggleAgentQueue(queueId: string) {
+    setAgentForm((current) => ({
+      ...current,
+      queueIds: current.queueIds.includes(queueId)
+        ? current.queueIds.filter((item) => item !== queueId)
+        : [...current.queueIds, queueId],
     }));
   }
 
@@ -2132,7 +2356,7 @@ export default function HomePage() {
     try {
       await apiFetch(editingAgentId ? `/agents/${editingAgentId}` : "/agents", {
         method: editingAgentId ? "PUT" : "POST",
-        body: JSON.stringify({ ...agentForm, queueIds: [], permissions: agentForm.permissions }),
+        body: JSON.stringify({ ...agentForm, queueIds: agentForm.role === "admin" ? queues.map((queue) => queue.id) : agentForm.queueIds, permissions: agentForm.permissions }),
       });
       resetAgentForm();
       closeManagementModal();
@@ -2296,13 +2520,15 @@ export default function HomePage() {
     }
   }
 
-  const ticketWorkspaceAtivo = activeWorkspace === "tickets";
+  const ticketWorkspaceAtivo = activeWorkspace === "tickets" || activeWorkspace === "closedTickets";
 
   const workspaceTitle =
     activeWorkspace === "dashboard"
       ? "Painel geral"
       : activeWorkspace === "tickets"
         ? "Atendimento"
+        : activeWorkspace === "closedTickets"
+          ? "Tickets fechados"
         : activeWorkspace === "channels"
           ? "Canais e instâncias"
           : activeWorkspace === "quickReplies"
@@ -2332,6 +2558,8 @@ export default function HomePage() {
       ? "Resumo rápido do que está acontecendo no atendimento."
       : activeWorkspace === "tickets"
         ? "Caixa de entrada de conversas com a operação em tempo real."
+        : activeWorkspace === "closedTickets"
+          ? "Histórico de tickets encerrados com acesso separado por permissão."
         : activeWorkspace === "channels"
           ? "Instâncias Evolution e orientações de conexão."
           : activeWorkspace === "quickReplies"
@@ -2365,13 +2593,13 @@ export default function HomePage() {
             <div className="grid gap-3">
               {tickets.slice(0, 6).map((ticket) => (
                 <button
-                  key={ticket.id}
-                  type="button"
-                  onClick={() => {
-                    setActiveWorkspace("tickets");
-                    setSelectedTicketId(ticket.id);
-                    setShowTicketDetails(false);
-                  }}
+                    key={ticket.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveWorkspace(ticket.status === "closed" ? "closedTickets" : "tickets");
+                      setSelectedTicketId(ticket.id);
+                      setShowTicketDetails(false);
+                    }}
                   className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
                 >
                   <div className="flex items-center justify-between gap-3">
@@ -3204,6 +3432,28 @@ export default function HomePage() {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {canBulkDeleteMessages ? (
+                    <button
+                      type="button"
+                      aria-label={messageBulkSelectionMode ? "Cancelar seleção de mensagens" : "Selecionar mensagens para apagar"}
+                      title={messageBulkSelectionMode ? "Cancelar seleção de mensagens" : "Selecionar mensagens para apagar"}
+                      onClick={() => {
+                        if (messageBulkSelectionMode) {
+                          cancelMessageBulkSelectionMode();
+                        } else {
+                          startMessageBulkSelectionMode();
+                        }
+                      }}
+                      className={`inline-flex h-10 items-center gap-2 rounded-full border px-4 text-[11px] font-bold uppercase tracking-[0.12em] transition ${
+                        messageBulkSelectionMode
+                          ? "border-rose-200 bg-rose-50 text-rose-700"
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      {messageBulkSelectionMode ? "Cancelar seleção" : "Apagar mensagens"}
+                    </button>
+                  ) : null}
                   <button type="button" aria-label="Assumir atendimento selecionado" title="Assumir atendimento" onClick={() => void handleAcceptTicket()} disabled={!canAcceptSelectedTicket} className="inline-flex h-10 items-center gap-2 rounded-full bg-[#e7eff8] px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-[#385a7a] transition hover:bg-[#dbe7f3] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
                     <CheckSquare className="h-4 w-4" />
                     {selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Atendimento fechado" : "Aceitar atendimento"}
@@ -3246,6 +3496,30 @@ export default function HomePage() {
                 }}
               >
                 <div className="mx-auto flex max-w-5xl flex-col gap-4">
+                  {messageBulkSelectionMode ? (
+                    <div className="sticky top-0 z-20 flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                        {selectedMessageIdsForBulkDelete.length} mensagem(ns) selecionada(s)
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={cancelMessageBulkSelectionMode}
+                          className="inline-flex h-8 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleBulkDeleteMessages()}
+                          disabled={bulkDeleteLoading || selectedMessageIdsForBulkDelete.length === 0}
+                          className="inline-flex h-8 items-center justify-center rounded-xl bg-rose-600 px-3 text-[11px] font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                        >
+                          {bulkDeleteLoading ? "Apagando..." : "Apagar selecionadas"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                   {messageLoading ? (
                     <div className="text-center text-sm text-slate-500">Carregando mensagens...</div>
                   ) : messages.length === 0 ? (
@@ -3288,6 +3562,7 @@ export default function HomePage() {
                         const hasVideoAttachment = messageAttachments.some((attachment) => attachment.mimeType.startsWith("video/"));
                         const hasStickerAttachment = message.contentType === "sticker" || messageAttachments.some((attachment) => attachment.mimeType === "image/webp");
                         const hasDocumentAttachment = messageAttachments.some((attachment) => !attachment.mimeType.startsWith("image/") && !attachment.mimeType.startsWith("audio/") && !attachment.mimeType.startsWith("video/"));
+                        const selectedForBulkDelete = selectedMessageIdsForBulkDelete.includes(message.id);
                         const matchesAttachmentFileName = messageAttachments.some((attachment) => {
                           const attachmentFileName = (attachment.fileName ?? "").trim().toLowerCase();
                           return Boolean(attachmentFileName) && normalizedBody.toLowerCase() === attachmentFileName;
@@ -3317,8 +3592,25 @@ export default function HomePage() {
                       return (
                           <div key={message.id} className={`group flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
                             <div className={`flex max-w-full items-start gap-2 ${outgoing ? "flex-row-reverse" : ""}`}>
+                              {messageBulkSelectionMode ? (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleMessageBulkSelection(message.id)}
+                                  className={`mt-2 grid h-8 w-8 shrink-0 place-items-center rounded-full border bg-white shadow-sm transition ${
+                                    selectedForBulkDelete
+                                      ? "border-rose-600 bg-rose-600 text-white"
+                                      : "border-slate-200 text-slate-400 hover:bg-slate-50"
+                                  }`}
+                                  aria-label={selectedForBulkDelete ? "Desmarcar mensagem" : "Selecionar mensagem"}
+                                >
+                                  {selectedForBulkDelete ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+                                </button>
+                              ) : null}
                               <div className={`${shouldRenderAttachments ? "w-full max-w-[min(420px,88vw)] md:max-w-[460px]" : "w-auto max-w-full"} flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
-                              <article className={`${shouldRenderAttachments ? "w-full" : "inline-flex w-auto max-w-full flex-col"} rounded-[18px] px-4 py-3 text-sm shadow-sm ${outgoing ? "border border-[#cfe9ad] bg-[#dcf8c6] text-slate-800" : "rounded-tl-[8px] border border-[#ece4d8] bg-white text-slate-800"}`}>
+                              <article
+                                onClick={messageBulkSelectionMode ? () => toggleMessageBulkSelection(message.id) : undefined}
+                                className={`${shouldRenderAttachments ? "w-full" : "inline-flex w-auto max-w-full flex-col"} rounded-[18px] px-4 py-3 text-sm shadow-sm ${outgoing ? "border border-[#cfe9ad] bg-[#dcf8c6] text-slate-800" : "rounded-tl-[8px] border border-[#ece4d8] bg-white text-slate-800"} ${messageBulkSelectionMode ? "cursor-pointer" : ""} ${selectedForBulkDelete ? "ring-2 ring-rose-300 ring-offset-2 ring-offset-transparent" : ""}`}
+                              >
                                 {shouldShowInboundGroupSender ? (
                                   <div className="mb-2 text-[14px] font-semibold leading-5 text-sky-700">
                                     {message.senderName}
@@ -3414,7 +3706,7 @@ export default function HomePage() {
                                 </div>
                               ) : null}
                               </div>
-                                {canEditMessage || canDeleteMessage || canDeleteMessageForMe || canReplyToMessage ? (
+                                {!messageBulkSelectionMode && (canEditMessage || canDeleteMessage || canDeleteMessageForMe || canReplyToMessage) ? (
                                   <div
                                     onPointerDown={(event) => event.stopPropagation()}
                                     className="relative mt-1"
@@ -4104,30 +4396,68 @@ export default function HomePage() {
             </div>
 
             {managementModalTab === "general" ? (
-              <div className="grid gap-4 md:grid-cols-2">
-                <CompactField label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} placeholder="Nome completo" />
-                <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} placeholder="usuario@empresa.com" />
-                <CompactField label={editingAgentId ? "Nova senha" : "Senha"} type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} placeholder={editingAgentId ? "Opcional para manter a atual" : "Senha de acesso"} />
-                <label className="block text-sm font-medium text-slate-600">
-                  Perfil
-                  <select
-                    value={agentForm.role}
-                    onChange={(event) => updateAgentRole(event.target.value as "admin" | "agent")}
-                    className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-                  >
-                    <option value="agent">Agente</option>
-                    <option value="admin">Administrador</option>
-                  </select>
-                </label>
+              <div className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <CompactField label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} placeholder="Nome completo" />
+                  <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} placeholder="usuario@empresa.com" />
+                  <CompactField label={editingAgentId ? "Nova senha" : "Senha"} type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} placeholder={editingAgentId ? "Opcional para manter a atual" : "Senha de acesso"} />
+                  <label className="block text-sm font-medium text-slate-600">
+                    Perfil
+                    <select
+                      value={agentForm.role}
+                      onChange={(event) => updateAgentRole(event.target.value as "admin" | "agent")}
+                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                    >
+                      <option value="agent">Agente</option>
+                      <option value="admin">Administrador</option>
+                    </select>
+                  </label>
+                </div>
+
+                {canAssignQueues ? (
+                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="text-sm font-semibold text-slate-900">Filas visíveis no atendimento</div>
+                    <div className="mt-1 text-sm text-slate-500">
+                      Essas filas definem quais tickets o usuário pode enxergar na operação.
+                    </div>
+                    <div className="mt-4 grid gap-2 md:grid-cols-2">
+                      {queues.map((queue) => {
+                        const checked = agentForm.role === "admin" || agentForm.queueIds.includes(queue.id);
+                        return (
+                          <label key={queue.id} className={`flex items-center gap-3 rounded-2xl border px-3 py-3 text-sm transition ${checked ? "border-[#1A1C32]/20 bg-white" : "border-slate-200 bg-white/70 hover:border-slate-300"}`}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={agentForm.role === "admin"}
+                              onChange={() => toggleAgentQueue(queue.id)}
+                              className="h-4 w-4 rounded border-slate-300 text-[#1A1C32] focus:ring-[#1A1C32]"
+                            />
+                            <span className="font-medium text-slate-700">{queue.name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    {agentForm.role === "admin" ? (
+                      <div className="mt-3 text-xs text-slate-500">
+                        Administradores podem visualizar todas as filas automaticamente.
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             ) : (
-              <div className="space-y-4">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                  {agentForm.role === "admin"
-                    ? "Administradores recebem acesso completo. Você pode revisar a matriz abaixo, mas todas as permissões permanecem habilitadas."
-                    : "Defina exatamente quais módulos e ações este usuário poderá acessar no painel."}
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    {agentForm.role === "admin"
+                      ? "Administradores recebem acesso completo. Você pode revisar a matriz abaixo, mas todas as permissões permanecem habilitadas."
+                      : "Defina exatamente quais módulos e ações este usuário poderá acessar no painel."}
+                  </div>
+                  {agentForm.role !== "admin" ? (
+                    <div className="rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-700">
+                      As filas que o usuário pode enxergar vêm das <span className="font-semibold">filas associadas ao agente</span>. As permissões abaixo controlam se ele pode ver tickets de outros usuários e tickets sem fila.
+                    </div>
+                  ) : null}
+                  <div className="grid gap-4 md:grid-cols-2">
                   {Object.entries(permissionsByGroup).map(([group, items]) => (
                     <section key={group} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                       <div className="mb-3 text-sm font-semibold text-slate-900">{group}</div>
@@ -4391,7 +4721,8 @@ export default function HomePage() {
           <aside className={`hidden h-full shrink-0 border-r border-slate-200 bg-white transition-[width] duration-200 md:flex md:flex-col md:justify-between md:py-4 ${showRail ? "w-[220px]" : "w-14"}`}>
             <div className="flex w-full flex-col gap-1 px-2">
               {currentUser.permissions["dashboard.view"] ? <RailButton icon={LayoutGrid} label="Painel geral" expanded={showRail} active={activeWorkspace === "dashboard"} onClick={() => setActiveWorkspace("dashboard")} /> : null}
-              {currentUser.permissions["tickets.view"] ? <RailButton icon={WhatsAppIcon} label="Atendimento" expanded={showRail} active={activeWorkspace === "tickets"} onClick={() => setActiveWorkspace("tickets")} /> : null}
+              {currentUser.permissions["tickets.view"] ? <RailButton icon={WhatsAppIcon} label="Atendimento" expanded={showRail} active={activeWorkspace === "tickets"} onClick={() => { setShowAllTickets(false); setActiveTab("atendendo"); setActiveWorkspace("tickets"); }} /> : null}
+              {canViewClosedTickets ? <RailButton icon={Archive} label="Tickets fechados" expanded={showRail} active={activeWorkspace === "closedTickets"} onClick={() => { setShowAllTickets(false); setActiveWorkspace("closedTickets"); }} /> : null}
               {currentUser.permissions["quickReplies.view"] ? <RailButton icon={Zap} label="Respostas rápidas" expanded={showRail} active={activeWorkspace === "quickReplies"} onClick={() => setActiveWorkspace("quickReplies")} /> : null}
               {currentUser.permissions["api.view"] ? <RailButton icon={Code2} label="API" expanded={showRail} active={activeWorkspace === "api"} onClick={() => setActiveWorkspace("api")} /> : null}
               {currentUser.permissions["contacts.view"] ? <RailButton icon={Users} label="Contatos" expanded={showRail} active={activeWorkspace === "contacts"} onClick={() => setActiveWorkspace("contacts")} /> : null}
@@ -4419,9 +4750,9 @@ export default function HomePage() {
                     />
                   </div>
 
-                  <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
                       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-                        {canStartConversation ? (
+                        {!isClosedTicketsWorkspace && canStartConversation ? (
                           <button
                             type="button"
                             onClick={openCreateConversationModal}
@@ -4431,10 +4762,26 @@ export default function HomePage() {
                             Novo Ticket
                           </button>
                         ) : null}
-                      <SidebarIconButton icon={Eye} label={showAllTickets ? "Ocultar todos os tickets" : "Mostrar todos os tickets"} active={showAllTickets} onClick={() => { setShowAllTickets((current) => !current); setActiveWorkspace("tickets"); }} />
-                      <SidebarIconButton icon={CheckSquare} label="Mostrar apenas meus atendimentos" active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
-                      <SidebarIconButton icon={EyeOff} label="Mostrar apenas não lidos" active={showOnlyUnread} onClick={() => setShowOnlyUnread((current) => !current)} />
-                      </div>
+                        {canBulkDeleteTickets ? (
+                          <SidebarIconButton
+                            icon={ticketBulkSelectionMode ? X : Trash2}
+                            label={ticketBulkSelectionMode ? "Cancelar seleção de tickets" : "Selecionar tickets para apagar"}
+                          active={ticketBulkSelectionMode}
+                          onClick={() => {
+                            if (ticketBulkSelectionMode) {
+                              cancelTicketBulkSelectionMode();
+                            } else {
+                              startTicketBulkSelectionMode();
+                            }
+                            }}
+                          />
+                        ) : null}
+                        {!isClosedTicketsWorkspace ? (
+                          <SidebarIconButton icon={Eye} label={showAllTickets ? "Ocultar todos os tickets" : "Mostrar todos os tickets"} active={showAllTickets} onClick={() => { setShowAllTickets((current) => !current); setActiveWorkspace("tickets"); }} />
+                        ) : null}
+                        <SidebarIconButton icon={CheckSquare} label="Mostrar apenas meus atendimentos" active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
+                        <SidebarIconButton icon={EyeOff} label="Mostrar apenas não lidos" active={showOnlyUnread} onClick={() => setShowOnlyUnread((current) => !current)} />
+                        </div>
                     <div className="relative min-w-0 max-w-full">
                       <select
                         aria-label="Filtrar atendimentos por fila"
@@ -4456,30 +4803,81 @@ export default function HomePage() {
                 </div>
 
                 <div className="border-b border-slate-200 px-3 py-2">
-                  <div className={`grid items-center gap-2 ${canViewGroups ? "grid-cols-4" : "grid-cols-3"}`}>
-                  <StatusTab label="ATENDENDO" count={counters.atendendo} active={!showAllTickets && activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
-                  <StatusTab label="AGUARDANDO" count={counters.aguardando} active={!showAllTickets && activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
-                  <StatusTab label="FECHADOS" count={counters.fechados} active={!showAllTickets && activeTab === "fechados"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("fechados"); }} icon={<Square className="h-3 w-3" />} color="bg-slate-500" />
-                  {canViewGroups ? <StatusTab label="GRUPOS" count={counters.grupos} active={!showAllTickets && activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" /> : null}
-                  </div>
+                  {isClosedTicketsWorkspace ? (
+                    <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2">
+                      <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
+                        <Archive className="h-3.5 w-3.5" />
+                        Tickets fechados
+                      </div>
+                      <span className="rounded-full bg-slate-600 px-2 py-0.5 text-[10px] font-bold text-white">
+                        {counters.fechados}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className={`grid items-center gap-2 ${canViewGroups ? "grid-cols-3" : "grid-cols-2"}`}>
+                      <StatusTab label="ATENDENDO" count={counters.atendendo} active={!showAllTickets && activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
+                      <StatusTab label="AGUARDANDO" count={counters.aguardando} active={!showAllTickets && activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
+                      {canViewGroups ? <StatusTab label="GRUPOS" count={counters.grupos} active={!showAllTickets && activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" /> : null}
+                    </div>
+                  )}
                 </div>
+
+                {ticketBulkSelectionMode ? (
+                  <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-3 py-2">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      {selectedTicketIdsForBulkDelete.length} ticket(s) selecionado(s)
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={cancelTicketBulkSelectionMode}
+                        className="inline-flex h-8 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleBulkDeleteTickets()}
+                        disabled={bulkDeleteLoading || selectedTicketIdsForBulkDelete.length === 0}
+                        className="inline-flex h-8 items-center justify-center rounded-xl bg-rose-600 px-3 text-[11px] font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                      >
+                        {bulkDeleteLoading ? "Apagando..." : "Apagar selecionados"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
 
                   <div className="flex-1 min-h-0 min-w-0 overflow-y-auto bg-white px-2 py-2">
                   {visibleTickets.length === 0 ? (
                     <div className="p-10 text-center text-xs font-medium text-slate-400">
-                      {showAllTickets ? "Nenhum ticket encontrado para os filtros atuais." : "Nenhum atendimento nesta categoria."}
+                      {isClosedTicketsWorkspace ? "Nenhum ticket fechado para os filtros atuais." : showAllTickets ? "Nenhum ticket encontrado para os filtros atuais." : "Nenhum atendimento nesta categoria."}
                     </div>
                   ) : (
                     visibleTickets.map((ticket) => {
                       const selected = ticket.id === selectedTicketId;
+                      const selectedForBulkDelete = selectedTicketIdsForBulkDelete.includes(ticket.id);
                       const compact = ticketDensity === "compact";
                       return (
                         <button
                           key={ticket.id}
                           type="button"
-                          onClick={() => { setSelectedTicketId(ticket.id); setActiveWorkspace("tickets"); setShowTicketDetails(false); }}
+                          onClick={() => {
+                            if (ticketBulkSelectionMode) {
+                              toggleTicketBulkSelection(ticket.id);
+                              return;
+                            }
+
+                            setSelectedTicketId(ticket.id);
+                            setActiveWorkspace(isClosedTicketsWorkspace ? "closedTickets" : "tickets");
+                            setShowTicketDetails(false);
+                          }}
                           className={`group relative mb-1.5 flex w-full min-w-0 items-start gap-2.5 rounded-[18px] border text-left transition ${selected ? "border-slate-300 bg-slate-50 shadow-sm" : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"} ${compact ? "p-2.5" : "p-3"}`}
                         >
+                          {ticketBulkSelectionMode ? (
+                            <span className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md border ${selectedForBulkDelete ? "border-rose-600 bg-rose-600 text-white" : "border-slate-300 bg-white text-slate-400"}`}>
+                              {selectedForBulkDelete ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+                            </span>
+                          ) : null}
                           <div className={compact ? "pt-0.5" : "pt-1"}>
                             <SafeAvatar
                               src={ticket.customerAvatarUrl}

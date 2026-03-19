@@ -38,6 +38,10 @@ const createReactionBodySchema = z.object({
   emoji: z.string().trim().min(1, 'Informe a reação.').max(16, 'Reação inválida.'),
 });
 
+const bulkDeleteMessagesBodySchema = z.object({
+  messageIds: z.array(z.string().uuid()).min(1, 'Selecione ao menos uma mensagem.').max(200, 'Limite de 200 mensagens por lote.'),
+});
+
 const env = loadEnv();
 
 function parseDataUrl(input: string) {
@@ -332,12 +336,40 @@ async function fetchEvolutionAttachmentDataUrl(params: {
   return null;
 }
 
-function canViewTicket(viewerId: string, permissions: PermissionMap, ticket: { currentAgentId: string | null }) {
+function canViewTicket(
+  viewerId: string,
+  permissions: PermissionMap,
+  viewerQueueIds: string[],
+  ticket: { currentAgentId: string | null; currentQueueId?: string | null; status?: string | null },
+) {
+  if (ticket.status === 'closed' && !permissions['tickets.closedView']) {
+    return false;
+  }
+
   if (permissions['tickets.viewAll']) {
     return true;
   }
 
-  return ticket.currentAgentId === null || ticket.currentAgentId === viewerId;
+  if (ticket.currentAgentId === viewerId) {
+    return true;
+  }
+
+  const canViewOtherUsers = permissions['tickets.viewOthers'];
+  const currentQueueId = ticket.currentQueueId ?? null;
+
+  if (currentQueueId) {
+    if (!viewerQueueIds.includes(currentQueueId)) {
+      return false;
+    }
+
+    return ticket.currentAgentId === null || canViewOtherUsers;
+  }
+
+  if (!permissions['tickets.viewUnassigned']) {
+    return false;
+  }
+
+  return ticket.currentAgentId === null || canViewOtherUsers;
 }
 
 function canReplyToTicket(viewerId: string, ticket: { currentAgentId: string | null }) {
@@ -509,7 +541,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Anexo nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, attachment.message.ticket)) {
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, attachment.message.ticket)) {
       return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
     }
 
@@ -624,14 +656,14 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
     const ticket = await app.prisma.ticket.findUnique({
       where: { id: params.ticketId },
-      select: { id: true, currentAgentId: true },
+      select: { id: true, currentAgentId: true, currentQueueId: true, status: true },
     });
 
     if (!ticket) {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, ticket)) {
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
     }
 
@@ -1053,6 +1085,8 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       select: {
         id: true,
         currentAgentId: true,
+        currentQueueId: true,
+        status: true,
       },
     });
 
@@ -1060,7 +1094,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, ticket)) {
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
     }
 
@@ -1093,6 +1127,85 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         id: updatedMessage.id,
         hiddenForMe: true,
       },
+    });
+  });
+
+  app.post('/tickets/:ticketId/messages/bulk-delete', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'messages.bulkDelete');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({
+      ticketId: z.string().uuid(),
+    }).parse(request.params);
+    const body = bulkDeleteMessagesBodySchema.parse(request.body ?? {});
+
+    const ticket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      select: {
+        id: true,
+        currentAgentId: true,
+        currentQueueId: true,
+        status: true,
+      },
+    });
+
+    if (!ticket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+      return reply.forbidden('Voce nao possui permissao para apagar mensagens neste ticket.');
+    }
+
+    const messages = await app.prisma.ticketMessage.findMany({
+      where: {
+        ticketId: params.ticketId,
+        id: { in: body.messageIds },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    const messageIds = messages.map((message) => message.id);
+
+    if (messageIds.length === 0) {
+      return reply.badRequest('Nenhuma das mensagens selecionadas foi encontrada neste ticket.');
+    }
+
+    await app.prisma.ticketMessage.deleteMany({
+      where: {
+        ticketId: params.ticketId,
+        id: { in: messageIds },
+      },
+    });
+
+    const latestMessage = await app.prisma.ticketMessage.findFirst({
+      where: { ticketId: params.ticketId },
+      orderBy: { createdAt: 'desc' },
+      select: { body: true },
+    });
+
+    await app.prisma.ticket.update({
+      where: { id: params.ticketId },
+      data: {
+        lastMessagePreview: latestMessage?.body ?? null,
+      },
+    });
+
+    app.io.emit('message.updated', {
+      ticketId: params.ticketId,
+      bulkDeletedMessageIds: messageIds,
+    });
+    app.io.emit('ticket.updated', {
+      ticketId: params.ticketId,
+      lastMessagePreview: latestMessage?.body ?? null,
+    });
+
+    return reply.code(201).send({
+      deletedCount: messageIds.length,
+      deletedMessageIds: messageIds,
     });
   });
 

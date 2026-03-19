@@ -62,7 +62,13 @@ export function setSessionCookie(reply: FastifyReply, token: string, isProductio
 }
 
 export function clearSessionCookie(reply: FastifyReply, isProduction: boolean) {
-  reply.clearCookie(SESSION_COOKIE, buildCookieOptions(isProduction));
+  const cookieOptions = buildCookieOptions(isProduction);
+  reply.clearCookie(SESSION_COOKIE, cookieOptions);
+  reply.setCookie(SESSION_COOKIE, '', {
+    ...cookieOptions,
+    maxAge: 0,
+    expires: new Date(0),
+  });
 }
 
 export function getSessionFromRequest(request: FastifyRequest, secret: string): SessionPayload | null {
