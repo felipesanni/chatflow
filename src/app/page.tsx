@@ -624,7 +624,7 @@ export default function HomePage() {
   const [editingMessageId, setEditingMessageId] = React.useState<string | null>(null);
   const [replyToMessageId, setReplyToMessageId] = React.useState<string | null>(null);
   const [searchQuery, setSearchQuery] = React.useState("");
-  const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "grupos">("atendendo");
+  const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "fechados" | "grupos">("atendendo");
   const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
   const [adminSection, setAdminSection] = React.useState<"instances" | "agents" | "queues">("instances");
   const [showRail, setShowRail] = React.useState(false);
@@ -810,6 +810,8 @@ export default function HomePage() {
         ? true
         : activeTab === "grupos"
           ? ticket.isGroup
+          : activeTab === "fechados"
+            ? ticket.status === "closed" && !ticket.isGroup
           : activeTab === "aguardando"
             ? ticket.status === "pending" && !ticket.isGroup
             : ticket.status === "open" && !ticket.isGroup;
@@ -855,6 +857,7 @@ export default function HomePage() {
     () => ({
       atendendo: tickets.filter((ticket) => ticket.status === "open" && !ticket.isGroup).length,
       aguardando: tickets.filter((ticket) => ticket.status === "pending" && !ticket.isGroup).length,
+      fechados: tickets.filter((ticket) => ticket.status === "closed" && !ticket.isGroup).length,
       grupos: tickets.filter((ticket) => ticket.isGroup).length,
     }),
     [tickets],
@@ -3713,9 +3716,10 @@ export default function HomePage() {
 
                     <div className="space-y-3">
                       <InfoRow title="Status" subtitle={traduzirStatusTicket(selectedTicket.status)} meta={`não lidos: ${selectedTicket.unreadCount}`} />
-                      <InfoRow title="Fila" subtitle={selectedTicket.currentQueue?.name ?? "Sem fila"} meta={selectedTicket.isGroup ? "grupo do WhatsApp" : "conversa individual"} />
-                      <InfoRow title="Responsável" subtitle={selectedTicket.currentAgent?.name ?? "Sem agente"} meta={selectedTicket.whatsappInstance.name} />
-                      <InfoRow title="Atualizado em" subtitle={formatDateTime(selectedTicket.updatedAt)} meta={formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)} />
+                      <InfoRow title={selectedTicket.isGroup ? "Tipo" : "Fila"} subtitle={selectedTicket.isGroup ? "Grupo do WhatsApp" : (selectedTicket.currentQueue?.name ?? "Sem fila")} meta={selectedTicket.isGroup ? (selectedTicket.currentQueue?.name ?? "Sem fila") : "conversa individual"} />
+                      <InfoRow title="Responsável" subtitle={selectedTicket.currentAgent?.name ?? "Sem agente"} meta={selectedTicket.isGroup ? "participação compartilhada" : "atendimento individual"} />
+                      <InfoRow title={selectedTicket.isGroup ? "Instância" : "Contato"} subtitle={selectedTicket.isGroup ? selectedTicket.whatsappInstance.name : formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)} meta={selectedTicket.isGroup ? formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId) : selectedTicket.whatsappInstance.name} />
+                      <InfoRow title="Atualizado em" subtitle={formatDateTime(selectedTicket.updatedAt)} meta={selectedTicket.status === "closed" ? "ticket encerrado" : "ticket ativo"} />
                     </div>
                   </div>
                 </aside>
@@ -3840,6 +3844,11 @@ export default function HomePage() {
                 onChange={(value) => setConversationForm((current) => ({ ...current, customerSearch: value }))}
                 placeholder="Nome, telefone ou empresa"
               />
+              {conversationForm.customerSearch.trim().length > 0 && filteredConversationCustomers.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                  Nenhum contato da agenda encontrado. Você ainda pode abrir o ticket digitando apenas o telefone.
+                </div>
+              ) : null}
               {matchingConversationCustomer ? (
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
                   <div className="font-semibold">Contato encontrado</div>
@@ -3910,7 +3919,7 @@ export default function HomePage() {
                 Cancelar
               </button>
               <PrimaryAction disabled={conversationLoading} className="sm:w-auto sm:px-6">
-                {conversationLoading ? "Iniciando..." : "Iniciar conversa"}
+                {customerLoading ? "Salvando..." : editingCustomerId ? "Salvar alterações" : "Cadastrar contato"}
               </PrimaryAction>
             </div>
           </form>
@@ -3985,7 +3994,7 @@ export default function HomePage() {
                 Cancelar
               </button>
               <PrimaryAction disabled={customerLoading || !customerForm.name.trim()} className="sm:w-auto sm:px-6">
-                {customerLoading ? "Salvando..." : editingCustomerId ? "Salvar alterações" : "Cadastrar contato"}
+                {conversationLoading ? "Iniciando..." : "Iniciar conversa"}
               </PrimaryAction>
             </div>
           </form>
@@ -4428,7 +4437,7 @@ export default function HomePage() {
                             Novo Ticket
                           </button>
                         ) : null}
-                      <SidebarIconButton icon={Eye} label="Mostrar todos os tickets" active={showAllTickets} onClick={() => { setShowAllTickets((current) => !current); setActiveWorkspace("tickets"); }} />
+                      <SidebarIconButton icon={Eye} label={showAllTickets ? "Ocultar todos os tickets" : "Mostrar todos os tickets"} active={showAllTickets} onClick={() => { setShowAllTickets((current) => !current); setActiveWorkspace("tickets"); }} />
                       <SidebarIconButton icon={CheckSquare} label="Mostrar apenas meus atendimentos" active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
                       <SidebarIconButton icon={EyeOff} label="Mostrar apenas não lidos" active={showOnlyUnread} onClick={() => setShowOnlyUnread((current) => !current)} />
                       </div>
@@ -4453,16 +4462,19 @@ export default function HomePage() {
                 </div>
 
                 <div className="border-b border-slate-200 px-3 py-2">
-                  <div className={`grid items-center gap-2 ${canViewGroups ? "grid-cols-3" : "grid-cols-2"}`}>
+                  <div className={`grid items-center gap-2 ${canViewGroups ? "grid-cols-4" : "grid-cols-3"}`}>
                   <StatusTab label="ATENDENDO" count={counters.atendendo} active={!showAllTickets && activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
                   <StatusTab label="AGUARDANDO" count={counters.aguardando} active={!showAllTickets && activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
+                  <StatusTab label="FECHADOS" count={counters.fechados} active={!showAllTickets && activeTab === "fechados"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("fechados"); }} icon={<Square className="h-3 w-3" />} color="bg-slate-500" />
                   {canViewGroups ? <StatusTab label="GRUPOS" count={counters.grupos} active={!showAllTickets && activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" /> : null}
                   </div>
                 </div>
 
                   <div className="flex-1 min-h-0 min-w-0 overflow-y-auto bg-white px-2 py-2">
                   {visibleTickets.length === 0 ? (
-                    <div className="p-10 text-center text-xs font-medium text-slate-400">Nenhum atendimento nesta categoria.</div>
+                    <div className="p-10 text-center text-xs font-medium text-slate-400">
+                      {showAllTickets ? "Nenhum ticket encontrado para os filtros atuais." : "Nenhum atendimento nesta categoria."}
+                    </div>
                   ) : (
                     visibleTickets.map((ticket) => {
                       const selected = ticket.id === selectedTicketId;
@@ -4503,7 +4515,7 @@ export default function HomePage() {
 
                             <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
                               <div className="flex min-w-0 flex-wrap gap-1 overflow-hidden">
-                                <MiniBadge className="bg-emerald-500 text-white" text={ticket.whatsappInstance.name || "SEM INSTÂNCIA"} />
+                                <MiniBadge className={statusBadgeClassName(ticket.status)} text={statusBadgeText(ticket.status)} />
                                 {ticket.isGroup ? (
                                   <MiniBadge className="bg-blue-600 text-white" text="GRUPO" />
                                 ) : (
@@ -4675,11 +4687,23 @@ function MiniBadge(props: { text: string; className: string }) {
   return <span className={`inline-flex max-w-full truncate rounded-md px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] ${props.className}`}>{props.text}</span>;
 }
 
+function statusBadgeClassName(status: "open" | "pending" | "closed") {
+  if (status === "open") return "bg-emerald-600 text-white";
+  if (status === "pending") return "bg-amber-500 text-white";
+  return "bg-slate-500 text-white";
+}
+
+function statusBadgeText(status: "open" | "pending" | "closed") {
+  if (status === "open") return "ATENDENDO";
+  if (status === "pending") return "AGUARDANDO";
+  return "FECHADO";
+}
+
 function AudioMessagePlayer(props: {
   src: string;
 }) {
   return (
-    <div className="chatflow-audio-player w-full min-w-[320px] md:min-w-[520px] overflow-hidden bg-white">
+      <div className="chatflow-audio-player w-full min-w-[420px] max-w-full md:min-w-[560px] overflow-hidden bg-white">
       <AudioPlayer
         src={props.src}
         preload="metadata"

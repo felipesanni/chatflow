@@ -56,6 +56,7 @@ interface DeleteMessageParams {
   instanceName: string;
   remoteJid: string;
   externalMessageId: string;
+  fromMe?: boolean;
 }
 
 interface ConfigureWebhookParams {
@@ -403,6 +404,7 @@ export async function sendEvolutionReaction(params: SendReactionParams) {
 export async function sendEvolutionDeleteMessage(params: DeleteMessageParams) {
   const cleanUrl = params.baseUrl.replace(/\/$/, '');
   const destination = normalizeDestination(params.remoteJid);
+  const targetFromMe = params.fromMe ?? true;
 
   async function execute(path: string, method: 'DELETE' | 'POST', body: Record<string, unknown>) {
     const response = await fetch(`${cleanUrl}${path}/${params.instanceName}`, {
@@ -432,19 +434,25 @@ export async function sendEvolutionDeleteMessage(params: DeleteMessageParams) {
   const attempts = [
     {
       number: destination,
+      remoteJid: params.remoteJid,
+      fromMe: targetFromMe,
+      deleteForEveryone: true,
       key: {
         id: params.externalMessageId,
         remoteJid: params.remoteJid,
-        fromMe: true,
+        fromMe: targetFromMe,
       },
     },
     {
       number: destination,
+      remoteJid: params.remoteJid,
+      fromMe: targetFromMe,
+      deleteForEveryone: true,
       message: {
         key: {
           id: params.externalMessageId,
           remoteJid: params.remoteJid,
-          fromMe: true,
+          fromMe: targetFromMe,
         },
       },
     },
@@ -452,27 +460,66 @@ export async function sendEvolutionDeleteMessage(params: DeleteMessageParams) {
       number: destination,
       id: params.externalMessageId,
       remoteJid: params.remoteJid,
+      fromMe: targetFromMe,
+      deleteForEveryone: true,
     },
     {
       number: destination,
       messageId: params.externalMessageId,
+      remoteJid: params.remoteJid,
+      fromMe: targetFromMe,
+      deleteForEveryone: true,
     },
     {
       number: destination,
       key: {
         id: params.externalMessageId,
       },
+      remoteJid: params.remoteJid,
+      fromMe: targetFromMe,
+      deleteForEveryone: true,
     },
     {
+      number: params.remoteJid,
+      remoteJid: params.remoteJid,
+      fromMe: targetFromMe,
+      deleteForEveryone: true,
       key: {
         id: params.externalMessageId,
         remoteJid: params.remoteJid,
-        fromMe: true,
+        fromMe: targetFromMe,
       },
+    },
+    {
+      chatId: params.remoteJid,
+      id: params.externalMessageId,
+      fromMe: targetFromMe,
+      deleteForEveryone: true,
+    },
+    {
+      jid: params.remoteJid,
+      messageId: params.externalMessageId,
+      fromMe: targetFromMe,
+      deleteForEveryone: true,
+    },
+    {
+      message: {
+        id: params.externalMessageId,
+        key: {
+          id: params.externalMessageId,
+          remoteJid: params.remoteJid,
+          fromMe: targetFromMe,
+        },
+      },
+      remoteJid: params.remoteJid,
+      number: destination,
+      fromMe: targetFromMe,
+      deleteForEveryone: true,
     },
   ];
   const endpoints = [
     { path: '/chat/deleteMessageForEveryone', method: 'POST' as const },
+    { path: '/chat/deleteMessageForEveryone', method: 'DELETE' as const },
     { path: '/message/deleteMessage', method: 'DELETE' as const },
     { path: '/message/deleteMessage', method: 'POST' as const },
     { path: '/chat/deleteMessage', method: 'DELETE' as const },

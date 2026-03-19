@@ -985,13 +985,14 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const decryptedApiKey = decryptSecret(ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
-    const delivery = await sendEvolutionDeleteMessage({
-      baseUrl: ticket.whatsappInstance.baseUrl,
-      apiKey: decryptedApiKey,
-      instanceName: ticket.whatsappInstance.evolutionInstanceName,
-      remoteJid: ticket.externalChatId,
-      externalMessageId: message.externalMessageId,
-    });
+      const delivery = await sendEvolutionDeleteMessage({
+        baseUrl: ticket.whatsappInstance.baseUrl,
+        apiKey: decryptedApiKey,
+        instanceName: ticket.whatsappInstance.evolutionInstanceName,
+        remoteJid: ticket.externalChatId,
+        externalMessageId: message.externalMessageId,
+        fromMe: true,
+      });
 
     if (!delivery.ok) {
       return reply.code(400).send({
