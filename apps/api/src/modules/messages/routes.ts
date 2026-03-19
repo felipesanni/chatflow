@@ -372,8 +372,21 @@ function canViewTicket(
   return ticket.currentAgentId === null || canViewOtherUsers;
 }
 
-function canReplyToTicket(viewerId: string, ticket: { currentAgentId: string | null }) {
-  return ticket.currentAgentId === viewerId;
+function canReplyToTicket(
+  viewerId: string,
+  permissions: PermissionMap,
+  viewerQueueIds: string[],
+  ticket: { currentAgentId: string | null; currentQueueId?: string | null; status?: string | null },
+) {
+  if (ticket.currentAgentId === viewerId) {
+    return true;
+  }
+
+  if (!permissions['tickets.replyUnassigned']) {
+    return false;
+  }
+
+  return canViewTicket(viewerId, permissions, viewerQueueIds, ticket);
 }
 
 function formatAgentSignedBody(agentName: string, body: string) {
@@ -761,7 +774,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canReplyToTicket(session.userId, ticket)) {
+    if (!canReplyToTicket(session.userId, session.permissions, session.queueIds, ticket)) {
       return reply.forbidden('Apenas o agente responsavel pode editar mensagens deste ticket.');
     }
 
@@ -906,7 +919,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canReplyToTicket(session.userId, ticket)) {
+    if (!canReplyToTicket(session.userId, session.permissions, session.queueIds, ticket)) {
       return reply.forbidden('Apenas o agente responsavel pode reagir neste ticket.');
     }
 
@@ -993,7 +1006,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canReplyToTicket(session.userId, ticket)) {
+    if (!canReplyToTicket(session.userId, session.permissions, session.queueIds, ticket)) {
       return reply.forbidden('Apenas o agente responsavel pode apagar mensagens neste ticket.');
     }
 
@@ -1230,7 +1243,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canReplyToTicket(session.userId, ticket)) {
+    if (!canReplyToTicket(session.userId, session.permissions, session.queueIds, ticket)) {
       return reply.forbidden('Apenas o agente responsavel pode responder este ticket.');
     }
 

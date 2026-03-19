@@ -210,6 +210,7 @@ const permissionDefinitions = [
   { key: "tickets.viewUnassigned", group: "Atendimento", label: "Visualizar tickets sem fila" },
   { key: "tickets.accept", group: "Atendimento", label: "Aceitar atendimentos" },
   { key: "tickets.reply", group: "Atendimento", label: "Responder mensagens" },
+  { key: "tickets.replyUnassigned", group: "Atendimento", label: "Responder tickets não atribuídos ao usuário" },
   { key: "tickets.transfer", group: "Atendimento", label: "Transferir atendimentos" },
   { key: "tickets.close", group: "Atendimento", label: "Encerrar atendimentos" },
   { key: "tickets.closedView", group: "Atendimento", label: "Visualizar módulo de tickets fechados" },
@@ -271,6 +272,7 @@ function defaultPermissionsForRole(role: "admin" | "agent"): PermissionMap {
     "tickets.viewUnassigned": true,
     "tickets.accept": true,
     "tickets.reply": true,
+    "tickets.replyUnassigned": false,
     "tickets.transfer": true,
     "tickets.close": true,
     "tickets.closedView": false,
@@ -698,6 +700,16 @@ export default function HomePage() {
     () => customers.find((customer) => customer.phone && onlyPhoneDigits(customer.phone) === normalizedConversationPhone) ?? null,
     [customers, normalizedConversationPhone],
   );
+  const existingOpenConversationTicket = React.useMemo(
+    () =>
+      tickets.find((ticket) => {
+        if (ticket.status === "closed") return false;
+        if (conversationForm.whatsappInstanceId && ticket.whatsappInstance.id !== conversationForm.whatsappInstanceId) return false;
+        const ticketDigits = onlyPhoneDigits(ticket.externalContactId ?? ticket.externalChatId);
+        return Boolean(normalizedConversationPhone && ticketDigits === normalizedConversationPhone);
+      }) ?? null,
+    [conversationForm.whatsappInstanceId, normalizedConversationPhone, tickets],
+  );
   const filteredConversationCustomers = React.useMemo(() => {
     const query = conversationForm.customerSearch.trim().toLowerCase();
     if (!query) return [];
@@ -766,12 +778,14 @@ export default function HomePage() {
   const canManageQueues = currentUser.permissions["queues.manage"];
   const canAssignQueues = currentUser.permissions["queues.assign"];
   const canStartConversation = currentUser.permissions["tickets.reply"];
+  const canReplyUnassignedTickets = currentUser.permissions["tickets.replyUnassigned"];
   const canViewContacts = currentUser.permissions["contacts.view"];
   const canManageContacts = currentUser.permissions["contacts.manage"];
   const canBulkDeleteTickets = currentUser.permissions["tickets.bulkDelete"];
   const canBulkDeleteMessages = currentUser.permissions["messages.bulkDelete"];
   const canViewClosedTickets = currentUser.permissions["tickets.closedView"];
   const isClosedTicketsWorkspace = activeWorkspace === "closedTickets";
+  const canDeleteSelectedTicket = Boolean(selectedTicket && canBulkDeleteTickets);
 
   const isSelectedTicketOwnedByCurrentUser = Boolean(selectedTicket && selectedTicket.currentAgent?.id === user?.id);
   const canAcceptSelectedTicket = Boolean(
@@ -797,7 +811,7 @@ export default function HomePage() {
     selectedTicket &&
     selectedTicket.status !== "closed" &&
     currentUser.permissions["tickets.reply"] &&
-    isSelectedTicketOwnedByCurrentUser,
+    (isSelectedTicketOwnedByCurrentUser || canReplyUnassignedTickets),
   );
   const isSelectedTicketClosed = Boolean(selectedTicket?.status === "closed");
   const shouldDisableComposer = Boolean(!selectedTicket || !canSendToSelectedTicket);
@@ -838,12 +852,14 @@ export default function HomePage() {
       const matchesTab = isClosedTicketsWorkspace
         ? ticket.status === "closed" && !ticket.isGroup
         : showAllTickets
-        ? true
-        : activeTab === "grupos"
-          ? ticket.isGroup
-          : activeTab === "aguardando"
-            ? ticket.status === "pending" && !ticket.isGroup
-            : ticket.status === "open" && !ticket.isGroup;
+          ? currentUser.role === "agent"
+            ? !ticket.isGroup && ticket.currentAgent?.id === user?.id
+            : true
+          : activeTab === "grupos"
+            ? ticket.isGroup
+            : activeTab === "aguardando"
+              ? ticket.status === "pending" && !ticket.isGroup
+              : ticket.status === "open" && !ticket.isGroup;
 
       if (!matchesTab) {
         return false;
@@ -2097,6 +2113,36 @@ export default function HomePage() {
     }
   }
 
+  async function handleDeleteSelectedTicket() {
+    if (!selectedTicketId || !canDeleteSelectedTicket) {
+      return;
+    }
+
+    const confirmed = typeof window === "undefined"
+      ? true
+      : window.confirm(`Apagar o ticket de ${selectedTicket?.customerName ?? "contato"}? Esta ação remove o histórico deste ticket no painel.`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setBulkDeleteLoading(true);
+    try {
+      await apiFetch(`/tickets/${selectedTicketId}/delete`, {
+        method: "POST",
+      });
+      setSelectedTicketId(null);
+      setMessages([]);
+      setShowTicketDetails(false);
+      await refreshTickets();
+      setPanelMessage("Ticket apagado.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao apagar ticket.");
+    } finally {
+      setBulkDeleteLoading(false);
+    }
+  }
+
   function insertEmoji(emoji: string) {
     setMessageInput((current) => `${current}${emoji}`);
     setShowEmojiPicker(false);
@@ -2500,6 +2546,15 @@ export default function HomePage() {
       const normalizedPhone = onlyPhoneDigits(conversationForm.phone);
       const matchedCustomer = customers.find((customer) => customer.phone && onlyPhoneDigits(customer.phone) === normalizedPhone) ?? null;
 
+      if (existingOpenConversationTicket) {
+        window.alert(`Ja existe um ticket aberto com ${existingOpenConversationTicket.customerName} nesta instancia para este numero.`);
+        closeManagementModal();
+        setSelectedTicketId(existingOpenConversationTicket.id);
+        setActiveWorkspace("tickets");
+        setPanelMessage("Ticket existente aberto para evitar duplicidade.");
+        return;
+      }
+
       const payload = await apiFetch<CreateConversationResponse>("/tickets", {
         method: "POST",
         body: JSON.stringify({
@@ -2514,6 +2569,9 @@ export default function HomePage() {
       await refreshTickets();
       setSelectedTicketId(payload.item.id);
       setActiveWorkspace("tickets");
+      if (!payload.created) {
+        window.alert(`Ja existe um ticket aberto com ${payload.item.customerName} nesta instancia para este numero.`);
+      }
       setPanelMessage(payload.created ? "Nova conversa iniciada." : "Conversa existente aberta.");
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao iniciar conversa.");
@@ -3451,6 +3509,19 @@ export default function HomePage() {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {canDeleteSelectedTicket ? (
+                    <button
+                      type="button"
+                      aria-label="Apagar ticket selecionado"
+                      title="Apagar ticket"
+                      onClick={() => void handleDeleteSelectedTicket()}
+                      disabled={bulkDeleteLoading}
+                      className="inline-flex h-10 items-center gap-2 rounded-full border border-rose-200 bg-white px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      {bulkDeleteLoading ? "Apagando..." : "Apagar ticket"}
+                    </button>
+                  ) : null}
                   {canBulkDeleteMessages ? (
                     <button
                       type="button"
@@ -4060,9 +4131,6 @@ export default function HomePage() {
                       <div className="grid gap-4 md:grid-cols-2">
                         <label className="block text-sm font-medium text-slate-600">
                           Agente de destino
-                          <div className="mt-1 text-xs font-normal text-slate-400">
-                            Opcional. Deixe em branco para devolver o ticket para aguardando na fila escolhida.
-                          </div>
                           <select
                             value={transferForm.agentId}
                             onChange={(event) => setTransferForm((current) => ({ ...current, agentId: event.target.value }))}
@@ -4092,9 +4160,6 @@ export default function HomePage() {
                           ))}
                           </select>
                         </label>
-                      </div>
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-                        Escolhendo apenas a fila, o ticket volta para <span className="font-semibold text-slate-700">aguardando</span> até alguém dessa fila aceitar o atendimento.
                       </div>
                       </div>
 
@@ -4149,6 +4214,11 @@ export default function HomePage() {
                 placeholder="+55 (11) 99999-9999"
               />
             </div>
+            {existingOpenConversationTicket ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                Ja existe um ticket aberto com <span className="font-semibold">{existingOpenConversationTicket.customerName}</span> nesta instancia para este numero. Ao continuar, o sistema abrira o ticket existente.
+              </div>
+            ) : null}
             <div className="space-y-3">
               <CompactField
                 label="Buscar na agenda"
@@ -4761,7 +4831,7 @@ export default function HomePage() {
             </div>
           </aside>
 
-          <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[400px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
+          <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[460px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
               {ticketWorkspaceAtivo ? (
                 <div className="flex h-full min-h-0 min-w-0 flex-col border-r border-slate-200 bg-white">
                 <div className="space-y-3 border-b border-slate-200 p-3">

@@ -691,4 +691,40 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       deletedTicketIds: allowedIds,
     });
   });
+
+  app.post('/tickets/:ticketId/delete', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.bulkDelete');
+    if (!access) return;
+    const session = access.session;
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+
+    const ticket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      select: {
+        id: true,
+        currentAgentId: true,
+        currentQueueId: true,
+      },
+    });
+
+    if (!ticket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+      return reply.forbidden('Voce nao possui permissao para apagar este ticket.');
+    }
+
+    await app.prisma.ticket.delete({
+      where: { id: ticket.id },
+    });
+
+    app.io.emit('ticket.updated', {
+      deletedTicketId: ticket.id,
+    });
+
+    return reply.code(201).send({
+      deletedTicketId: ticket.id,
+    });
+  });
 };
