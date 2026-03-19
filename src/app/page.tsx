@@ -3191,10 +3191,10 @@ export default function HomePage() {
                           !outgoing &&
                           !system &&
                           Boolean(message.senderName?.trim());
-                        const canEditMessage = outgoing && canSendToSelectedTicket && !hasAttachment && Boolean(normalizedBody) && !isDeletedMessage;
-                        const canDeleteMessage = outgoing && canSendToSelectedTicket && !isDeletedMessage;
+                        const canEditMessage = outgoing && !hasAttachment && Boolean(normalizedBody) && !isDeletedMessage;
+                        const canDeleteMessage = outgoing && !isDeletedMessage;
                         const canDeleteMessageForMe = !system;
-                        const canReplyToMessage = !system && canSendToSelectedTicket && !isEditingMessage && !isDeletedMessage;
+                        const canReplyToMessage = !system && !isEditingMessage && !isDeletedMessage;
                         const groupedReactions = (message.reactions ?? []).reduce<Record<string, number>>((acc, reaction) => {
                           acc[reaction.emoji] = (acc[reaction.emoji] ?? 0) + 1;
                           return acc;
@@ -3219,9 +3219,9 @@ export default function HomePage() {
 
                       return (
                           <div key={message.id} className={`group flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
-                            <div className={`flex items-start gap-2 ${outgoing ? "flex-row-reverse" : ""}`}>
-                              <div className={`${shouldRenderAttachments ? "w-full max-w-[min(380px,85vw)] md:max-w-[420px]" : "w-fit max-w-[85%] md:max-w-[70%]"} flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
-                              <article className={`${shouldRenderAttachments ? "w-full" : "w-fit max-w-full"} rounded-[18px] px-4 py-3 text-sm shadow-sm ${outgoing ? "border border-[#cfe9ad] bg-[#dcf8c6] text-slate-800" : "rounded-tl-[8px] border border-[#ece4d8] bg-white text-slate-800"}`}>
+                            <div className={`flex max-w-full items-start gap-2 ${outgoing ? "flex-row-reverse" : ""}`}>
+                              <div className={`${shouldRenderAttachments ? "w-full max-w-[min(420px,88vw)] md:max-w-[460px]" : "w-auto max-w-full"} flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
+                              <article className={`${shouldRenderAttachments ? "w-full" : "inline-flex w-auto max-w-full flex-col"} rounded-[18px] px-4 py-3 text-sm shadow-sm ${outgoing ? "border border-[#cfe9ad] bg-[#dcf8c6] text-slate-800" : "rounded-tl-[8px] border border-[#ece4d8] bg-white text-slate-800"}`}>
                                 {shouldShowInboundGroupSender ? (
                                   <div className="mb-2 text-[14px] font-semibold leading-5 text-sky-700">
                                     {message.senderName}
