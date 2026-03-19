@@ -7,6 +7,8 @@ const envSchema = z.object({
   API_LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   API_PUBLIC_URL: z.string().url().optional(),
   DATABASE_URL: z.string().min(1),
+  REDIS_URL: z.string().min(1).optional(),
+  QUEUE_WEBHOOK_CONCURRENCY: z.coerce.number().int().positive().default(4),
   SESSION_SECRET: z.string().min(8),
   WEB_APP_URL: z.string().url(),
   ADMIN_BOOTSTRAP_EMAIL: z.string().email().optional(),

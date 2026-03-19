@@ -39,14 +39,22 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
   app.post('/webhooks/evolution', async (request, reply) => {
     const body = webhookBodySchema.parse(request.body);
     const query = (request.query ?? {}) as Record<string, unknown>;
-
-    const result = await processEvolutionEvent(app, {
+    const jobPayload = {
       source: 'evolution',
       payload: body,
       incomingSecret: pickEvolutionIncomingSecret(request.headers, query),
       validateSecret: true,
-    });
+    };
 
+    if (app.jobs.enabled) {
+      const jobId = await app.jobs.enqueueEvolutionEvent(jobPayload);
+      return reply.code(202).send({
+        queued: true,
+        jobId,
+      });
+    }
+
+    const result = await processEvolutionEvent(app, jobPayload);
     return reply.code(result.statusCode).send(result.body);
   });
 

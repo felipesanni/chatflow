@@ -102,11 +102,147 @@ function resolveExternalAttachmentUrl(baseUrl: string, candidate: string | null)
     return candidate;
   }
 
+  if (/^(image|audio|video|document):/i.test(candidate)) {
+    return null;
+  }
+
   try {
     return new URL(candidate).toString();
   } catch {
     return new URL(candidate.replace(/^\.\//, ''), `${baseUrl.replace(/\/$/, '')}/`).toString();
   }
+}
+
+function pickMediaMimeType(payload: any, fallback: string) {
+  return payload?.mimetype
+    ?? payload?.mimeType
+    ?? payload?.data?.mimetype
+    ?? payload?.data?.mimeType
+    ?? payload?.message?.mimetype
+    ?? payload?.message?.mimeType
+    ?? fallback;
+}
+
+function pickMediaBase64(payload: any) {
+  return payload?.base64
+    ?? payload?.data?.base64
+    ?? payload?.message?.base64
+    ?? payload?.data?.message?.base64
+    ?? payload?.dataUrl
+    ?? payload?.data?.dataUrl
+    ?? payload?.message?.dataUrl
+    ?? payload?.data?.message?.dataUrl
+    ?? null;
+}
+
+async function fetchEvolutionAttachmentDataUrl(params: {
+  baseUrl: string;
+  apiKey: string;
+  instanceName: string;
+  remoteJid: string;
+  externalMessageId: string;
+  mimeType: string;
+  fromMe: boolean;
+}) {
+  const cleanUrl = params.baseUrl.replace(/\/$/, '');
+  const endpoints = [
+    '/chat/getBase64FromMediaMessage',
+    '/message/getBase64FromMediaMessage',
+    '/chat/downloadMedia',
+    '/message/downloadMedia',
+  ];
+  const bodies = [
+    {
+      key: {
+        id: params.externalMessageId,
+        remoteJid: params.remoteJid,
+        fromMe: params.fromMe,
+      },
+    },
+    {
+      message: {
+        key: {
+          id: params.externalMessageId,
+          remoteJid: params.remoteJid,
+          fromMe: params.fromMe,
+        },
+      },
+    },
+    {
+      messageId: params.externalMessageId,
+      remoteJid: params.remoteJid,
+      fromMe: params.fromMe,
+    },
+  ];
+
+  for (const endpoint of endpoints) {
+    for (const body of bodies) {
+      try {
+        const response = await fetch(`${cleanUrl}${endpoint}/${params.instanceName}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: params.apiKey,
+          },
+          body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+          continue;
+        }
+
+        const contentType = response.headers.get('content-type') ?? '';
+
+        if (contentType.includes('application/json')) {
+          let payload: any = null;
+          try {
+            payload = await response.json();
+          } catch {
+            payload = null;
+          }
+
+          const base64 = pickMediaBase64(payload);
+          if (typeof base64 !== 'string' || base64.trim().length === 0) {
+            continue;
+          }
+
+          if (base64.startsWith('data:')) {
+            return base64;
+          }
+
+          const mimeType = pickMediaMimeType(payload, params.mimeType || 'application/octet-stream');
+          return `data:${mimeType};base64,${base64}`;
+        }
+
+        if (contentType.startsWith('text/')) {
+          const rawText = (await response.text()).trim();
+          if (!rawText) {
+            continue;
+          }
+
+          if (rawText.startsWith('data:')) {
+            return rawText;
+          }
+
+          const normalizedText = rawText.replace(/^["']|["']$/g, '');
+          return `data:${params.mimeType || 'application/octet-stream'};base64,${normalizedText}`;
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        if (!arrayBuffer.byteLength) {
+          continue;
+        }
+
+        const binaryBase64 = Buffer.from(arrayBuffer).toString('base64');
+        const binaryMimeType = contentType || params.mimeType || 'application/octet-stream';
+        return `data:${binaryMimeType};base64,${binaryBase64}`;
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return null;
 }
 
 function canViewTicket(viewerId: string, permissions: PermissionMap, ticket: { currentAgentId: string | null }) {
@@ -290,66 +426,87 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
     }
 
-    const source = attachment.publicUrl ?? attachment.storageKey;
-    if (!source) {
-      return reply.notFound('Conteudo do anexo indisponivel.');
-    }
+      const source = attachment.publicUrl ?? attachment.storageKey;
 
-    if (source.startsWith('data:')) {
-      const parsed = parseDataUrl(source);
-      reply.header('Content-Type', parsed.mimeType || attachment.mimeType);
-      reply.header('Cache-Control', 'private, max-age=300');
-      return reply.send(Buffer.from(parsed.base64, 'base64'));
-    }
+      if (source?.startsWith('data:')) {
+        const parsed = parseDataUrl(source);
+        reply.header('Content-Type', parsed.mimeType || attachment.mimeType);
+        reply.header('Cache-Control', 'private, max-age=300');
+        return reply.send(Buffer.from(parsed.base64, 'base64'));
+      }
 
     const decryptedApiKey = decryptSecret(attachment.message.ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
-    const targetUrl = resolveExternalAttachmentUrl(attachment.message.ticket.whatsappInstance.baseUrl, source);
-    const requestedRange = Array.isArray(request.headers.range) ? request.headers.range[0] : request.headers.range;
+      const targetUrl = resolveExternalAttachmentUrl(attachment.message.ticket.whatsappInstance.baseUrl, source ?? null);
+      const requestedRange = Array.isArray(request.headers.range) ? request.headers.range[0] : request.headers.range;
+      let mediaResponse: Response | null = null;
 
-    if (!targetUrl) {
-      return reply.notFound('Conteudo do anexo indisponivel.');
-    }
+      if (targetUrl) {
+        try {
+          mediaResponse = await fetch(targetUrl, {
+            headers: {
+              apikey: decryptedApiKey,
+              ...(requestedRange ? { range: requestedRange } : {}),
+            },
+          });
+        } catch {
+          mediaResponse = null;
+        }
+      }
 
-    const mediaResponse = await fetch(targetUrl, {
-      headers: {
-        apikey: decryptedApiKey,
-        ...(requestedRange ? { range: requestedRange } : {}),
-      },
-    });
+      const contentDisposition = attachment.fileName
+        ? `inline; filename="${encodeURIComponent(attachment.fileName)}"`
+        : undefined;
 
-    if (!mediaResponse.ok) {
-      return reply.code(mediaResponse.status).send({
+      if (mediaResponse?.ok) {
+        const arrayBuffer = await mediaResponse.arrayBuffer();
+        const contentType = mediaResponse.headers.get('content-type') ?? attachment.mimeType;
+        const contentLength = mediaResponse.headers.get('content-length');
+        const acceptRanges = mediaResponse.headers.get('accept-ranges');
+        const contentRange = mediaResponse.headers.get('content-range');
+
+        reply.code(mediaResponse.status);
+        reply.header('Content-Type', contentType);
+        reply.header('Cache-Control', 'private, max-age=300');
+        if (contentLength) {
+          reply.header('Content-Length', contentLength);
+        }
+        if (acceptRanges) {
+          reply.header('Accept-Ranges', acceptRanges);
+        }
+        if (contentRange) {
+          reply.header('Content-Range', contentRange);
+        }
+        if (contentDisposition) {
+          reply.header('Content-Disposition', contentDisposition);
+        }
+
+        return reply.send(Buffer.from(arrayBuffer));
+      }
+
+      const fallbackDataUrl = await fetchEvolutionAttachmentDataUrl({
+        baseUrl: attachment.message.ticket.whatsappInstance.baseUrl,
+        apiKey: decryptedApiKey,
+        instanceName: attachment.message.ticket.whatsappInstance.evolutionInstanceName,
+        remoteJid: attachment.message.ticket.externalChatId,
+        externalMessageId: attachment.message.externalMessageId,
+        mimeType: attachment.mimeType,
+        fromMe: attachment.message.direction === 'outbound',
+      });
+
+      if (fallbackDataUrl) {
+        const parsed = parseDataUrl(fallbackDataUrl);
+        reply.header('Content-Type', parsed.mimeType || attachment.mimeType);
+        reply.header('Cache-Control', 'private, max-age=300');
+        if (contentDisposition) {
+          reply.header('Content-Disposition', contentDisposition);
+        }
+        return reply.send(Buffer.from(parsed.base64, 'base64'));
+      }
+
+      return reply.code(mediaResponse?.status ?? 404).send({
         message: 'Falha ao carregar o anexo externo.',
       });
-    }
-
-    const arrayBuffer = await mediaResponse.arrayBuffer();
-    const contentType = mediaResponse.headers.get('content-type') ?? attachment.mimeType;
-    const contentLength = mediaResponse.headers.get('content-length');
-    const acceptRanges = mediaResponse.headers.get('accept-ranges');
-    const contentRange = mediaResponse.headers.get('content-range');
-    const contentDisposition = attachment.fileName
-      ? `inline; filename="${encodeURIComponent(attachment.fileName)}"`
-      : undefined;
-
-    reply.code(mediaResponse.status);
-    reply.header('Content-Type', contentType);
-    reply.header('Cache-Control', 'private, max-age=300');
-    if (contentLength) {
-      reply.header('Content-Length', contentLength);
-    }
-    if (acceptRanges) {
-      reply.header('Accept-Ranges', acceptRanges);
-    }
-    if (contentRange) {
-      reply.header('Content-Range', contentRange);
-    }
-    if (contentDisposition) {
-      reply.header('Content-Disposition', contentDisposition);
-    }
-
-    return reply.send(Buffer.from(arrayBuffer));
-  });
+    });
 
   app.get('/tickets/:ticketId/messages', async (request, reply) => {
     const access = await requirePermission(app, request, reply, 'tickets.view');

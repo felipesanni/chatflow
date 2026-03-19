@@ -55,3 +55,41 @@
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+.chatflow-audio-player {
+  --rhap-theme-color: #25d366;
+  --rhap-background-color: #ffffff;
+  --rhap-bar-color: #cbd5e1;
+  --rhap-time-color: #64748b;
+  --rhap-font-family: inherit;
+  border: 1px solid #e8dfd3;
+  border-radius: 24px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  padding: 10px 12px;
+}
+
+.chatflow-audio-player .rhap_container {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.chatflow-audio-player .rhap_main-controls-button,
+.chatflow-audio-player .rhap_volume-button {
+  color: #25d366;
+}
+
+.chatflow-audio-player .rhap_progress-filled,
+.chatflow-audio-player .rhap_progress-indicator,
+.chatflow-audio-player .rhap_download-progress,
+.chatflow-audio-player .rhap_volume-filled,
+.chatflow-audio-player .rhap_volume-indicator {
+  background: #25d366;
+}
+
+.chatflow-audio-player .rhap_progress-container,
+.chatflow-audio-player .rhap_volume-bar {
+  cursor: pointer;
+}
+@import "react-h5-audio-player/lib/styles.css";
+@import "react-photo-view/dist/react-photo-view.css";

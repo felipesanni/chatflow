@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import { io, type Socket } from "socket.io-client";
+import AudioPlayer from "react-h5-audio-player";
+import { PhotoProvider, PhotoView } from "react-photo-view";
 import {
   Activity,
   ArrowRightLeft,
@@ -14,7 +16,6 @@ import {
   Eye,
   EyeOff,
   FileAudio,
-  FileImage,
   FileText,
   Info,
   LayoutGrid,
@@ -22,11 +23,9 @@ import {
   Menu,
   MessageSquare,
   Mic,
-  Pause,
   Pencil,
   Phone,
   Paperclip,
-  Play,
   Plus,
   RefreshCw,
   Search,
@@ -401,17 +400,6 @@ function formatHour(value: string) {
   } catch {
     return value;
   }
-}
-
-function formatAudioTime(totalSeconds: number) {
-  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
-    return "0:00";
-  }
-
-  const safeSeconds = Math.floor(totalSeconds);
-  const minutes = Math.floor(safeSeconds / 60);
-  const seconds = safeSeconds % 60;
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function onlyPhoneDigits(value: string) {
@@ -3136,9 +3124,15 @@ export default function HomePage() {
                                     {messageAttachments.map((attachment) => (
                                       <div key={attachment.id} className="overflow-hidden rounded-[20px] border border-slate-200/80 bg-white/70">
                                       {attachment.mimeType.startsWith("image/") ? (
-                                        <a href={resolveAttachmentUrl(selectedTicket.id, attachment)} target="_blank" rel="noreferrer" className="block">
-                                          <img src={resolveAttachmentUrl(selectedTicket.id, attachment)} alt={attachment.fileName ?? "Imagem"} className="max-h-72 w-full object-cover" />
-                                        </a>
+                                        <PhotoProvider maskOpacity={0.72}>
+                                          <PhotoView src={resolveAttachmentUrl(selectedTicket.id, attachment)}>
+                                            <img
+                                              src={resolveAttachmentUrl(selectedTicket.id, attachment)}
+                                              alt={attachment.fileName ?? "Imagem"}
+                                              className="max-h-72 w-full cursor-zoom-in object-cover"
+                                            />
+                                          </PhotoView>
+                                        </PhotoProvider>
                                       ) : attachment.mimeType.startsWith("audio/") ? (
                                         <div className="p-3">
                                           <AudioMessagePlayer
@@ -4384,129 +4378,16 @@ function MiniBadge(props: { text: string; className: string }) {
 function AudioMessagePlayer(props: {
   src: string;
 }) {
-  const audioRef = React.useRef<HTMLAudioElement | null>(null);
-  const [isPlaying, setIsPlaying] = React.useState(false);
-  const [duration, setDuration] = React.useState(0);
-  const [currentTime, setCurrentTime] = React.useState(0);
-
-  const waveform = React.useMemo(
-    () => [4, 7, 10, 8, 5, 6, 9, 12, 14, 11, 8, 6, 5, 7, 9, 13, 16, 12, 8, 6, 5, 7, 10, 12, 9, 7, 5, 6, 8, 11, 9, 6],
-    [],
-  );
-
-  const progress = duration > 0 ? Math.min(currentTime / duration, 1) : 0;
-
-  React.useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    const syncDuration = () => setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
-    const syncTime = () => setCurrentTime(audio.currentTime || 0);
-    const handleEnded = () => {
-      setIsPlaying(false);
-      setCurrentTime(audio.duration || 0);
-    };
-    const handlePause = () => setIsPlaying(false);
-    const handlePlay = () => setIsPlaying(true);
-
-    audio.addEventListener("loadedmetadata", syncDuration);
-    audio.addEventListener("loadeddata", syncDuration);
-    audio.addEventListener("durationchange", syncDuration);
-    audio.addEventListener("canplay", syncDuration);
-    audio.addEventListener("timeupdate", syncTime);
-    audio.addEventListener("ended", handleEnded);
-    audio.addEventListener("pause", handlePause);
-    audio.addEventListener("play", handlePlay);
-
-    if (audio.readyState >= 1) {
-      syncDuration();
-      syncTime();
-    }
-
-    return () => {
-      audio.pause();
-      audio.removeEventListener("loadedmetadata", syncDuration);
-      audio.removeEventListener("loadeddata", syncDuration);
-      audio.removeEventListener("durationchange", syncDuration);
-      audio.removeEventListener("canplay", syncDuration);
-      audio.removeEventListener("timeupdate", syncTime);
-      audio.removeEventListener("ended", handleEnded);
-      audio.removeEventListener("pause", handlePause);
-      audio.removeEventListener("play", handlePlay);
-    };
-  }, []);
-
-  async function togglePlayback() {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    if (audio.paused) {
-      try {
-        await audio.play();
-      } catch {
-        setIsPlaying(false);
-      }
-      return;
-    }
-
-    audio.pause();
-  }
-
-  function handleSeek(event: React.ChangeEvent<HTMLInputElement>) {
-    const audio = audioRef.current;
-    if (!audio || !duration) return;
-
-    const nextTime = Number(event.target.value);
-    audio.currentTime = nextTime;
-    setCurrentTime(nextTime);
-  }
-
   return (
-    <div
-      className="relative overflow-hidden rounded-[24px] border border-[#e8dfd3] bg-white px-3 py-3 shadow-[0_10px_30px_rgba(15,23,42,0.08)]"
-    >
-      <audio ref={audioRef} preload="metadata" src={props.src}>
-        Seu navegador não suporta áudio.
-      </audio>
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          aria-label={isPlaying ? "Pausar áudio" : "Reproduzir áudio"}
-          onClick={() => void togglePlayback()}
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#25d366] text-white shadow-[0_10px_24px_rgba(37,211,102,0.28)] transition hover:scale-[1.02] hover:brightness-105"
-        >
-          {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="ml-0.5 h-4 w-4" />}
-        </button>
-        <div className="min-w-0 flex-1">
-          <div className="relative">
-            <div className="pointer-events-none flex h-8 items-center gap-[3px]">
-              {waveform.map((height, index) => (
-                <span
-                  key={`${props.src}-${index}`}
-                  className={`block w-[3px] rounded-full transition-colors ${
-                    index / (waveform.length - 1) <= progress ? "bg-[#25d366]" : "bg-slate-300"
-                  }`}
-                  style={{ height: `${height + 8}px` }}
-                />
-              ))}
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={duration || 0}
-              step={0.1}
-              value={Math.min(currentTime, duration || 0)}
-              onChange={handleSeek}
-              aria-label="Progresso do áudio"
-              className="absolute inset-0 h-8 w-full cursor-pointer opacity-0"
-            />
-          </div>
-          <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
-            <span>{formatAudioTime(currentTime)}</span>
-            <span>{formatAudioTime(duration)}</span>
-          </div>
-        </div>
-      </div>
+    <div className="chatflow-audio-player overflow-hidden bg-white">
+      <AudioPlayer
+        src={props.src}
+        preload="metadata"
+        showJumpControls={false}
+        customAdditionalControls={[]}
+        customVolumeControls={[]}
+        layout="horizontal"
+      />
     </div>
   );
 }

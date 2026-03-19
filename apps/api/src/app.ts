@@ -4,6 +4,7 @@ import cors from '@fastify/cors';
 import sensible from '@fastify/sensible';
 import { loadEnv } from './config/env.js';
 import { prismaPlugin } from './plugins/prisma.js';
+import { queuesPlugin } from './plugins/queues.js';
 import { realtimePlugin } from './plugins/realtime.js';
 import { evolutionSocketsPlugin } from './plugins/evolution-sockets.js';
 import { ensureBootstrapAdmin } from './lib/bootstrap-admin.js';
@@ -37,6 +38,7 @@ export async function buildApp() {
   });
 
   await app.register(prismaPlugin);
+  await app.register(queuesPlugin);
   await app.register(realtimePlugin, {
     corsOrigin: env.WEB_APP_URL,
   });

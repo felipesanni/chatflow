@@ -141,11 +141,19 @@ export const evolutionSocketsPlugin = fp(async (app: FastifyInstance) => {
               payloadInstance: typeof payload?.instance === 'string' ? payload.instance : null,
             }, 'Evento recebido da Evolution via websocket.');
 
-            await processEvolutionEvent(app, {
-              source: 'evolution_ws',
-              event: eventName,
-              payload,
-            });
+            if (app.jobs.enabled) {
+              await app.jobs.enqueueEvolutionEvent({
+                source: 'evolution_ws',
+                event: eventName,
+                payload,
+              });
+            } else {
+              await processEvolutionEvent(app, {
+                source: 'evolution_ws',
+                event: eventName,
+                payload,
+              });
+            }
           } catch (error) {
             app.log.error({
               action: 'process_evolution_socket_event',

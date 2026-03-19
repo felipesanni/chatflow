@@ -132,9 +132,9 @@ export async function sendEvolutionUpdateMessage(params: UpdateTextParams) {
   const cleanUrl = params.baseUrl.replace(/\/$/, '');
   const destination = normalizeDestination(params.remoteJid);
 
-  async function execute(body: Record<string, unknown>) {
-    const response = await fetch(`${cleanUrl}/chat/updateMessage/${params.instanceName}`, {
-      method: 'PUT',
+  async function execute(path: string, method: 'PUT' | 'POST', body: Record<string, unknown>) {
+    const response = await fetch(`${cleanUrl}${path}/${params.instanceName}`, {
+      method,
       headers: {
         'Content-Type': 'application/json',
         apikey: params.apiKey,
@@ -171,6 +171,28 @@ export async function sendEvolutionUpdateMessage(params: UpdateTextParams) {
       number: destination,
       key: {
         id: params.externalMessageId,
+        remoteJid: params.remoteJid,
+        fromMe: true,
+      },
+      message: {
+        conversation: params.text,
+      },
+    },
+    {
+      number: destination,
+      message: {
+        key: {
+          id: params.externalMessageId,
+          remoteJid: params.remoteJid,
+          fromMe: true,
+        },
+        conversation: params.text,
+      },
+    },
+    {
+      number: destination,
+      key: {
+        id: params.externalMessageId,
       },
       text: params.text,
     },
@@ -179,14 +201,27 @@ export async function sendEvolutionUpdateMessage(params: UpdateTextParams) {
       messageId: params.externalMessageId,
       text: params.text,
     },
+    {
+      number: destination,
+      id: params.externalMessageId,
+      text: params.text,
+    },
+  ];
+  const endpoints = [
+    { path: '/chat/updateMessage', method: 'PUT' as const },
+    { path: '/chat/updateMessage', method: 'POST' as const },
+    { path: '/message/updateMessage', method: 'PUT' as const },
+    { path: '/message/updateMessage', method: 'POST' as const },
   ];
 
   let lastAttempt = null as Awaited<ReturnType<typeof execute>> | null;
 
-  for (const attempt of attempts) {
-    lastAttempt = await execute(attempt);
-    if (lastAttempt.ok) {
-      return lastAttempt;
+  for (const endpoint of endpoints) {
+    for (const attempt of attempts) {
+      lastAttempt = await execute(endpoint.path, endpoint.method, attempt);
+      if (lastAttempt.ok) {
+        return lastAttempt;
+      }
     }
   }
 
@@ -369,9 +404,9 @@ export async function sendEvolutionDeleteMessage(params: DeleteMessageParams) {
   const cleanUrl = params.baseUrl.replace(/\/$/, '');
   const destination = normalizeDestination(params.remoteJid);
 
-  async function execute(body: Record<string, unknown>) {
-    const response = await fetch(`${cleanUrl}/message/deleteMessage/${params.instanceName}`, {
-      method: 'DELETE',
+  async function execute(path: string, method: 'DELETE' | 'POST', body: Record<string, unknown>) {
+    const response = await fetch(`${cleanUrl}${path}/${params.instanceName}`, {
+      method,
       headers: {
         'Content-Type': 'application/json',
         apikey: params.apiKey,
@@ -405,6 +440,16 @@ export async function sendEvolutionDeleteMessage(params: DeleteMessageParams) {
     },
     {
       number: destination,
+      message: {
+        key: {
+          id: params.externalMessageId,
+          remoteJid: params.remoteJid,
+          fromMe: true,
+        },
+      },
+    },
+    {
+      number: destination,
       id: params.externalMessageId,
       remoteJid: params.remoteJid,
     },
@@ -412,14 +457,28 @@ export async function sendEvolutionDeleteMessage(params: DeleteMessageParams) {
       number: destination,
       messageId: params.externalMessageId,
     },
+    {
+      number: destination,
+      key: {
+        id: params.externalMessageId,
+      },
+    },
+  ];
+  const endpoints = [
+    { path: '/message/deleteMessage', method: 'DELETE' as const },
+    { path: '/message/deleteMessage', method: 'POST' as const },
+    { path: '/chat/deleteMessage', method: 'DELETE' as const },
+    { path: '/chat/deleteMessage', method: 'POST' as const },
   ];
 
   let lastAttempt = null as Awaited<ReturnType<typeof execute>> | null;
 
-  for (const attempt of attempts) {
-    lastAttempt = await execute(attempt);
-    if (lastAttempt.ok) {
-      return lastAttempt;
+  for (const endpoint of endpoints) {
+    for (const attempt of attempts) {
+      lastAttempt = await execute(endpoint.path, endpoint.method, attempt);
+      if (lastAttempt.ok) {
+        return lastAttempt;
+      }
     }
   }
 
