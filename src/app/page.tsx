@@ -787,6 +787,12 @@ export default function HomePage() {
     currentUser.permissions["tickets.close"] &&
     isSelectedTicketOwnedByCurrentUser,
   );
+  const canReopenSelectedTicket = Boolean(
+    selectedTicket &&
+    selectedTicket.status === "closed" &&
+    currentUser.permissions["tickets.close"] &&
+    isSelectedTicketOwnedByCurrentUser,
+  );
   const canSendToSelectedTicket = Boolean(
     selectedTicket &&
     selectedTicket.status !== "closed" &&
@@ -1270,7 +1276,7 @@ export default function HomePage() {
     if (canViewChannels) {
       void refreshInstances();
     }
-    if (canViewTeam) {
+    if (canViewTeam || canTransferTickets) {
       void refreshAgents();
       void refreshQueues();
     }
@@ -1280,7 +1286,7 @@ export default function HomePage() {
     if (canViewQuickReplies) {
       void refreshQuickReplies();
     }
-  }, [canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshCustomers, refreshInstances, refreshQueues, refreshQuickReplies, refreshTickets, user]);
+  }, [canTransferTickets, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshCustomers, refreshInstances, refreshQueues, refreshQuickReplies, refreshTickets, user]);
 
   React.useEffect(() => {
     if (!selectedTicketId || !user) {
@@ -1899,6 +1905,19 @@ export default function HomePage() {
       await refreshTickets();
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao encerrar ticket.");
+    }
+  }
+
+  async function handleReopenTicket() {
+    if (!selectedTicketId) return;
+
+    try {
+      await apiFetch(`/tickets/${selectedTicketId}/reopen`, { method: "POST" });
+      await refreshTickets();
+      await refreshMessages(selectedTicketId);
+      setPanelMessage("Ticket reaberto com sucesso.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao reabrir ticket.");
     }
   }
 
@@ -3470,10 +3489,17 @@ export default function HomePage() {
                       Transferir
                     </button>
                   ) : null}
-                  <button type="button" aria-label="Fechar atendimento selecionado" title="Fechar atendimento" onClick={() => void handleCloseTicket()} disabled={!canCloseSelectedTicket} className="inline-flex h-10 items-center gap-2 rounded-full border border-red-200 bg-white px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
-                    <X className="h-3.5 w-3.5" />
-                    {selectedTicket.status === "closed" ? "Fechado" : "Fechar"}
-                  </button>
+                  {selectedTicket.status === "closed" ? (
+                    <button type="button" aria-label="Reabrir atendimento selecionado" title="Reabrir atendimento" onClick={() => void handleReopenTicket()} disabled={!canReopenSelectedTicket} className="inline-flex h-10 items-center gap-2 rounded-full border border-emerald-200 bg-white px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-emerald-600 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Reabrir
+                    </button>
+                  ) : (
+                    <button type="button" aria-label="Fechar atendimento selecionado" title="Fechar atendimento" onClick={() => void handleCloseTicket()} disabled={!canCloseSelectedTicket} className="inline-flex h-10 items-center gap-2 rounded-full border border-red-200 bg-white px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
+                      <X className="h-3.5 w-3.5" />
+                      Fechar
+                    </button>
+                  )}
                   <button type="button" aria-label={showTicketDetails ? "Ocultar detalhes do atendimento" : "Mostrar detalhes do atendimento"} title={showTicketDetails ? "Ocultar detalhes" : "Mostrar detalhes"} onClick={() => setShowTicketDetails((current) => !current)} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700">
                     <Info className="h-4 w-4" />
                   </button>

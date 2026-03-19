@@ -500,6 +500,51 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
+  app.post('/tickets/:ticketId/reopen', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.close');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const currentTicket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      select: { id: true, currentAgentId: true, status: true },
+    });
+
+    if (!currentTicket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canManageTicket(session.userId, currentTicket)) {
+      return reply.forbidden('Apenas o agente responsavel pode reabrir este ticket.');
+    }
+
+    const ticket = await app.prisma.ticket.update({
+      where: { id: params.ticketId },
+      data: {
+        status: 'open',
+        closedReason: null,
+        closedAt: null,
+      },
+    });
+
+    await app.prisma.ticketEvent.create({
+      data: {
+        id: randomUUID(),
+        ticketId: ticket.id,
+        eventType: 'reopened',
+        actorUserId: session.userId,
+        metadata: null,
+      },
+    });
+
+    app.io.emit('ticket.updated', { ticketId: ticket.id });
+
+    return {
+      item: ticket,
+    };
+  });
+
   app.post('/tickets/:ticketId/transfer', async (request, reply) => {
     const access = await requirePermission(app, request, reply, 'tickets.transfer');
     if (!access) return;
