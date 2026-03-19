@@ -1,7 +1,7 @@
 import fp from 'fastify-plugin';
 import type { FastifyInstance } from 'fastify';
 import { Queue, Worker } from 'bullmq';
-import IORedis from 'ioredis';
+import { Redis } from 'ioredis';
 import { loadEnv } from '../config/env.js';
 import { processEvolutionEvent } from '../lib/evolution-events.js';
 import { EVOLUTION_EVENT_QUEUE, type EvolutionEventJobPayload } from '../lib/queue-jobs.js';
@@ -29,11 +29,11 @@ export const queuesPlugin = fp(async (app: FastifyInstance) => {
     return;
   }
 
-  const queueConnection = new IORedis(env.REDIS_URL, {
+  const queueConnection = new Redis(env.REDIS_URL, {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
   });
-  const workerConnection = new IORedis(env.REDIS_URL, {
+  const workerConnection = new Redis(env.REDIS_URL, {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
   });
@@ -91,4 +91,3 @@ export const queuesPlugin = fp(async (app: FastifyInstance) => {
     await workerConnection.quit();
   });
 });
-

@@ -483,15 +483,17 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         return reply.send(Buffer.from(arrayBuffer));
       }
 
-      const fallbackDataUrl = await fetchEvolutionAttachmentDataUrl({
-        baseUrl: attachment.message.ticket.whatsappInstance.baseUrl,
-        apiKey: decryptedApiKey,
-        instanceName: attachment.message.ticket.whatsappInstance.evolutionInstanceName,
-        remoteJid: attachment.message.ticket.externalChatId,
-        externalMessageId: attachment.message.externalMessageId,
-        mimeType: attachment.mimeType,
-        fromMe: attachment.message.direction === 'outbound',
-      });
+      const fallbackDataUrl = attachment.message.externalMessageId
+        ? await fetchEvolutionAttachmentDataUrl({
+            baseUrl: attachment.message.ticket.whatsappInstance.baseUrl,
+            apiKey: decryptedApiKey,
+            instanceName: attachment.message.ticket.whatsappInstance.evolutionInstanceName,
+            remoteJid: attachment.message.ticket.externalChatId,
+            externalMessageId: attachment.message.externalMessageId,
+            mimeType: attachment.mimeType,
+            fromMe: attachment.message.direction === 'outbound',
+          })
+        : null;
 
       if (fallbackDataUrl) {
         const parsed = parseDataUrl(fallbackDataUrl);
