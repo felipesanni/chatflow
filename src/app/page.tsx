@@ -18,12 +18,10 @@ import {
   FileText,
   Info,
   LayoutGrid,
-  LayoutList,
   LogIn,
   Menu,
   MessageSquare,
   Mic,
-  Monitor,
   Pause,
   Pencil,
   Phone,
@@ -463,7 +461,6 @@ export default function HomePage() {
   const [adminSection, setAdminSection] = React.useState<"instances" | "agents" | "queues">("instances");
   const [showRail, setShowRail] = React.useState(false);
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
-  const [ticketDensity, setTicketDensity] = React.useState<"comfortable" | "compact">("comfortable");
   const [showOnlyUnread, setShowOnlyUnread] = React.useState(false);
   const [showOnlyMine, setShowOnlyMine] = React.useState(false);
   const [selectedQueueFilter, setSelectedQueueFilter] = React.useState<string>("all");
@@ -571,6 +568,13 @@ export default function HomePage() {
     currentUser.permissions["tickets.reply"] &&
     isSelectedTicketOwnedByCurrentUser,
   );
+  const isSelectedTicketClosed = Boolean(selectedTicket?.status === "closed");
+  const shouldDisableComposer = Boolean(!selectedTicket || !canSendToSelectedTicket);
+  const composerPlaceholder = !selectedTicket
+    ? "Selecione um ticket para conversar"
+    : isSelectedTicketClosed
+      ? "Ticket fechado para envio"
+      : "Aceite o atendimento para responder";
   const canTransferSelectedTicket = Boolean(
     selectedTicket &&
     selectedTicket.status !== "closed" &&
@@ -578,6 +582,7 @@ export default function HomePage() {
     currentUser.permissions["tickets.accept"] &&
     isSelectedTicketOwnedByCurrentUser,
   );
+  const ticketDensity: "compact" = "compact";
 
   const quickReplyCommand = React.useMemo(() => {
     const match = messageInput.match(/(?:^|\s)\/([a-z0-9_-]*)$/i);
@@ -2818,7 +2823,7 @@ export default function HomePage() {
                 <div className="flex items-end gap-3">
                   <div className="flex items-center gap-2 pb-0.5">
                     <div className="relative">
-                      <button type="button" aria-label="Biblioteca de emoji" title="Emoji" onClick={() => setShowEmojiPicker((current) => !current)} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                      <button type="button" aria-label="Biblioteca de emoji" title="Emoji" onClick={() => setShowEmojiPicker((current) => !current)} disabled={shouldDisableComposer || sendLoading} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                         <Smile className="h-4 w-4" />
                       </button>
                       {showEmojiPicker && canSendToSelectedTicket ? (
@@ -2839,7 +2844,7 @@ export default function HomePage() {
                         </div>
                       ) : null}
                     </div>
-                    <button type="button" aria-label="Anexar arquivo" title="Anexar arquivo" onClick={() => attachmentUploadRef.current?.click()} disabled={!canSendToSelectedTicket || sendLoading} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    <button type="button" aria-label="Anexar arquivo" title="Anexar arquivo" onClick={() => attachmentUploadRef.current?.click()} disabled={shouldDisableComposer || sendLoading} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                       <Paperclip className="h-4 w-4" />
                     </button>
                     <button
@@ -2847,7 +2852,7 @@ export default function HomePage() {
                       aria-label={recordingAudio ? "Parar gravação" : "Gravar áudio"}
                       title={recordingAudio ? "Parar gravação" : "Gravar áudio"}
                       onClick={() => void handleToggleAudioRecording()}
-                      disabled={!canSendToSelectedTicket || sendLoading}
+                      disabled={shouldDisableComposer || sendLoading}
                       className={`grid h-10 w-10 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${
                         recordingAudio
                           ? "border-red-200 bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600"
@@ -2863,8 +2868,8 @@ export default function HomePage() {
                       onChange={(event) => setMessageInput(event.target.value)}
                       onKeyDown={handleComposerKeyDown}
                       rows={1}
-                      placeholder={canSendToSelectedTicket ? "Digite uma mensagem ou use /atalho" : "Ticket fechado para envio"}
-                      disabled={!canSendToSelectedTicket}
+                      placeholder={canSendToSelectedTicket ? "Digite uma mensagem ou use /atalho" : composerPlaceholder}
+                      disabled={shouldDisableComposer}
                       className="min-h-[44px] max-h-28 w-full resize-none rounded-[24px] border border-slate-200 bg-[#f8fafc] px-5 py-2.5 text-sm leading-5 text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                     />
                     {quickReplyMatches.length > 0 && canSendToSelectedTicket ? (
@@ -2901,7 +2906,7 @@ export default function HomePage() {
                   <button
                     type="submit"
                     aria-label="Enviar mensagem"
-                    disabled={sendLoading || (!messageInput.trim() && !composerAttachment) || !canSendToSelectedTicket}
+                    disabled={sendLoading || (!messageInput.trim() && !composerAttachment) || shouldDisableComposer}
                     className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#1A1C32] px-5 text-sm font-bold uppercase tracking-[0.12em] text-white transition hover:bg-[#252844] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
                   >
                     <Send className="h-4 w-4" />
@@ -3580,7 +3585,7 @@ export default function HomePage() {
             </div>
           </aside>
 
-          <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[340px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
+          <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[400px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
             {ticketWorkspaceAtivo ? (
               <div className="flex h-full min-w-0 flex-col border-r border-slate-200 bg-white">
                 <div className="space-y-3 border-b border-slate-200 p-3">
@@ -3599,17 +3604,15 @@ export default function HomePage() {
                     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1 rounded-[16px] border border-slate-200 bg-slate-50 p-1">
                       <SidebarIconButton icon={Eye} label="Limpar filtros e voltar à caixa de entrada" active={!showOnlyUnread && !showOnlyMine && selectedQueueFilter === "all"} onClick={() => { setShowOnlyUnread(false); setShowOnlyMine(false); setSelectedQueueFilter("all"); setSearchQuery(""); setActiveWorkspace("tickets"); }} />
                       {canStartConversation ? <SidebarIconButton icon={Plus} label="Iniciar nova conversa" active={false} onClick={openCreateConversationModal} /> : null}
-                      <SidebarIconButton icon={LayoutList} label="Usar lista compacta" active={ticketDensity === "compact"} onClick={() => setTicketDensity("compact")} />
-                      <SidebarIconButton icon={Monitor} label="Usar lista confortável" active={ticketDensity === "comfortable"} onClick={() => setTicketDensity("comfortable")} />
                       <SidebarIconButton icon={CheckSquare} label="Mostrar apenas meus atendimentos" active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
                       <SidebarIconButton icon={EyeOff} label="Mostrar apenas não lidos" active={showOnlyUnread} onClick={() => setShowOnlyUnread((current) => !current)} />
                     </div>
-                    <label className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-[16px] border border-slate-300 bg-white px-3 py-2 text-[11px] text-slate-500 transition hover:bg-slate-50">
+                    <div className="relative min-w-0 max-w-full">
                       <select
                         aria-label="Filtrar atendimentos por fila"
                         value={selectedQueueFilter}
                         onChange={(event) => setSelectedQueueFilter(event.target.value)}
-                        className="max-w-[110px] truncate bg-transparent pr-4 text-[11px] text-slate-600 outline-none"
+                        className="h-10 max-w-full appearance-none rounded-[16px] border border-slate-300 bg-white pl-3 pr-9 text-[11px] text-slate-600 outline-none transition hover:bg-slate-50"
                       >
                         <option value="all">Todas as filas</option>
                         <option value="without-queue">Sem fila</option>
@@ -3619,8 +3622,8 @@ export default function HomePage() {
                           </option>
                         ))}
                       </select>
-                      <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
-                    </label>
+                      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                    </div>
                   </div>
                 </div>
 

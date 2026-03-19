@@ -213,7 +213,10 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
       where: {
         whatsappInstanceId: instance.id,
         externalChatId: parsed.remoteJid,
-        status: { in: ['open', 'pending'] },
+        ...(parsed.fromMe ? {} : { status: { in: ['open', 'pending'] } }),
+      },
+      orderBy: {
+        updatedAt: 'desc',
       },
     });
 
@@ -225,7 +228,9 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           whatsappInstanceId: instance.id,
           externalChatId: parsed.remoteJid,
           externalContactId: parsed.phone,
-          customerNameSnapshot: parsed.isGroup ? (parsed.pushName ?? 'Grupo WhatsApp') : (customer?.name ?? parsed.pushName ?? parsed.phone ?? 'Contato sem nome'),
+          customerNameSnapshot: parsed.isGroup
+            ? (parsed.groupName ?? 'Grupo WhatsApp')
+            : (customer?.name ?? parsed.pushName ?? parsed.phone ?? 'Contato sem nome'),
           customerAvatarUrl,
           status: parsed.fromMe ? 'open' : 'pending',
           unreadCount: parsed.fromMe ? 0 : 1,
@@ -247,11 +252,17 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         where: { id: ticket.id },
         data: {
           customerId: customer?.id ?? ticket.customerId,
-          customerNameSnapshot: customer?.name ?? parsed.pushName ?? ticket.customerNameSnapshot,
+          customerNameSnapshot: parsed.isGroup
+            ? (parsed.groupName ?? ticket.customerNameSnapshot)
+            : (customer?.name ?? parsed.pushName ?? ticket.customerNameSnapshot),
           customerAvatarUrl: customerAvatarUrl ?? ticket.customerAvatarUrl,
           lastMessagePreview: parsed.body,
           unreadCount: parsed.fromMe ? 0 : { increment: 1 },
-          status: parsed.fromMe ? ticket.status : ticket.currentAgentId ? ticket.status : 'pending',
+          status: parsed.fromMe
+            ? (ticket.status === 'closed' ? 'open' : ticket.status)
+            : ticket.currentAgentId ? ticket.status : 'pending',
+          closedAt: parsed.fromMe && ticket.status === 'closed' ? null : ticket.closedAt,
+          closedReason: parsed.fromMe && ticket.status === 'closed' ? null : ticket.closedReason,
           updatedAt: new Date(),
         },
       });

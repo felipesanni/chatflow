@@ -7,6 +7,8 @@ interface EvolutionMessage {
     fromMe?: boolean;
   };
   pushName?: string;
+  participant?: string;
+  verifiedBizName?: string;
   message?: Record<string, unknown>;
 }
 
@@ -63,6 +65,55 @@ function normalizeMimeType(value: unknown, fallback: string) {
 
 function normalizeFileName(value: unknown) {
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function pickObject(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function pickFirstNonEmptyString(values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+function extractGroupName(payload: Record<string, unknown>, message: EvolutionMessage | null, remoteJid: string | null) {
+  if (!remoteJid?.includes('@g.us')) {
+    return null;
+  }
+
+  const data = pickObject(payload.data);
+  const messageContent = pickObject(message?.message);
+  const contextInfo = pickObject(messageContent?.messageContextInfo);
+  const extendedText = pickObject(messageContent?.extendedTextMessage);
+  const extendedContext = pickObject(extendedText?.contextInfo);
+  const groupMetadata = pickObject(data?.groupMetadata);
+  const groupInfo = pickObject(data?.groupInfo);
+  const key = pickObject(message?.key);
+
+  return pickFirstNonEmptyString([
+    data?.subject,
+    data?.groupSubject,
+    data?.groupName,
+    groupMetadata?.subject,
+    groupMetadata?.name,
+    groupInfo?.subject,
+    groupInfo?.name,
+    messageContent?.groupName,
+    messageContent?.groupSubject,
+    contextInfo?.groupSubject,
+    extendedContext?.groupSubject,
+    key?.subject,
+    payload.subject,
+    payload.groupSubject,
+    payload.groupName,
+  ]);
 }
 
 function normalizeSizeBytes(value: unknown) {
@@ -214,6 +265,7 @@ export function parseEvolutionPayload(
   const phone = normalizePhone(remoteJid ?? undefined);
   const parsedContent = extractText(message);
   const payloadInstance = typeof payload.instance === 'string' ? payload.instance : null;
+  const groupName = extractGroupName(payload, message, remoteJid);
 
   return {
     event: normalizeEvolutionEventName(options.event ?? payload.event),
@@ -223,6 +275,7 @@ export function parseEvolutionPayload(
     fromMe,
     phone,
     pushName: message?.pushName ?? null,
+    groupName,
     body: parsedContent.body,
     contentType: parsedContent.contentType,
     attachments: parsedContent.attachments,
