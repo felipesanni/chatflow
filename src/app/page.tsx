@@ -450,6 +450,38 @@ function stripAgentSignature(body: string | null | undefined, agentName: string 
   return withoutPrefix.replace(/^\n\s*\n?/, "");
 }
 
+function parseMessageSignature(body: string | null | undefined) {
+  const rawBody = body ?? "";
+  const signatureMatch = rawBody.match(/^\*([^*\n]+)\*(?:\n\s*\n?|\s+)?([\s\S]*)$/);
+
+  if (!signatureMatch) {
+    return {
+      signature: null as string | null,
+      body: rawBody,
+    };
+  }
+
+  return {
+    signature: signatureMatch[1].trim() || null,
+    body: signatureMatch[2].replace(/^\s+/, ""),
+  };
+}
+
+function formatMessagePreview(body: string | null | undefined) {
+  const parsed = parseMessageSignature(body);
+  const normalizedBody = parsed.body.replace(/\s+/g, " ").trim();
+
+  if (parsed.signature && normalizedBody) {
+    return `${parsed.signature} ${normalizedBody}`;
+  }
+
+  if (parsed.signature) {
+    return parsed.signature;
+  }
+
+  return (body ?? "").replace(/\s+/g, " ").trim();
+}
+
 function summarizeQuotedMessage(message: Pick<ReplyMessageItem, "body" | "contentType" | "attachments" | "senderName"> | null | undefined) {
   if (!message) {
     return "";
@@ -3195,6 +3227,9 @@ export default function HomePage() {
                         const canDeleteMessage = outgoing && !isDeletedMessage;
                         const canDeleteMessageForMe = !system;
                         const canReplyToMessage = !system && !isEditingMessage && !isDeletedMessage;
+                        const parsedSignedBody = outgoing ? parseMessageSignature(message.body) : null;
+                        const displayedMessageSignature = parsedSignedBody?.signature ?? null;
+                        const displayedMessageBody = parsedSignedBody ? parsedSignedBody.body : (message.body ?? "");
                         const groupedReactions = (message.reactions ?? []).reduce<Record<string, number>>((acc, reaction) => {
                           acc[reaction.emoji] = (acc[reaction.emoji] ?? 0) + 1;
                           return acc;
@@ -3273,8 +3308,17 @@ export default function HomePage() {
                                 </div>
                               ) : null}
                                 {message.body && !shouldHideMessageBody ? (
-                                  <div className={`whitespace-pre-wrap break-words text-[15px] leading-6 [overflow-wrap:anywhere] ${isDeletedMessage ? "text-slate-400 line-through decoration-2" : ""}`}>
-                                    {message.body}
+                                  <div className={isDeletedMessage ? "text-slate-400 line-through decoration-2" : ""}>
+                                    {displayedMessageSignature ? (
+                                      <div className="mb-1 font-semibold text-slate-900">
+                                        {displayedMessageSignature}
+                                      </div>
+                                    ) : null}
+                                    {displayedMessageBody ? (
+                                      <div className="whitespace-pre-wrap break-words text-[15px] leading-6 [overflow-wrap:anywhere]">
+                                        {displayedMessageBody}
+                                      </div>
+                                    ) : null}
                                   </div>
                                 ) : null}
                                 {!message.body && messageAttachments.length === 0 ? (
@@ -4371,7 +4415,7 @@ export default function HomePage() {
                                   {selected ? <span className="rounded-full bg-[#1A1C32] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-white">Ativo</span> : null}
                                 </div>
                                 <p className={`mt-0.5 truncate font-medium leading-5 text-slate-600 ${compact ? "text-[12px]" : "text-[13px]"}`}>
-                                  {ticket.lastMessagePreview ?? "Sem mensagem registrada"}
+                                  {ticket.lastMessagePreview ? formatMessagePreview(ticket.lastMessagePreview) : "Sem mensagem registrada"}
                                 </p>
                                 <p className="mt-1 truncate text-[11px] text-slate-400">
                                   {formatContactIdentity(ticket.externalContactId ?? ticket.externalChatId)}

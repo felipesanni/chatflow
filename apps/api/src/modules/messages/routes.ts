@@ -523,6 +523,34 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       }
 
     const decryptedApiKey = decryptSecret(attachment.message.ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
+      const contentDisposition = attachment.fileName
+        ? `inline; filename="${encodeURIComponent(attachment.fileName)}"`
+        : undefined;
+
+      let fallbackDataUrl: string | null = null;
+
+      if (attachment.message.externalMessageId) {
+        fallbackDataUrl = await fetchEvolutionAttachmentDataUrl({
+          baseUrl: attachment.message.ticket.whatsappInstance.baseUrl,
+          apiKey: decryptedApiKey,
+          instanceName: attachment.message.ticket.whatsappInstance.evolutionInstanceName,
+          remoteJid: attachment.message.ticket.externalChatId,
+          externalMessageId: attachment.message.externalMessageId,
+          mimeType: attachment.mimeType,
+          fromMe: attachment.message.direction === 'outbound',
+        });
+      }
+
+      if (fallbackDataUrl) {
+        const parsed = parseDataUrl(fallbackDataUrl);
+        reply.header('Content-Type', parsed.mimeType || attachment.mimeType);
+        reply.header('Cache-Control', 'private, max-age=300');
+        if (contentDisposition) {
+          reply.header('Content-Disposition', contentDisposition);
+        }
+        return reply.send(Buffer.from(parsed.base64, 'base64'));
+      }
+
       const targetUrl = resolveExternalAttachmentUrl(attachment.message.ticket.whatsappInstance.baseUrl, source ?? null);
       const requestedRange = Array.isArray(request.headers.range) ? request.headers.range[0] : request.headers.range;
       let mediaResponse: Response | null = null;
@@ -539,12 +567,6 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
           mediaResponse = null;
         }
       }
-
-      const contentDisposition = attachment.fileName
-        ? `inline; filename="${encodeURIComponent(attachment.fileName)}"`
-        : undefined;
-
-      let fallbackDataUrl: string | null = null;
 
       if (mediaResponse?.ok) {
         const responseContentType = mediaResponse.headers.get('content-type');
@@ -577,18 +599,6 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
 
           return reply.send(Buffer.from(arrayBuffer));
         }
-      }
-
-      if (!fallbackDataUrl && attachment.message.externalMessageId) {
-        fallbackDataUrl = await fetchEvolutionAttachmentDataUrl({
-          baseUrl: attachment.message.ticket.whatsappInstance.baseUrl,
-          apiKey: decryptedApiKey,
-          instanceName: attachment.message.ticket.whatsappInstance.evolutionInstanceName,
-          remoteJid: attachment.message.ticket.externalChatId,
-          externalMessageId: attachment.message.externalMessageId,
-          mimeType: attachment.mimeType,
-          fromMe: attachment.message.direction === 'outbound',
-        });
       }
 
       if (fallbackDataUrl) {
