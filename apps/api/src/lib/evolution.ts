@@ -524,7 +524,22 @@ function extractText(message: EvolutionMessage | null, content: Record<string, a
       ],
     };
   }
-  if (inner.stickerMessage) return { body: 'Sticker recebido', contentType: 'sticker', attachments: [] };
+  if (inner.stickerMessage) {
+    return {
+      body: 'Sticker recebido',
+      contentType: 'sticker',
+      attachments: [
+        buildExternalAttachment({
+          url: inner.stickerMessage.url ?? inner.stickerMessage.directPath,
+          fileName: 'sticker.webp',
+          mimeType: inner.stickerMessage.mimetype,
+          sizeBytes: inner.stickerMessage.fileLength ?? inner.stickerMessage.fileLengthLow,
+          fallbackMimeType: 'image/webp',
+          fallbackStorageKey: `sticker:${message?.key?.id ?? randomUUID()}`,
+        }),
+      ],
+    };
+  }
 
   return { body: 'Midia recebida', contentType: 'other', attachments: [] };
 }

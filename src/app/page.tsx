@@ -126,6 +126,11 @@ type AttachmentItem = {
   createdAt?: string;
 };
 
+type MessageMenuPosition = {
+  top: number;
+  left: number;
+};
+
 type ComposerAttachment = {
   kind: "image" | "audio" | "document";
   fileName: string;
@@ -639,6 +644,7 @@ export default function HomePage() {
   const [showEmojiPicker, setShowEmojiPicker] = React.useState(false);
   const [recordingAudio, setRecordingAudio] = React.useState(false);
   const [openMessageMenuId, setOpenMessageMenuId] = React.useState<string | null>(null);
+  const [messageMenuPosition, setMessageMenuPosition] = React.useState<MessageMenuPosition | null>(null);
   const [publicUrls, setPublicUrls] = React.useState(resolvePublicUrls);
   const [profileSaving, setProfileSaving] = React.useState(false);
   const [transferLoading, setTransferLoading] = React.useState(false);
@@ -1075,10 +1081,17 @@ export default function HomePage() {
       }
 
       setOpenMessageMenuId(null);
+      setMessageMenuPosition(null);
     };
 
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [openMessageMenuId]);
+
+  React.useEffect(() => {
+    if (!openMessageMenuId) {
+      setMessageMenuPosition(null);
+    }
   }, [openMessageMenuId]);
 
   React.useEffect(() => {
@@ -1553,6 +1566,35 @@ export default function HomePage() {
   function cancelReplyToMessage() {
     setReplyToMessageId(null);
     setPanelMessage("Resposta cancelada.");
+  }
+
+  function openMessageMenuForButton(params: {
+    event: React.MouseEvent<HTMLButtonElement>;
+    messageId: string;
+    outgoing: boolean;
+    estimatedHeight: number;
+  }) {
+    params.event.stopPropagation();
+
+    if (openMessageMenuId === params.messageId) {
+      setOpenMessageMenuId(null);
+      setMessageMenuPosition(null);
+      return;
+    }
+
+    const rect = params.event.currentTarget.getBoundingClientRect();
+    const viewportPadding = 16;
+    const menuWidth = 224;
+    const fitsBelow = rect.bottom + 8 + params.estimatedHeight + viewportPadding <= window.innerHeight;
+    const top = fitsBelow
+      ? rect.bottom + 8
+      : Math.max(viewportPadding, rect.top - params.estimatedHeight - 8);
+    const left = params.outgoing
+      ? Math.max(viewportPadding, rect.right - menuWidth)
+      : Math.min(window.innerWidth - menuWidth - viewportPadding, rect.left);
+
+    setMessageMenuPosition({ top, left });
+    setOpenMessageMenuId(params.messageId);
   }
 
   async function handleToggleAudioRecording() {
@@ -3155,11 +3197,9 @@ export default function HomePage() {
                       <h3 className="text-[16px] font-semibold leading-tight tracking-[-0.02em] text-[#1A1C32]">{selectedTicket.customerName}</h3>
                     </button>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12px] text-slate-500">
-                      <span>{selectedTicket.whatsappInstance.name}</span>
+                      <span>{formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)}</span>
                       <span className="text-slate-300">•</span>
                       <span>{selectedTicket.currentAgent?.name ?? (selectedTicket.isGroup ? "Conversa de grupo" : "Aguardando atendente")}</span>
-                      <span className="text-slate-300">•</span>
-                      <span>{formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)}</span>
                     </div>
                   </div>
                 </div>
@@ -3227,6 +3267,15 @@ export default function HomePage() {
                         const canDeleteMessage = outgoing && !isDeletedMessage;
                         const canDeleteMessageForMe = !system;
                         const canReplyToMessage = !system && !isEditingMessage && !isDeletedMessage;
+                        const messageMenuActionCount =
+                          (canReplyToMessage ? 1 : 0)
+                          + (canEditMessage ? 1 : 0)
+                          + (canDeleteMessage ? 1 : 0)
+                          + (canDeleteMessageForMe ? 1 : 0);
+                        const messageMenuEstimatedHeight =
+                          16
+                          + (canReplyToMessage ? 48 : 0)
+                          + (messageMenuActionCount * 44);
                         const parsedSignedBody = outgoing ? parseMessageSignature(message.body) : null;
                         const displayedMessageSignature = parsedSignedBody?.signature ?? null;
                         const displayedMessageBody = parsedSignedBody ? parsedSignedBody.body : (message.body ?? "");
@@ -3235,11 +3284,25 @@ export default function HomePage() {
                           return acc;
                         }, {});
                         const messageAttachments = message.attachments ?? [];
+                        const hasImageAttachment = messageAttachments.some((attachment) => attachment.mimeType.startsWith("image/"));
+                        const hasAudioAttachment = messageAttachments.some((attachment) => attachment.mimeType.startsWith("audio/"));
+                        const hasVideoAttachment = messageAttachments.some((attachment) => attachment.mimeType.startsWith("video/"));
+                        const hasStickerAttachment = message.contentType === "sticker" || messageAttachments.some((attachment) => attachment.mimeType === "image/webp");
+                        const hasDocumentAttachment = messageAttachments.some((attachment) => !attachment.mimeType.startsWith("image/") && !attachment.mimeType.startsWith("audio/") && !attachment.mimeType.startsWith("video/"));
+                        const matchesAttachmentFileName = messageAttachments.some((attachment) => {
+                          const attachmentFileName = (attachment.fileName ?? "").trim().toLowerCase();
+                          return Boolean(attachmentFileName) && normalizedBody.toLowerCase() === attachmentFileName;
+                        });
                         const shouldHideMessageBody =
                           messageAttachments.length > 0 &&
                           (
                             !normalizedBody
-                          || /^(imagem|audio|documento|video) recebido$/i.test(normalizedBody)
+                          || ((hasImageAttachment || hasStickerAttachment) && /^imagem recebida$/i.test(normalizedBody))
+                          || (hasAudioAttachment && /^audio recebido$/i.test(normalizedBody))
+                          || (hasVideoAttachment && /^video recebido$/i.test(normalizedBody))
+                          || (hasDocumentAttachment && /^documento recebido$/i.test(normalizedBody))
+                          || (hasStickerAttachment && /^sticker recebido$/i.test(normalizedBody))
+                          || matchesAttachmentFileName
                           || /^\[(image|audio|document|video)\]\s/i.test(normalizedBody)
                         );
                         const shouldRenderAttachments = messageAttachments.length > 0;
@@ -3326,8 +3389,15 @@ export default function HomePage() {
                                     {`[${message.contentType}]`}
                                   </div>
                                 ) : null}
-                                {message.editedAt && !shouldHideMessageBody && !isDeletedMessage ? <div className="mt-2 text-[11px] font-medium italic text-slate-400">Editada</div> : null}
-                                {isDeletedMessage ? <div className="mt-2 text-[11px] font-medium italic text-slate-400">Mensagem apagada para todos</div> : null}
+                                <div className="mt-2 flex items-center justify-end gap-2 text-[11px] text-slate-400">
+                                  {message.editedAt && !shouldHideMessageBody && !isDeletedMessage ? (
+                                    <span className="font-medium italic">Editada</span>
+                                  ) : null}
+                                  {isDeletedMessage ? (
+                                    <span className="font-medium italic">Mensagem apagada</span>
+                                  ) : null}
+                                  <span>{formatDateTime(message.createdAt)}</span>
+                                </div>
                               </article>
                               {Object.keys(groupedReactions).length > 0 && !isDeletedMessage ? (
                                 <div className="mt-2 flex flex-wrap gap-2">
@@ -3347,7 +3417,6 @@ export default function HomePage() {
                               </div>
                                 {canEditMessage || canDeleteMessage || canDeleteMessageForMe || canReplyToMessage ? (
                                   <div
-                                    ref={openMessageMenuId === message.id ? messageMenuRef : null}
                                     onPointerDown={(event) => event.stopPropagation()}
                                     className="relative mt-1"
                                   >
@@ -3355,21 +3424,29 @@ export default function HomePage() {
                                       type="button"
                                       aria-label="Abrir ações da mensagem"
                                       title="Mais opções"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        setOpenMessageMenuId((current) => current === message.id ? null : message.id);
-                                      }}
+                                      onClick={(event) => openMessageMenuForButton({
+                                        event,
+                                        messageId: message.id,
+                                        outgoing,
+                                        estimatedHeight: messageMenuEstimatedHeight,
+                                      })}
                                       onPointerDown={(event) => event.stopPropagation()}
                                       className={`grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-slate-700 ${openMessageMenuId === message.id ? "opacity-100" : "opacity-70 group-hover:opacity-100"}`}
                                     >
                                       <ChevronDown className="h-3.5 w-3.5" />
                                     </button>
   
-                                    {openMessageMenuId === message.id ? (
+                                    {openMessageMenuId === message.id && messageMenuPosition ? (
                                       <div
+                                        ref={messageMenuRef}
                                         onPointerDown={(event) => event.stopPropagation()}
                                         onClick={(event) => event.stopPropagation()}
-                                        className={`absolute z-20 mt-2 w-56 rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_18px_48px_rgba(15,23,42,0.16)] ${outgoing ? "right-0" : "left-0"}`}
+                                        style={{
+                                          position: "fixed",
+                                          top: messageMenuPosition.top,
+                                          left: messageMenuPosition.left,
+                                        }}
+                                        className="z-[120] w-56 rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_18px_48px_rgba(15,23,42,0.16)]"
                                       >
                                       {canReplyToMessage ? (
                                         <div className="mb-2 flex flex-wrap gap-1 rounded-2xl bg-slate-50 p-1">
@@ -4602,7 +4679,7 @@ function AudioMessagePlayer(props: {
   src: string;
 }) {
   return (
-    <div className="chatflow-audio-player overflow-hidden bg-white">
+    <div className="chatflow-audio-player w-full min-w-[320px] md:min-w-[520px] overflow-hidden bg-white">
       <AudioPlayer
         src={props.src}
         preload="metadata"
