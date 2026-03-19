@@ -636,6 +636,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       remoteJid: ticket.externalChatId,
       externalMessageId: message.externalMessageId,
       emoji: body.emoji,
+      fromMe: message.direction === 'outbound',
     });
 
     if (!delivery.ok) {

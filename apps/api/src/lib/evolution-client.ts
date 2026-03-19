@@ -47,6 +47,7 @@ interface SendReactionParams {
   remoteJid: string;
   externalMessageId: string;
   emoji: string;
+  fromMe?: boolean;
 }
 
 interface DeleteMessageParams {
@@ -270,6 +271,7 @@ export async function sendEvolutionAudio(params: SendAudioParams) {
 export async function sendEvolutionReaction(params: SendReactionParams) {
   const cleanUrl = params.baseUrl.replace(/\/$/, '');
   const destination = normalizeDestination(params.remoteJid);
+  const targetFromMe = params.fromMe === true;
 
   async function execute(body: Record<string, unknown>) {
     const response = await fetch(`${cleanUrl}/message/sendReaction/${params.instanceName}`, {
@@ -303,7 +305,7 @@ export async function sendEvolutionReaction(params: SendReactionParams) {
         key: {
           id: params.externalMessageId,
           remoteJid: params.remoteJid,
-          fromMe: false,
+          fromMe: targetFromMe,
         },
         text: params.emoji,
       },
@@ -314,14 +316,34 @@ export async function sendEvolutionReaction(params: SendReactionParams) {
         key: {
           id: params.externalMessageId,
           remoteJid: params.remoteJid,
-          fromMe: false,
+          fromMe: targetFromMe,
         },
         text: params.emoji,
       },
     },
     {
       number: destination,
+      key: {
+        id: params.externalMessageId,
+        remoteJid: params.remoteJid,
+        fromMe: targetFromMe,
+      },
+      reaction: params.emoji,
+    },
+    {
+      number: destination,
       messageId: params.externalMessageId,
+      reaction: params.emoji,
+    },
+    {
+      number: destination,
+      message: {
+        key: {
+          id: params.externalMessageId,
+          remoteJid: params.remoteJid,
+          fromMe: targetFromMe,
+        },
+      },
       reaction: params.emoji,
     },
   ];

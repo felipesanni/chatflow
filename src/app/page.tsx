@@ -559,6 +559,7 @@ export default function HomePage() {
   const [composerAttachment, setComposerAttachment] = React.useState<ComposerAttachment | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = React.useState(false);
   const [recordingAudio, setRecordingAudio] = React.useState(false);
+  const [openMessageMenuId, setOpenMessageMenuId] = React.useState<string | null>(null);
   const [publicUrls, setPublicUrls] = React.useState(resolvePublicUrls);
   const [profileSaving, setProfileSaving] = React.useState(false);
   const [transferLoading, setTransferLoading] = React.useState(false);
@@ -963,6 +964,15 @@ export default function HomePage() {
       setReplyToMessageId(null);
     }
   }, [canSendToSelectedTicket, replyToMessageId]);
+
+  React.useEffect(() => {
+    const handlePointerDown = () => {
+      setOpenMessageMenuId(null);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, []);
 
   React.useEffect(() => {
     setShowTransferPanel(false);
@@ -3172,69 +3182,102 @@ export default function HomePage() {
                               ) : null}
                               </div>
                               {canEditMessage || canDeleteMessage || canDeleteMessageForMe || canReplyToMessage ? (
-                              <div className="mt-1 flex flex-col gap-2 opacity-0 transition group-hover:opacity-100">
-                                {canEditMessage ? (
+                                <div className="relative mt-1">
                                   <button
                                     type="button"
-                                    aria-label="Editar mensagem"
-                                    title="Editar mensagem"
-                                    onClick={() => handleStartEditingMessage(message)}
-                                    className="grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-slate-700"
+                                    aria-label="Abrir ações da mensagem"
+                                    title="Mais opções"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setOpenMessageMenuId((current) => current === message.id ? null : message.id);
+                                    }}
+                                    className={`grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-slate-700 ${openMessageMenuId === message.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
                                   >
-                                    <Pencil className="h-3.5 w-3.5" />
+                                    <ChevronDown className="h-3.5 w-3.5" />
                                   </button>
-                                ) : null}
-                                {canDeleteMessage ? (
-                                  <button
-                                    type="button"
-                                    aria-label="Apagar para todos"
-                                    title="Apagar para todos"
-                                    onClick={() => void handleDeleteMessage(message.id)}
-                                    className="grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-red-600"
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </button>
-                                ) : null}
-                                {canDeleteMessageForMe ? (
-                                  <button
-                                    type="button"
-                                    aria-label="Apagar para mim"
-                                    title="Apagar para mim"
-                                    onClick={() => void handleDeleteMessageForMe(message.id)}
-                                    className="grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-slate-700"
-                                  >
-                                    <EyeOff className="h-3.5 w-3.5" />
-                                  </button>
-                                ) : null}
-                                {canReplyToMessage ? (
-                                <button
-                                  type="button"
-                                  aria-label="Responder mensagem"
-                                  title="Responder mensagem"
-                                  onClick={() => handleStartReplyingToMessage(message)}
-                                  className="grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-slate-700"
-                                >
-                                  <MessageSquare className="h-3.5 w-3.5" />
-                                </button>
-                                ) : null}
-                                {canReplyToMessage ? (
-                                <div className={`flex ${outgoing ? "justify-end" : "justify-start"}`}>
-                                  <div className={`flex flex-wrap gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm`}>
-                                    {MESSAGE_REACTION_LIBRARY.map((emoji) => (
-                                      <button
-                                        key={emoji}
-                                        type="button"
-                                        onClick={() => void handleReactToMessage(message.id, emoji)}
-                                        className="grid h-8 w-8 place-items-center rounded-xl text-base transition hover:bg-slate-100"
-                                      >
-                                        {emoji}
-                                      </button>
-                                    ))}
-                                  </div>
+
+                                  {openMessageMenuId === message.id ? (
+                                    <div
+                                      onClick={(event) => event.stopPropagation()}
+                                      className={`absolute z-20 mt-2 w-56 rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_18px_48px_rgba(15,23,42,0.16)] ${outgoing ? "right-0" : "left-0"}`}
+                                    >
+                                      {canReplyToMessage ? (
+                                        <div className="mb-2 flex flex-wrap gap-1 rounded-2xl bg-slate-50 p-1">
+                                          {MESSAGE_REACTION_LIBRARY.map((emoji) => (
+                                            <button
+                                              key={emoji}
+                                              type="button"
+                                              onClick={() => {
+                                                void handleReactToMessage(message.id, emoji);
+                                                setOpenMessageMenuId(null);
+                                              }}
+                                              className="grid h-8 w-8 place-items-center rounded-xl text-base transition hover:bg-white"
+                                            >
+                                              {emoji}
+                                            </button>
+                                          ))}
+                                        </div>
+                                      ) : null}
+
+                                      {canReplyToMessage ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            handleStartReplyingToMessage(message);
+                                            setOpenMessageMenuId(null);
+                                          }}
+                                          className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
+                                        >
+                                          <MessageSquare className="h-4 w-4 text-slate-400" />
+                                          Responder
+                                        </button>
+                                      ) : null}
+
+                                      {canEditMessage ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            handleStartEditingMessage(message);
+                                            setOpenMessageMenuId(null);
+                                          }}
+                                          className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
+                                        >
+                                          <Pencil className="h-4 w-4 text-slate-400" />
+                                          Editar
+                                        </button>
+                                      ) : null}
+
+                                      {canDeleteMessage ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            void handleDeleteMessage(message.id);
+                                            setOpenMessageMenuId(null);
+                                          }}
+                                          className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-red-600 transition hover:bg-red-50"
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                          Apagar para todos
+                                        </button>
+                                      ) : null}
+
+                                      {canDeleteMessageForMe ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            void handleDeleteMessageForMe(message.id);
+                                            setOpenMessageMenuId(null);
+                                          }}
+                                          className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
+                                        >
+                                          <EyeOff className="h-4 w-4 text-slate-400" />
+                                          Apagar para mim
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
                                 </div>
-                                ) : null}
-                              </div>
-                            ) : null}
+                              ) : null}
                           </div>
                         </div>
                       );
