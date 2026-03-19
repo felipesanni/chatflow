@@ -991,10 +991,10 @@ export default function HomePage() {
       return;
     }
 
-    if (!selectedTicketId || !tickets.some((ticket) => ticket.id === selectedTicketId)) {
-      setSelectedTicketId(visibleTickets[0]?.id ?? tickets[0]?.id ?? null);
+    if (selectedTicketId && !tickets.some((ticket) => ticket.id === selectedTicketId)) {
+      setSelectedTicketId(null);
     }
-  }, [selectedTicketId, tickets, visibleTickets]);
+  }, [selectedTicketId, tickets]);
 
   React.useEffect(() => {
     if (activeWorkspace !== "tickets" && activeWorkspace !== "closedTickets" && showTicketDetails) {
@@ -1181,7 +1181,7 @@ export default function HomePage() {
         if (current && payload.items.some((ticket) => ticket.id === current)) {
           return current;
         }
-        return payload.items[0]?.id ?? null;
+        return null;
       });
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar tickets.");
@@ -3516,10 +3516,9 @@ export default function HomePage() {
                       title="Apagar ticket"
                       onClick={() => void handleDeleteSelectedTicket()}
                       disabled={bulkDeleteLoading}
-                      className="inline-flex h-10 items-center gap-2 rounded-full border border-rose-200 bg-white px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+                      className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-white disabled:text-slate-300"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
-                      {bulkDeleteLoading ? "Apagando..." : "Apagar ticket"}
                     </button>
                   ) : null}
                   {canBulkDeleteMessages ? (
@@ -3534,7 +3533,7 @@ export default function HomePage() {
                           startMessageBulkSelectionMode();
                         }
                       }}
-                      className={`inline-flex h-10 items-center gap-2 rounded-full border px-4 text-[11px] font-bold uppercase tracking-[0.12em] transition ${
+                      className={`inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] transition ${
                         messageBulkSelectionMode
                           ? "border-rose-200 bg-rose-50 text-rose-700"
                           : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
@@ -3544,7 +3543,7 @@ export default function HomePage() {
                       {messageBulkSelectionMode ? "Cancelar seleção" : "Apagar mensagens"}
                     </button>
                   ) : null}
-                  <button type="button" aria-label="Assumir atendimento selecionado" title="Assumir atendimento" onClick={() => void handleAcceptTicket()} disabled={!canAcceptSelectedTicket} className="inline-flex h-10 items-center gap-2 rounded-full bg-[#e7eff8] px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-[#385a7a] transition hover:bg-[#dbe7f3] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
+                  <button type="button" aria-label="Assumir atendimento selecionado" title="Assumir atendimento" onClick={() => void handleAcceptTicket()} disabled={!canAcceptSelectedTicket} className="inline-flex h-9 items-center gap-2 rounded-full bg-[#e7eff8] px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#385a7a] transition hover:bg-[#dbe7f3] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
                     <CheckSquare className="h-4 w-4" />
                     {selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Atendimento fechado" : "Aceitar atendimento"}
                   </button>
@@ -3554,24 +3553,24 @@ export default function HomePage() {
                       aria-label={showTransferPanel ? "Fechar popup de transferência" : "Transferir atendimento"}
                       title="Transferir atendimento"
                       onClick={() => setShowTransferPanel(true)}
-                      className={`inline-flex h-10 items-center gap-2 rounded-full border px-4 text-[11px] font-bold uppercase tracking-[0.12em] transition ${showTransferPanel ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+                      className={`inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] transition ${showTransferPanel ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
                     >
                       <ArrowRightLeft className="h-3.5 w-3.5" />
                       Transferir
                     </button>
                   ) : null}
                   {selectedTicket.status === "closed" ? (
-                    <button type="button" aria-label="Reabrir atendimento selecionado" title="Reabrir atendimento" onClick={() => void handleReopenTicket()} disabled={!canReopenSelectedTicket} className="inline-flex h-10 items-center gap-2 rounded-full border border-emerald-200 bg-white px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-emerald-600 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
+                    <button type="button" aria-label="Reabrir atendimento selecionado" title="Reabrir atendimento" onClick={() => void handleReopenTicket()} disabled={!canReopenSelectedTicket} className="inline-flex h-9 items-center gap-2 rounded-full border border-emerald-200 bg-white px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-600 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
                       <RefreshCw className="h-3.5 w-3.5" />
                       Reabrir
                     </button>
                   ) : (
-                    <button type="button" aria-label="Fechar atendimento selecionado" title="Fechar atendimento" onClick={() => void handleCloseTicket()} disabled={!canCloseSelectedTicket} className="inline-flex h-10 items-center gap-2 rounded-full border border-red-200 bg-white px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
+                    <button type="button" aria-label="Fechar atendimento selecionado" title="Fechar atendimento" onClick={() => void handleCloseTicket()} disabled={!canCloseSelectedTicket} className="inline-flex h-9 items-center gap-2 rounded-full border border-red-200 bg-white px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
                       <X className="h-3.5 w-3.5" />
                       Fechar
                     </button>
                   )}
-                  <button type="button" aria-label={showTicketDetails ? "Ocultar detalhes do atendimento" : "Mostrar detalhes do atendimento"} title={showTicketDetails ? "Ocultar detalhes" : "Mostrar detalhes"} onClick={() => setShowTicketDetails((current) => !current)} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700">
+                  <button type="button" aria-label={showTicketDetails ? "Ocultar detalhes do atendimento" : "Mostrar detalhes do atendimento"} title={showTicketDetails ? "Ocultar detalhes" : "Mostrar detalhes"} onClick={() => setShowTicketDetails((current) => !current)} className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700">
                     <Info className="h-4 w-4" />
                   </button>
                 </div>
@@ -3972,7 +3971,7 @@ export default function HomePage() {
                 <div className="flex items-end gap-3">
                   <div className="flex items-center gap-2 pb-0.5">
                     <div className="relative">
-                      <button type="button" aria-label="Biblioteca de emoji" title="Emoji" onClick={() => setShowEmojiPicker((current) => !current)} disabled={shouldDisableComposer || sendLoading} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                      <button type="button" aria-label="Biblioteca de emoji" title="Emoji" onClick={() => setShowEmojiPicker((current) => !current)} disabled={shouldDisableComposer || sendLoading} className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                         <Smile className="h-4 w-4" />
                       </button>
                       {showEmojiPicker && canSendToSelectedTicket ? (
@@ -3984,7 +3983,7 @@ export default function HomePage() {
                                 key={emoji}
                                 type="button"
                                 onClick={() => insertEmoji(emoji)}
-                                className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-50 text-xl transition hover:bg-slate-100"
+                                className="grid h-9 w-9 place-items-center rounded-2xl bg-slate-50 text-xl transition hover:bg-slate-100"
                               >
                                 {emoji}
                               </button>
@@ -3993,7 +3992,7 @@ export default function HomePage() {
                         </div>
                       ) : null}
                     </div>
-                    <button type="button" aria-label="Anexar arquivo" title="Anexar arquivo" onClick={() => attachmentUploadRef.current?.click()} disabled={shouldDisableComposer || sendLoading || isEditingMessage} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    <button type="button" aria-label="Anexar arquivo" title="Anexar arquivo" onClick={() => attachmentUploadRef.current?.click()} disabled={shouldDisableComposer || sendLoading || isEditingMessage} className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                       <Paperclip className="h-4 w-4" />
                     </button>
                     <button
@@ -4002,7 +4001,7 @@ export default function HomePage() {
                       title={recordingAudio ? "Parar gravação" : "Gravar áudio"}
                       onClick={() => void handleToggleAudioRecording()}
                       disabled={shouldDisableComposer || sendLoading || isEditingMessage}
-                      className={`grid h-10 w-10 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      className={`grid h-9 w-9 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${
                         recordingAudio
                           ? "border-red-200 bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600"
                           : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700"
@@ -4051,7 +4050,7 @@ export default function HomePage() {
                     type="submit"
                     aria-label="Enviar mensagem"
                     disabled={sendLoading || (!messageInput.trim() && !composerAttachment) || shouldDisableComposer}
-                    className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#1A1C32] px-5 text-sm font-bold uppercase tracking-[0.12em] text-white transition hover:bg-[#252844] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-[#1A1C32] px-4 text-[13px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-[#252844] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
                   >
                     <Send className="h-4 w-4" />
                     {sendLoading ? (isEditingMessage ? "Salvando" : "Enviando") : (isEditingMessage ? "Salvar" : "Enviar")}
@@ -4852,7 +4851,7 @@ export default function HomePage() {
                           <button
                             type="button"
                             onClick={openCreateConversationModal}
-                            className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#1A1C32] bg-white px-3 text-[11px] font-bold uppercase tracking-[0.08em] text-[#1A1C32] transition hover:bg-slate-50"
+                            className="inline-flex h-8 items-center gap-2 rounded-xl border border-[#1A1C32] bg-white px-3 text-[10px] font-bold uppercase tracking-[0.08em] text-[#1A1C32] transition hover:bg-slate-50"
                           >
                             <Plus className="h-3.5 w-3.5" />
                             Novo Ticket
@@ -4883,7 +4882,7 @@ export default function HomePage() {
                         aria-label="Filtrar atendimentos por fila"
                         value={selectedQueueFilter}
                         onChange={(event) => setSelectedQueueFilter(event.target.value)}
-                        className="h-10 max-w-full appearance-none rounded-[16px] border border-slate-300 bg-white pl-3 pr-9 text-[11px] text-slate-600 outline-none transition hover:bg-slate-50"
+                        className="h-9 max-w-full appearance-none rounded-[16px] border border-slate-300 bg-white pl-3 pr-9 text-[11px] text-slate-600 outline-none transition hover:bg-slate-50"
                       >
                         <option value="all">Todas as filas</option>
                         <option value="without-queue">Sem fila</option>
@@ -5150,9 +5149,9 @@ function SidebarIconButton(props: { icon: React.ComponentType<{ className?: stri
       aria-label={props.label}
       title={props.label}
       aria-pressed={props.active ? "true" : "false"}
-      className={`grid h-9 w-9 place-items-center rounded-xl border transition ${props.active ? "border-[#1A1C32] bg-white text-[#1A1C32]" : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700"}`}
+      className={`grid h-8 w-8 place-items-center rounded-xl border transition ${props.active ? "border-[#1A1C32] bg-white text-[#1A1C32]" : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700"}`}
     >
-      <Icon className="h-3.5 w-3.5" />
+      <Icon className="h-3 w-3" />
     </button>
   );
 }
