@@ -10,6 +10,9 @@ interface EvolutionMessage {
   participant?: string;
   verifiedBizName?: string;
   message?: Record<string, unknown>;
+  update?: {
+    message?: Record<string, unknown>;
+  };
 }
 
 interface ParsedEvolutionContent {
@@ -25,9 +28,25 @@ interface ParsedEvolutionContent {
   }>;
 }
 
+interface ParsedReactionPayload {
+  emoji: string;
+  targetExternalMessageId: string;
+}
+
+interface ParsedDeletionPayload {
+  targetExternalMessageId: string;
+}
+
+interface ResolvedEvolutionContent {
+  content: Record<string, any> | null;
+  isEdited: boolean;
+  targetKey: Record<string, unknown> | null;
+}
+
 const EVENT_ALIASES: Record<string, string> = {
   'messages.upsert': 'MESSAGES_UPSERT',
   'messages.update': 'MESSAGES_UPDATE',
+  'messages.edited': 'MESSAGES_EDITED',
   'qrcode.updated': 'QRCODE_UPDATED',
   'connection.update': 'CONNECTION_UPDATE',
 };
@@ -45,6 +64,29 @@ function pickMessage(payload: Record<string, unknown>): EvolutionMessage | null 
 
   if (data && typeof data === 'object') {
     return data as EvolutionMessage;
+  }
+
+  return null;
+}
+
+function unwrapMessageContainer(value: unknown): Record<string, any> | null {
+  let current = pickObject(value) as Record<string, any> | null;
+
+  while (current) {
+    const next = pickObject(
+      current.ephemeralMessage?.message
+      ?? current.viewOnceMessage?.message
+      ?? current.viewOnceMessageV2?.message
+      ?? current.viewOnceMessageV2Extension?.message
+      ?? current.documentWithCaptionMessage?.message
+      ?? current.message,
+    ) as Record<string, any> | null;
+
+    if (!next) {
+      return current;
+    }
+
+    current = next;
   }
 
   return null;
@@ -83,6 +125,126 @@ function pickFirstNonEmptyString(values: unknown[]) {
   return null;
 }
 
+function collectGroupNameCandidates(value: unknown, remoteJid: string, depth = 0, seen = new WeakSet<object>()): string[] {
+  if (depth > 8) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectGroupNameCandidates(item, remoteJid, depth + 1, seen));
+  }
+
+  const record = pickObject(value);
+  if (!record) {
+    return [];
+  }
+
+  if (seen.has(record)) {
+    return [];
+  }
+
+  seen.add(record);
+
+  const maybeGroupId = pickFirstNonEmptyString([
+    record.id,
+    record.jid,
+    record.remoteJid,
+    record.groupId,
+    record.chatId,
+  ]);
+  const looksLikeGroupMetadata =
+    maybeGroupId === remoteJid
+    || record.groupMetadata !== undefined
+    || record.groupInfo !== undefined
+    || Array.isArray(record.participants)
+    || typeof record.descOwner === 'string'
+    || typeof record.owner === 'string';
+
+  const localCandidates = looksLikeGroupMetadata
+    ? [
+        record.subject,
+        record.groupSubject,
+        record.groupName,
+        record.formattedTitle,
+        record.title,
+        record.notify,
+        record.name,
+      ].filter((candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0)
+    : [];
+
+  const nestedCandidates = Object.values(record).flatMap((child) => collectGroupNameCandidates(child, remoteJid, depth + 1, seen));
+
+  return [...localCandidates, ...nestedCandidates];
+}
+
+function findEditedProtocolMessage(value: unknown, depth = 0): { editedMessage: Record<string, any>; targetKey: Record<string, unknown> | null } | null {
+  if (depth > 8) {
+    return null;
+  }
+
+  const record = pickObject(value);
+  if (!record) {
+    return null;
+  }
+
+  const protocolMessage = pickObject(record.protocolMessage);
+  const editedMessage = unwrapMessageContainer(protocolMessage?.editedMessage);
+
+  if (editedMessage) {
+    return {
+      editedMessage,
+      targetKey: pickObject(protocolMessage?.key),
+    };
+  }
+
+  const nestedCandidates = [
+    record.message,
+    record.editedMessage,
+    record.ephemeralMessage,
+    record.viewOnceMessage,
+    record.viewOnceMessageV2,
+    record.viewOnceMessageV2Extension,
+    record.documentWithCaptionMessage,
+  ];
+
+  for (const child of nestedCandidates) {
+    const nested = findEditedProtocolMessage(child, depth + 1);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function resolveMessageContent(message: EvolutionMessage | null): ResolvedEvolutionContent {
+  const content = pickObject(message?.message) ?? pickObject(message?.update?.message);
+
+  if (!content) {
+    return {
+      content: null,
+      isEdited: false,
+      targetKey: null,
+    };
+  }
+
+  const editedProtocolMessage = findEditedProtocolMessage(content);
+
+  if (editedProtocolMessage) {
+    return {
+      content: editedProtocolMessage.editedMessage,
+      isEdited: true,
+      targetKey: editedProtocolMessage.targetKey,
+    };
+  }
+
+  return {
+    content: unwrapMessageContainer(content),
+    isEdited: false,
+    targetKey: null,
+  };
+}
+
 function extractGroupName(payload: Record<string, unknown>, message: EvolutionMessage | null, remoteJid: string | null) {
   if (!remoteJid?.includes('@g.us')) {
     return null;
@@ -96,6 +258,7 @@ function extractGroupName(payload: Record<string, unknown>, message: EvolutionMe
   const groupMetadata = pickObject(data?.groupMetadata);
   const groupInfo = pickObject(data?.groupInfo);
   const key = pickObject(message?.key);
+  const recursiveCandidates = collectGroupNameCandidates(payload, remoteJid);
 
   return pickFirstNonEmptyString([
     data?.subject,
@@ -113,6 +276,7 @@ function extractGroupName(payload: Record<string, unknown>, message: EvolutionMe
     payload.subject,
     payload.groupSubject,
     payload.groupName,
+    ...recursiveCandidates,
   ]);
 }
 
@@ -149,19 +313,76 @@ function buildExternalAttachment(params: {
   };
 }
 
-function extractText(message: EvolutionMessage | null): ParsedEvolutionContent {
-  const content = message?.message as Record<string, any> | undefined;
+function extractReactionPayload(message: EvolutionMessage | null, content: Record<string, any> | null): ParsedReactionPayload | null {
+  const reactionMessage = pickObject(content?.reactionMessage);
 
+  if (!reactionMessage) {
+    return null;
+  }
+
+  const targetKey = pickObject(reactionMessage.key);
+  const targetExternalMessageId = typeof targetKey?.id === 'string' ? targetKey.id.trim() : '';
+  const emoji = typeof reactionMessage.text === 'string' ? reactionMessage.text.trim() : '';
+
+  if (!targetExternalMessageId || !emoji) {
+    return null;
+  }
+
+  return {
+    emoji,
+    targetExternalMessageId,
+  };
+}
+
+function findDeletedProtocolMessage(value: unknown, depth = 0): ParsedDeletionPayload | null {
+  if (depth > 8) {
+    return null;
+  }
+
+  const record = pickObject(value);
+  if (!record) {
+    return null;
+  }
+
+  const protocolMessage = pickObject(record.protocolMessage);
+  const targetKey = pickObject(protocolMessage?.key);
+  const protocolType = protocolMessage?.type;
+
+  if (
+    typeof targetKey?.id === 'string'
+    && targetKey.id.trim().length > 0
+    && (protocolType === 0 || protocolType === 'REVOKE' || protocolType === 'revoke')
+  ) {
+    return {
+      targetExternalMessageId: targetKey.id.trim(),
+    };
+  }
+
+  const nestedCandidates = [
+    record.message,
+    record.editedMessage,
+    record.ephemeralMessage,
+    record.viewOnceMessage,
+    record.viewOnceMessageV2,
+    record.viewOnceMessageV2Extension,
+    record.documentWithCaptionMessage,
+  ];
+
+  for (const child of nestedCandidates) {
+    const nested = findDeletedProtocolMessage(child, depth + 1);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function extractText(message: EvolutionMessage | null, content: Record<string, any> | null): ParsedEvolutionContent {
   if (!content) {
     return { body: 'Mensagem vazia', contentType: 'other', attachments: [] };
   }
-
-  const inner = content.ephemeralMessage?.message
-    || content.viewOnceMessage?.message
-    || content.viewOnceMessageV2?.message
-    || content.viewOnceMessageV2Extension?.message
-    || content.documentWithCaptionMessage?.message
-    || content;
+  const inner = content;
 
   if (inner.conversation) return { body: inner.conversation as string, contentType: 'text', attachments: [] };
   if (inner.extendedTextMessage?.text) return { body: inner.extendedTextMessage.text as string, contentType: 'text', attachments: [] };
@@ -259,16 +480,32 @@ export function parseEvolutionPayload(
   options: ParseEvolutionPayloadOptions = {},
 ) {
   const message = pickMessage(payload);
-  const remoteJid = message?.key?.remoteJid ?? null;
-  const externalMessageId = message?.key?.id ?? randomUUID();
-  const fromMe = message?.key?.fromMe === true;
+  const normalizedEvent = normalizeEvolutionEventName(options.event ?? payload.event);
+  const resolvedContent = resolveMessageContent(message);
+  const effectiveKey = resolvedContent.targetKey ?? pickObject(message?.key);
+  const remoteJid = typeof effectiveKey?.remoteJid === 'string'
+    ? effectiveKey.remoteJid
+    : message?.key?.remoteJid ?? null;
+  const externalMessageId = typeof effectiveKey?.id === 'string'
+    ? effectiveKey.id
+    : message?.key?.id ?? randomUUID();
+  const fromMe = typeof effectiveKey?.fromMe === 'boolean'
+    ? effectiveKey.fromMe
+    : message?.key?.fromMe === true;
   const phone = normalizePhone(remoteJid ?? undefined);
-  const parsedContent = extractText(message);
+  const parsedContent = extractText(message, resolvedContent.content);
+  const reaction = extractReactionPayload(message, resolvedContent.content);
+  const deletion = findDeletedProtocolMessage(
+    pickObject(message?.message)
+    ?? pickObject(message?.update?.message)
+    ?? pickObject(payload.data),
+  );
   const payloadInstance = typeof payload.instance === 'string' ? payload.instance : null;
   const groupName = extractGroupName(payload, message, remoteJid);
+  const isEdited = resolvedContent.isEdited || normalizedEvent === 'MESSAGES_EDITED';
 
   return {
-    event: normalizeEvolutionEventName(options.event ?? payload.event),
+    event: normalizedEvent,
     instanceName: options.instanceName ?? payloadInstance,
     remoteJid,
     externalMessageId,
@@ -279,8 +516,12 @@ export function parseEvolutionPayload(
     body: parsedContent.body,
     contentType: parsedContent.contentType,
     attachments: parsedContent.attachments,
+    reaction,
+    deletion,
     rawPayload: payload,
     isGroup: Boolean(remoteJid?.includes('@g.us')),
+    isEdited,
+    editedAt: isEdited ? new Date() : null,
   };
 }
 

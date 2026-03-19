@@ -14,7 +14,7 @@ async function proxy(request: NextRequest, params: { path: string[] }) {
     redirect: 'manual',
   });
 
-  const body = await response.text();
+  const body = request.method === 'HEAD' ? null : await response.arrayBuffer();
   const nextResponse = new NextResponse(body, {
     status: response.status,
   });
@@ -34,6 +34,10 @@ async function proxy(request: NextRequest, params: { path: string[] }) {
 }
 
 export async function GET(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
+  return proxy(request, await context.params);
+}
+
+export async function HEAD(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   return proxy(request, await context.params);
 }
 

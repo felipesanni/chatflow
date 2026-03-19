@@ -9,6 +9,15 @@ interface SendTextParams {
   quotedMessageId?: string;
 }
 
+interface UpdateTextParams {
+  baseUrl: string;
+  apiKey: string;
+  instanceName: string;
+  remoteJid: string;
+  externalMessageId: string;
+  text: string;
+}
+
 interface SendMediaParams {
   baseUrl: string;
   apiKey: string;
@@ -31,6 +40,23 @@ interface SendAudioParams {
   quotedMessageId?: string;
 }
 
+interface SendReactionParams {
+  baseUrl: string;
+  apiKey: string;
+  instanceName: string;
+  remoteJid: string;
+  externalMessageId: string;
+  emoji: string;
+}
+
+interface DeleteMessageParams {
+  baseUrl: string;
+  apiKey: string;
+  instanceName: string;
+  remoteJid: string;
+  externalMessageId: string;
+}
+
 interface ConfigureWebhookParams {
   baseUrl: string;
   apiKey: string;
@@ -45,8 +71,10 @@ interface FetchProfilePictureParams {
   remoteJid: string;
 }
 
-const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'];
-const WEBSOCKET_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'];
+const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_EDITED', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'];
+const WEBSOCKET_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_EDITED', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'];
+const LEGACY_WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'];
+const LEGACY_WEBSOCKET_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'];
 
 function normalizeDestination(remoteJid: string) {
   if (remoteJid.includes('@g.us')) {
@@ -96,6 +124,76 @@ export async function sendEvolutionText(params: SendTextParams) {
     status: response.status,
     payload,
     messageId: payload?.key?.id ?? payload?.message?.key?.id ?? randomUUID(),
+  };
+}
+
+export async function sendEvolutionUpdateMessage(params: UpdateTextParams) {
+  const cleanUrl = params.baseUrl.replace(/\/$/, '');
+  const destination = normalizeDestination(params.remoteJid);
+
+  async function execute(body: Record<string, unknown>) {
+    const response = await fetch(`${cleanUrl}/chat/updateMessage/${params.instanceName}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: params.apiKey,
+      },
+      body: JSON.stringify(body),
+    });
+
+    let payload: any = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      payload,
+      messageId: params.externalMessageId,
+    };
+  }
+
+  const attempts = [
+    {
+      number: destination,
+      key: {
+        id: params.externalMessageId,
+        remoteJid: params.remoteJid,
+        fromMe: true,
+      },
+      text: params.text,
+    },
+    {
+      number: destination,
+      key: {
+        id: params.externalMessageId,
+      },
+      text: params.text,
+    },
+    {
+      number: destination,
+      messageId: params.externalMessageId,
+      text: params.text,
+    },
+  ];
+
+  let lastAttempt = null as Awaited<ReturnType<typeof execute>> | null;
+
+  for (const attempt of attempts) {
+    lastAttempt = await execute(attempt);
+    if (lastAttempt.ok) {
+      return lastAttempt;
+    }
+  }
+
+  return lastAttempt ?? {
+    ok: false,
+    status: 500,
+    payload: null,
+    messageId: params.externalMessageId,
   };
 }
 
@@ -169,6 +267,148 @@ export async function sendEvolutionAudio(params: SendAudioParams) {
   };
 }
 
+export async function sendEvolutionReaction(params: SendReactionParams) {
+  const cleanUrl = params.baseUrl.replace(/\/$/, '');
+  const destination = normalizeDestination(params.remoteJid);
+
+  async function execute(body: Record<string, unknown>) {
+    const response = await fetch(`${cleanUrl}/message/sendReaction/${params.instanceName}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: params.apiKey,
+      },
+      body: JSON.stringify(body),
+    });
+
+    let payload: any = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      payload,
+      messageId: payload?.key?.id ?? payload?.message?.key?.id ?? randomUUID(),
+    };
+  }
+
+  const attempts = [
+    {
+      number: destination,
+      reactionMessage: {
+        key: {
+          id: params.externalMessageId,
+          remoteJid: params.remoteJid,
+          fromMe: false,
+        },
+        text: params.emoji,
+      },
+    },
+    {
+      number: destination,
+      reaction: {
+        key: {
+          id: params.externalMessageId,
+          remoteJid: params.remoteJid,
+          fromMe: false,
+        },
+        text: params.emoji,
+      },
+    },
+    {
+      number: destination,
+      messageId: params.externalMessageId,
+      reaction: params.emoji,
+    },
+  ];
+
+  let lastAttempt = null as Awaited<ReturnType<typeof execute>> | null;
+
+  for (const attempt of attempts) {
+    lastAttempt = await execute(attempt);
+    if (lastAttempt.ok) {
+      return lastAttempt;
+    }
+  }
+
+  return lastAttempt ?? {
+    ok: false,
+    status: 500,
+    payload: null,
+    messageId: randomUUID(),
+  };
+}
+
+export async function sendEvolutionDeleteMessage(params: DeleteMessageParams) {
+  const cleanUrl = params.baseUrl.replace(/\/$/, '');
+  const destination = normalizeDestination(params.remoteJid);
+
+  async function execute(body: Record<string, unknown>) {
+    const response = await fetch(`${cleanUrl}/message/deleteMessage/${params.instanceName}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: params.apiKey,
+      },
+      body: JSON.stringify(body),
+    });
+
+    let payload: any = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      payload,
+      messageId: params.externalMessageId,
+    };
+  }
+
+  const attempts = [
+    {
+      number: destination,
+      key: {
+        id: params.externalMessageId,
+        remoteJid: params.remoteJid,
+        fromMe: true,
+      },
+    },
+    {
+      number: destination,
+      id: params.externalMessageId,
+      remoteJid: params.remoteJid,
+    },
+    {
+      number: destination,
+      messageId: params.externalMessageId,
+    },
+  ];
+
+  let lastAttempt = null as Awaited<ReturnType<typeof execute>> | null;
+
+  for (const attempt of attempts) {
+    lastAttempt = await execute(attempt);
+    if (lastAttempt.ok) {
+      return lastAttempt;
+    }
+  }
+
+  return lastAttempt ?? {
+    ok: false,
+    status: 500,
+    payload: null,
+    messageId: params.externalMessageId,
+  };
+}
+
 export async function fetchEvolutionProfilePictureUrl(params: FetchProfilePictureParams) {
   const cleanUrl = params.baseUrl.replace(/\/$/, '');
   const response = await fetch(`${cleanUrl}/chat/fetchProfilePictureUrl/${params.instanceName}`, {
@@ -199,13 +439,6 @@ export async function fetchEvolutionProfilePictureUrl(params: FetchProfilePictur
 
 export async function configureEvolutionWebhook(params: ConfigureWebhookParams) {
   const cleanUrl = params.baseUrl.replace(/\/$/, '');
-  const requestBody = {
-    enabled: true,
-    url: params.webhookUrl,
-    webhookByEvents: false,
-    webhookBase64: false,
-    events: WEBHOOK_EVENTS,
-  };
 
   async function execute(body: Record<string, unknown>) {
     const response = await fetch(`${cleanUrl}/webhook/set/${params.instanceName}`, {
@@ -232,10 +465,20 @@ export async function configureEvolutionWebhook(params: ConfigureWebhookParams) 
     };
   }
 
-  const attempts = [
-    { body: { webhook: requestBody } },
-    { body: requestBody },
-  ];
+  const attempts = [WEBHOOK_EVENTS, LEGACY_WEBHOOK_EVENTS].flatMap((events) => {
+    const requestBody = {
+      enabled: true,
+      url: params.webhookUrl,
+      webhookByEvents: false,
+      webhookBase64: false,
+      events,
+    };
+
+    return [
+      { body: { webhook: requestBody } },
+      { body: requestBody },
+    ];
+  });
 
   let lastAttempt = null as Awaited<ReturnType<typeof execute>> | null;
 
@@ -256,10 +499,6 @@ export async function configureEvolutionWebhook(params: ConfigureWebhookParams) 
 
 export async function configureEvolutionWebSocket(params: Omit<ConfigureWebhookParams, 'webhookUrl'>) {
   const cleanUrl = params.baseUrl.replace(/\/$/, '');
-  const requestBody = {
-    enabled: true,
-    events: WEBSOCKET_EVENTS,
-  };
 
   async function execute(body: Record<string, unknown>) {
     const response = await fetch(`${cleanUrl}/websocket/set/${params.instanceName}`, {
@@ -286,11 +525,18 @@ export async function configureEvolutionWebSocket(params: Omit<ConfigureWebhookP
     };
   }
 
-  const attempts = [
-    { body: { websocket: requestBody } },
-    { body: { websocket: { enabled: true } } },
-    { body: requestBody },
-  ];
+  const attempts = [WEBSOCKET_EVENTS, LEGACY_WEBSOCKET_EVENTS].flatMap((events) => {
+    const requestBody = {
+      enabled: true,
+      events,
+    };
+
+    return [
+      { body: { websocket: requestBody } },
+      { body: { websocket: { enabled: true } } },
+      { body: requestBody },
+    ];
+  });
 
   let lastAttempt = null as Awaited<ReturnType<typeof execute>> | null;
 

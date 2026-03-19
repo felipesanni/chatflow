@@ -36,6 +36,7 @@ import {
   Smile,
   Square,
   Smartphone,
+  Trash2,
   User,
   UserPlus,
   Users,
@@ -80,7 +81,36 @@ type MessageItem = {
   contentType: string;
   body: string | null;
   senderName: string | null;
+  editedAt?: string | null;
   createdAt: string;
+  replyToMessage?: ReplyMessageItem | null;
+  reactions?: MessageReactionItem[];
+  deleted?: MessageDeletedState | null;
+  attachments?: AttachmentItem[];
+};
+
+type MessageDeletedState = {
+  isDeleted: boolean;
+  deletedAt?: string | null;
+  scope?: string | null;
+};
+
+type MessageReactionItem = {
+  emoji: string;
+  actorType: "agent" | "contact";
+  actorId: string | null;
+  actorName: string | null;
+  createdAt: string;
+};
+
+type ReplyMessageItem = {
+  id: string;
+  direction: "inbound" | "outbound" | "system";
+  contentType: string;
+  body: string | null;
+  senderName: string | null;
+  createdAt: string;
+  deleted?: MessageDeletedState | null;
   attachments?: AttachmentItem[];
 };
 
@@ -262,9 +292,12 @@ function normalizePermissions(role: "admin" | "agent", raw?: Partial<Record<Perm
 const API_URL = "/api-proxy";
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL ?? null;
 const BRAND_LOGO_STORAGE_KEY = "chatflow.brand.logo";
+const BRAND_MODE_STORAGE_KEY = "chatflow.brand.mode";
+const BRAND_TEXT_STORAGE_KEY = "chatflow.brand.text";
 const CONFIGURED_PUBLIC_WEB_BASE_URL = process.env.NEXT_PUBLIC_WEB_BASE_URL ?? null;
 const CONFIGURED_PUBLIC_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? null;
 const EMOJI_LIBRARY = ["😀", "😂", "😊", "😍", "🙏", "👍", "👏", "🎉", "❤️", "🔥", "👀", "✅", "😉", "🤝", "😅", "🙌", "🤔", "😎", "📎", "📞"];
+const MESSAGE_REACTION_LIBRARY = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 function deriveApiBaseUrlFromWebOrigin(origin: string) {
   try {
@@ -393,6 +426,46 @@ function formatPhoneInput(value: string) {
   return `+${digits.slice(0, 2)} (${digits.slice(2, 4)}) ${digits.slice(4, 9)}-${digits.slice(9)}`;
 }
 
+function stripAgentSignature(body: string | null | undefined, agentName: string | null | undefined) {
+  const rawBody = body ?? "";
+  const normalizedAgentName = (agentName ?? "").trim();
+
+  if (!normalizedAgentName) {
+    return rawBody;
+  }
+
+  const signaturePrefix = `*${normalizedAgentName}*`;
+
+  if (!rawBody.startsWith(signaturePrefix)) {
+    return rawBody;
+  }
+
+  const withoutPrefix = rawBody.slice(signaturePrefix.length);
+  return withoutPrefix.replace(/^\n\s*\n?/, "");
+}
+
+function summarizeQuotedMessage(message: Pick<ReplyMessageItem, "body" | "contentType" | "attachments" | "senderName"> | null | undefined) {
+  if (!message) {
+    return "";
+  }
+
+  const cleanedBody = stripAgentSignature(message.body, message.senderName).trim();
+  if (cleanedBody) {
+    return cleanedBody;
+  }
+
+  const attachment = message.attachments?.[0];
+  if (attachment?.mimeType?.startsWith("image/")) return "Imagem";
+  if (attachment?.mimeType?.startsWith("audio/")) return "Áudio";
+  if (attachment?.mimeType?.startsWith("video/")) return "Vídeo";
+  if (attachment?.fileName) return attachment.fileName;
+  if (message.contentType === "image") return "Imagem";
+  if (message.contentType === "audio") return "Áudio";
+  if (message.contentType === "video") return "Vídeo";
+  if (message.contentType === "document") return "Documento";
+  return "Mensagem";
+}
+
 function resolveAttachmentUrl(ticketId: string, attachment: AttachmentItem) {
   if (attachment.publicUrl?.startsWith("data:")) {
     return attachment.publicUrl;
@@ -463,6 +536,8 @@ export default function HomePage() {
   const [managementModalTab, setManagementModalTab] = React.useState<"general" | "permissions">("general");
 
   const [messageInput, setMessageInput] = React.useState("");
+  const [editingMessageId, setEditingMessageId] = React.useState<string | null>(null);
+  const [replyToMessageId, setReplyToMessageId] = React.useState<string | null>(null);
   const [searchQuery, setSearchQuery] = React.useState("");
   const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "grupos">("atendendo");
   const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
@@ -477,6 +552,8 @@ export default function HomePage() {
   const [profileName, setProfileName] = React.useState("");
   const [profileAvatarPreview, setProfileAvatarPreview] = React.useState<string | null>(null);
   const [brandLogoPreview, setBrandLogoPreview] = React.useState<string | null>(null);
+  const [brandMode, setBrandMode] = React.useState<"default" | "image" | "text">("default");
+  const [brandText, setBrandText] = React.useState("CHATFLOW");
   const [composerAttachment, setComposerAttachment] = React.useState<ComposerAttachment | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = React.useState(false);
   const [recordingAudio, setRecordingAudio] = React.useState(false);
@@ -533,6 +610,14 @@ export default function HomePage() {
     () => tickets.find((ticket) => ticket.id === selectedTicketId) ?? null,
     [tickets, selectedTicketId],
   );
+  const editingMessage = React.useMemo(
+    () => messages.find((message) => message.id === editingMessageId) ?? null,
+    [editingMessageId, messages],
+  );
+  const replyToMessage = React.useMemo(
+    () => messages.find((message) => message.id === replyToMessageId) ?? null,
+    [messages, replyToMessageId],
+  );
 
   const currentUser: AuthUser = user ?? {
     id: "",
@@ -578,11 +663,14 @@ export default function HomePage() {
   );
   const isSelectedTicketClosed = Boolean(selectedTicket?.status === "closed");
   const shouldDisableComposer = Boolean(!selectedTicket || !canSendToSelectedTicket);
+  const isEditingMessage = Boolean(editingMessageId);
   const composerPlaceholder = !selectedTicket
     ? "Selecione um ticket para conversar"
     : isSelectedTicketClosed
       ? "Ticket fechado para envio"
-      : "Aceite o atendimento para responder";
+      : isEditingMessage
+        ? "Edite a mensagem"
+        : "Aceite o atendimento para responder";
   const canTransferSelectedTicket = Boolean(
     selectedTicket &&
     selectedTicket.status !== "closed" &&
@@ -796,7 +884,18 @@ export default function HomePage() {
   React.useEffect(() => {
     if (typeof window === "undefined") return;
 
+    const storedBrandMode = window.localStorage.getItem(BRAND_MODE_STORAGE_KEY);
     const storedLogo = window.localStorage.getItem(BRAND_LOGO_STORAGE_KEY);
+    const storedBrandText = window.localStorage.getItem(BRAND_TEXT_STORAGE_KEY);
+
+    if (storedBrandMode === "default" || storedBrandMode === "image" || storedBrandMode === "text") {
+      setBrandMode(storedBrandMode);
+    }
+
+    if (storedBrandText) {
+      setBrandText(storedBrandText);
+    }
+
     if (storedLogo) {
       setBrandLogoPreview(storedLogo);
     }
@@ -833,6 +932,35 @@ export default function HomePage() {
   React.useEffect(() => {
     setShowTicketDetails(false);
   }, [selectedTicketId]);
+
+  React.useEffect(() => {
+    setEditingMessageId(null);
+    setReplyToMessageId(null);
+  }, [selectedTicketId]);
+
+  React.useEffect(() => {
+    if (editingMessageId && !messages.some((message) => message.id === editingMessageId)) {
+      setEditingMessageId(null);
+    }
+  }, [editingMessageId, messages]);
+
+  React.useEffect(() => {
+    if (replyToMessageId && !messages.some((message) => message.id === replyToMessageId)) {
+      setReplyToMessageId(null);
+    }
+  }, [messages, replyToMessageId]);
+
+  React.useEffect(() => {
+    if (editingMessageId && !canSendToSelectedTicket) {
+      setEditingMessageId(null);
+    }
+  }, [canSendToSelectedTicket, editingMessageId]);
+
+  React.useEffect(() => {
+    if (replyToMessageId && !canSendToSelectedTicket) {
+      setReplyToMessageId(null);
+    }
+  }, [canSendToSelectedTicket, replyToMessageId]);
 
   React.useEffect(() => {
     setShowTransferPanel(false);
@@ -1027,6 +1155,7 @@ export default function HomePage() {
     socket.on("ticket.updated", refreshForTicket);
     socket.on("ticket.closed", refreshForTicket);
     socket.on("message.created", refreshForTicket);
+    socket.on("message.updated", refreshForTicket);
     socket.on("instance.updated", () => void refreshInstances());
     socket.on("agent.updated", () => void refreshAgents());
     socket.on("queue.updated", () => void refreshQueues());
@@ -1166,8 +1295,10 @@ export default function HomePage() {
     });
 
     setBrandLogoPreview(dataUrl);
+    setBrandMode("image");
 
     if (typeof window !== "undefined") {
+      window.localStorage.setItem(BRAND_MODE_STORAGE_KEY, "image");
       window.localStorage.setItem(BRAND_LOGO_STORAGE_KEY, dataUrl);
     }
 
@@ -1181,7 +1312,32 @@ export default function HomePage() {
       window.localStorage.removeItem(BRAND_LOGO_STORAGE_KEY);
     }
 
+    if (brandMode === "image") {
+      setBrandMode("default");
+
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(BRAND_MODE_STORAGE_KEY, "default");
+      }
+    }
+
     setPanelMessage("Logo removido. O painel voltou para a marca padrão.");
+  }
+
+  function handleBrandModeChange(nextMode: "default" | "image" | "text") {
+    setBrandMode(nextMode);
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(BRAND_MODE_STORAGE_KEY, nextMode);
+    }
+  }
+
+  function handleBrandTextChange(value: string) {
+    const normalizedValue = value.slice(0, 36);
+    setBrandText(normalizedValue);
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(BRAND_TEXT_STORAGE_KEY, normalizedValue);
+    }
   }
 
   async function readFileAsDataUrl(file: File) {
@@ -1218,6 +1374,10 @@ export default function HomePage() {
     event.currentTarget.value = "";
 
     if (!file) return;
+    if (isEditingMessage) {
+      setPanelMessage("Finalize a edição atual antes de anexar um arquivo.");
+      return;
+    }
 
     if (file.size > 12_000_000) {
       setPanelMessage("O arquivo deve ter no máximo 12 MB.");
@@ -1241,8 +1401,43 @@ export default function HomePage() {
     setComposerAttachment(null);
   }
 
+  function handleStartEditingMessage(message: MessageItem) {
+    if (!canSendToSelectedTicket) {
+      return;
+    }
+
+    setReplyToMessageId(null);
+    setEditingMessageId(message.id);
+    setComposerAttachment(null);
+    setShowEmojiPicker(false);
+    setMessageInput(stripAgentSignature((message.body ?? "").trim(), currentUser.name).trim());
+    setPanelMessage("Modo de edição ativado.");
+  }
+
+  function handleStartReplyingToMessage(message: MessageItem) {
+    if (!canSendToSelectedTicket || message.direction === "system") {
+      return;
+    }
+
+    setEditingMessageId(null);
+    setReplyToMessageId(message.id);
+    setShowEmojiPicker(false);
+    setPanelMessage("Respondendo mensagem.");
+  }
+
+  function cancelEditingMessage() {
+    setEditingMessageId(null);
+    setMessageInput("");
+    setPanelMessage("Edição cancelada.");
+  }
+
+  function cancelReplyToMessage() {
+    setReplyToMessageId(null);
+    setPanelMessage("Resposta cancelada.");
+  }
+
   async function handleToggleAudioRecording() {
-    if (!canSendToSelectedTicket || sendLoading) return;
+    if (!canSendToSelectedTicket || sendLoading || isEditingMessage) return;
 
     if (recordingAudio) {
       audioRecorderRef.current?.stop();
@@ -1362,27 +1557,41 @@ export default function HomePage() {
 
     setSendLoading(true);
     try {
-      await apiFetch(`/tickets/${selectedTicketId}/messages`, {
-        method: "POST",
-        body: JSON.stringify({
-          body: resolvedBody,
-          attachment: composerAttachment
-            ? {
-                kind: composerAttachment.kind,
-                fileName: composerAttachment.fileName,
-                mimeType: composerAttachment.mimeType,
-                sizeBytes: composerAttachment.sizeBytes,
-                dataUrl: composerAttachment.dataUrl,
-              }
-            : undefined,
-        }),
-      });
+      if (editingMessageId) {
+        await apiFetch(`/tickets/${selectedTicketId}/messages/${editingMessageId}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            body: resolvedBody,
+          }),
+        });
+        setPanelMessage("Mensagem editada.");
+      } else {
+        await apiFetch(`/tickets/${selectedTicketId}/messages`, {
+          method: "POST",
+          body: JSON.stringify({
+            body: resolvedBody,
+            replyToMessageId: replyToMessageId ?? undefined,
+            attachment: composerAttachment
+              ? {
+                  kind: composerAttachment.kind,
+                  fileName: composerAttachment.fileName,
+                  mimeType: composerAttachment.mimeType,
+                  sizeBytes: composerAttachment.sizeBytes,
+                  dataUrl: composerAttachment.dataUrl,
+                }
+              : undefined,
+          }),
+        });
+      }
+
+      setEditingMessageId(null);
+      setReplyToMessageId(null);
       setMessageInput("");
       setComposerAttachment(null);
       await refreshMessages(selectedTicketId);
       await refreshTickets();
     } catch (error) {
-      setPanelMessage(error instanceof Error ? error.message : "Falha ao enviar mensagem.");
+      setPanelMessage(error instanceof Error ? error.message : editingMessageId ? "Falha ao editar mensagem." : "Falha ao enviar mensagem.");
     } finally {
       setSendLoading(false);
     }
@@ -1438,6 +1647,43 @@ export default function HomePage() {
 
   function applyQuickReply(item: QuickReplyItem) {
     setMessageInput((current) => current.replace(/(?:^|\s)\/([a-z0-9_-]*)$/i, (match) => match.replace(/\/([a-z0-9_-]*)$/i, item.content)));
+  }
+
+  async function handleReactToMessage(messageId: string, emoji: string) {
+    if (!selectedTicketId || !canSendToSelectedTicket) {
+      return;
+    }
+
+    try {
+      await apiFetch(`/tickets/${selectedTicketId}/messages/${messageId}/reactions`, {
+        method: "POST",
+        body: JSON.stringify({ emoji }),
+      });
+      await refreshMessages(selectedTicketId);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao reagir à mensagem.");
+    }
+  }
+
+  async function handleDeleteMessage(messageId: string) {
+    if (!selectedTicketId || !canSendToSelectedTicket) {
+      return;
+    }
+
+    if (typeof window !== "undefined" && !window.confirm("Apagar esta mensagem para todos?")) {
+      return;
+    }
+
+    try {
+      await apiFetch(`/tickets/${selectedTicketId}/messages/${messageId}/delete`, {
+        method: "POST",
+      });
+      await refreshMessages(selectedTicketId);
+      await refreshTickets();
+      setPanelMessage("Mensagem apagada para todos.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao apagar a mensagem.");
+    }
   }
 
   function insertEmoji(emoji: string) {
@@ -1862,6 +2108,10 @@ export default function HomePage() {
                   : activeWorkspace === "automations"
                     ? "Automações"
                     : "Configurações";
+  const trimmedBrandText = brandText.trim();
+  const shouldRenderBrandImage = brandMode === "image" && Boolean(brandLogoPreview);
+  const shouldRenderBrandText = brandMode === "text" && trimmedBrandText.length > 0;
+  const brandTextLabel = trimmedBrandText.length > 0 ? trimmedBrandText : "CHATFLOW";
 
   const workspaceDescription =
     activeWorkspace === "dashboard"
@@ -2448,9 +2698,13 @@ export default function HomePage() {
                 <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">Logo superior</div>
                 <div className="mt-3 rounded-[24px] bg-[#1A1C32] p-5 shadow-[0_20px_40px_rgba(26,28,50,0.22)]">
                   <div className="flex items-center gap-4">
-                    {brandLogoPreview ? (
-                      <div className="flex min-h-[64px] min-w-[200px] items-center rounded-2xl border border-white/10 bg-white px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
-                        <img src={brandLogoPreview} alt="Logo do painel" className="max-h-10 w-auto object-contain" />
+                    {shouldRenderBrandImage ? (
+                      <div className="flex min-h-[64px] min-w-[200px] items-center px-2 py-2">
+                        <img src={brandLogoPreview} alt="Logo do painel" className="max-h-11 w-auto object-contain" />
+                      </div>
+                    ) : shouldRenderBrandText ? (
+                      <div className="flex min-h-[64px] min-w-[200px] items-center px-2 py-2">
+                        <div className="text-[30px] font-semibold leading-none tracking-tight text-white">{brandTextLabel}</div>
                       </div>
                     ) : (
                       <div className="flex items-center gap-3">
@@ -2473,9 +2727,55 @@ export default function HomePage() {
               </div>
 
               <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="text-sm font-semibold text-[#1A1C32]">Arquivo do logo</div>
-                <p className="mt-2 text-sm text-slate-500">Envie uma imagem horizontal com fundo transparente para substituir a marca padrão no cabeçalho.</p>
+                <div className="text-sm font-semibold text-[#1A1C32]">Marca do cabeçalho</div>
+                <p className="mt-2 text-sm text-slate-500">Escolha se quer manter a marca padrão, usar uma imagem transparente ou escrever um texto personalizado.</p>
+                <div className="mt-4 grid gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleBrandModeChange("default")}
+                    className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
+                      brandMode === "default"
+                        ? "border-[#1A1C32] bg-[#1A1C32] text-white"
+                        : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    Marca padrão
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleBrandModeChange("image")}
+                    className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
+                      brandMode === "image"
+                        ? "border-[#1A1C32] bg-[#1A1C32] text-white"
+                        : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    Usar imagem
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleBrandModeChange("text")}
+                    className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
+                      brandMode === "text"
+                        ? "border-[#1A1C32] bg-[#1A1C32] text-white"
+                        : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    Usar texto
+                  </button>
+                </div>
+
                 <div className="mt-4 flex flex-col gap-3">
+                  <div>
+                    <div className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Texto personalizado</div>
+                    <input
+                      type="text"
+                      value={brandText}
+                      onChange={(event) => handleBrandTextChange(event.target.value)}
+                      placeholder="Digite o texto do cabeçalho"
+                      className="h-11 w-full rounded-2xl border border-slate-200 px-4 text-sm text-slate-700 outline-none transition focus:border-[#1A1C32]"
+                    />
+                  </div>
                   <label className="inline-flex h-11 cursor-pointer items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#232643]">
                     <input type="file" accept="image/*" className="hidden" onChange={(event) => void handleBrandLogoChange(event)} />
                     {brandLogoPreview ? "Trocar logo" : "Enviar logo"}
@@ -2492,6 +2792,7 @@ export default function HomePage() {
                 <div className="mt-4 space-y-2 text-xs text-slate-400">
                   <div>Formato recomendado: PNG ou SVG convertido em imagem.</div>
                   <div>Tamanho máximo: 2 MB.</div>
+                  <div>O texto personalizado aparece no lugar da imagem quando o modo "Usar texto" estiver ativo.</div>
                 </div>
               </div>
             </div>
@@ -2733,18 +3034,32 @@ export default function HomePage() {
                   ) : messages.length === 0 ? (
                     <EmptyMessages />
                   ) : (
-                    messages.map((message) => {
-                      const outgoing = message.direction === "outbound";
-                      const system = message.direction === "system";
-                      const hasAttachment = Boolean(message.attachments?.length);
-                      const normalizedBody = (message.body ?? "").trim();
-                      const shouldHideMessageBody =
-                        hasAttachment &&
-                        (
-                          !normalizedBody
+                      messages.map((message) => {
+                        const outgoing = message.direction === "outbound";
+                        const system = message.direction === "system";
+                        const isDeletedMessage = Boolean(message.deleted?.isDeleted);
+                        const hasAttachment = Boolean(message.attachments?.length);
+                        const normalizedBody = (message.body ?? "").trim();
+                        const shouldShowInboundGroupSender =
+                          Boolean(selectedTicket?.isGroup) &&
+                          !outgoing &&
+                          !system &&
+                          Boolean(message.senderName?.trim());
+                        const canEditMessage = outgoing && canSendToSelectedTicket && !hasAttachment && Boolean(normalizedBody) && !isDeletedMessage;
+                        const canDeleteMessage = outgoing && canSendToSelectedTicket && !isDeletedMessage;
+                        const canReplyToMessage = !system && canSendToSelectedTicket && !isEditingMessage && !isDeletedMessage;
+                        const groupedReactions = (message.reactions ?? []).reduce<Record<string, number>>((acc, reaction) => {
+                          acc[reaction.emoji] = (acc[reaction.emoji] ?? 0) + 1;
+                          return acc;
+                        }, {});
+                        const shouldHideMessageBody =
+                          hasAttachment &&
+                          (
+                            !normalizedBody
                           || /^(imagem|audio|documento|video) recebido$/i.test(normalizedBody)
                           || /^\[(image|audio|document|video)\]\s/i.test(normalizedBody)
                         );
+                        const shouldRenderAttachments = Boolean(message.attachments?.length);
 
                       if (system) {
                         return (
@@ -2755,40 +3070,137 @@ export default function HomePage() {
                       }
 
                       return (
-                        <div key={message.id} className={`flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
-                          <article className={`max-w-[85%] rounded-[18px] px-4 py-3 text-sm shadow-sm md:max-w-[70%] ${outgoing ? "border border-[#cfe9ad] bg-[#dcf8c6] text-slate-800" : "rounded-tl-[8px] border border-[#ece4d8] bg-white text-slate-800"}`}>
-                            {message.attachments && message.attachments.length > 0 ? (
-                              <div className={`${message.body && !shouldHideMessageBody ? "mb-3" : ""} space-y-3`}>
-                                {message.attachments.map((attachment) => (
-                                  <div key={attachment.id} className="overflow-hidden rounded-[20px] border border-slate-200/80 bg-white/70">
-                                    {attachment.mimeType.startsWith("image/") ? (
-                                      <a href={resolveAttachmentUrl(selectedTicket.id, attachment)} target="_blank" rel="noreferrer" className="block">
-                                        <img src={resolveAttachmentUrl(selectedTicket.id, attachment)} alt={attachment.fileName ?? "Imagem"} className="max-h-72 w-full object-cover" />
-                                      </a>
-                                    ) : attachment.mimeType.startsWith("audio/") ? (
-                                      <div className="p-3">
-                                        <AudioMessagePlayer
-                                          src={resolveAttachmentUrl(selectedTicket.id, attachment)}
-                                        />
-                                      </div>
-                                    ) : (
-                                      <a href={resolveAttachmentUrl(selectedTicket.id, attachment)} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-3 transition hover:bg-slate-50">
-                                        <span className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-100 text-slate-500">
-                                          <FileText className="h-4 w-4" />
-                                        </span>
-                                        <div className="min-w-0">
-                                          <div className="truncate text-sm font-semibold text-slate-700">{attachment.fileName ?? "Arquivo"}</div>
-                                          <div className="text-xs text-slate-400">{attachment.mimeType}</div>
-                                        </div>
-                                      </a>
-                                    )}
+                          <div key={message.id} className={`group flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
+                            <div className={`flex items-start gap-2 ${outgoing ? "flex-row-reverse" : ""}`}>
+                              <div className={`flex max-w-[85%] flex-col md:max-w-[70%] ${outgoing ? "items-end" : "items-start"}`}>
+                              <article className={`w-full rounded-[18px] px-4 py-3 text-sm shadow-sm ${outgoing ? "border border-[#cfe9ad] bg-[#dcf8c6] text-slate-800" : "rounded-tl-[8px] border border-[#ece4d8] bg-white text-slate-800"}`}>
+                                {shouldShowInboundGroupSender ? (
+                                  <div className="mb-2 text-[14px] font-semibold leading-5 text-sky-700">
+                                    {message.senderName}
                                   </div>
-                                ))}
+                                ) : null}
+                                {message.replyToMessage ? (
+                                  <div className={`mb-3 rounded-2xl border px-3 py-2 ${outgoing ? "border-emerald-200 bg-emerald-50/70" : "border-slate-200 bg-slate-50/90"}`}>
+                                    <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">
+                                      {message.replyToMessage.senderName || (message.replyToMessage.direction === "outbound" ? "Você" : "Mensagem citada")}
+                                    </div>
+                                    <div className="mt-1 truncate text-sm text-slate-700">
+                                      {summarizeQuotedMessage(message.replyToMessage)}
+                                    </div>
+                                  </div>
+                                ) : null}
+                                {shouldRenderAttachments ? (
+                                  <div className={`${message.body && !shouldHideMessageBody ? "mb-3" : ""} space-y-3 ${isDeletedMessage ? "opacity-55 saturate-0" : ""}`}>
+                                    {message.attachments.map((attachment) => (
+                                      <div key={attachment.id} className="overflow-hidden rounded-[20px] border border-slate-200/80 bg-white/70">
+                                      {attachment.mimeType.startsWith("image/") ? (
+                                        <a href={resolveAttachmentUrl(selectedTicket.id, attachment)} target="_blank" rel="noreferrer" className="block">
+                                          <img src={resolveAttachmentUrl(selectedTicket.id, attachment)} alt={attachment.fileName ?? "Imagem"} className="max-h-72 w-full object-cover" />
+                                        </a>
+                                      ) : attachment.mimeType.startsWith("audio/") ? (
+                                        <div className="p-3">
+                                          <AudioMessagePlayer
+                                            src={resolveAttachmentUrl(selectedTicket.id, attachment)}
+                                          />
+                                        </div>
+                                      ) : (
+                                        <a href={resolveAttachmentUrl(selectedTicket.id, attachment)} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-3 transition hover:bg-slate-50">
+                                          <span className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-100 text-slate-500">
+                                            <FileText className="h-4 w-4" />
+                                          </span>
+                                          <div className="min-w-0">
+                                            <div className="truncate text-sm font-semibold text-slate-700">{attachment.fileName ?? "Arquivo"}</div>
+                                            <div className="text-xs text-slate-400">{attachment.mimeType}</div>
+                                          </div>
+                                        </a>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                                {message.body && !shouldHideMessageBody ? (
+                                  <div className={`whitespace-pre-wrap text-[15px] leading-6 ${isDeletedMessage ? "text-slate-400 line-through decoration-2" : ""}`}>
+                                    {message.body}
+                                  </div>
+                                ) : null}
+                                {!message.body && (!message.attachments || message.attachments.length === 0) ? (
+                                  <div className={`whitespace-pre-wrap text-[15px] leading-6 ${isDeletedMessage ? "text-slate-400 line-through decoration-2" : ""}`}>
+                                    {`[${message.contentType}]`}
+                                  </div>
+                                ) : null}
+                                {message.editedAt && !shouldHideMessageBody && !isDeletedMessage ? <div className="mt-2 text-[11px] font-medium italic text-slate-400">Editada</div> : null}
+                                {isDeletedMessage ? <div className="mt-2 text-[11px] font-medium italic text-slate-400">Mensagem apagada para todos</div> : null}
+                              </article>
+                              {Object.keys(groupedReactions).length > 0 && !isDeletedMessage ? (
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {Object.entries(groupedReactions).map(([emoji, count]) => (
+                                    <button
+                                      key={emoji}
+                                      type="button"
+                                      onClick={() => void handleReactToMessage(message.id, emoji)}
+                                      className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                                    >
+                                      <span>{emoji}</span>
+                                      {count > 1 ? <span>{count}</span> : null}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
+                              </div>
+                              {canEditMessage || canDeleteMessage || canReplyToMessage ? (
+                              <div className="mt-1 flex flex-col gap-2 opacity-0 transition group-hover:opacity-100">
+                                {canEditMessage ? (
+                                  <button
+                                    type="button"
+                                    aria-label="Editar mensagem"
+                                    title="Editar mensagem"
+                                    onClick={() => handleStartEditingMessage(message)}
+                                    className="grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-slate-700"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                ) : null}
+                                {canDeleteMessage ? (
+                                  <button
+                                    type="button"
+                                    aria-label="Apagar para todos"
+                                    title="Apagar para todos"
+                                    onClick={() => void handleDeleteMessage(message.id)}
+                                    className="grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-red-600"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                ) : null}
+                                {canReplyToMessage ? (
+                                <button
+                                  type="button"
+                                  aria-label="Responder mensagem"
+                                  title="Responder mensagem"
+                                  onClick={() => handleStartReplyingToMessage(message)}
+                                  className="grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-slate-700"
+                                >
+                                  <MessageSquare className="h-3.5 w-3.5" />
+                                </button>
+                                ) : null}
+                                {canReplyToMessage ? (
+                                <div className={`flex ${outgoing ? "justify-end" : "justify-start"}`}>
+                                  <div className={`flex flex-wrap gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm`}>
+                                    {MESSAGE_REACTION_LIBRARY.map((emoji) => (
+                                      <button
+                                        key={emoji}
+                                        type="button"
+                                        onClick={() => void handleReactToMessage(message.id, emoji)}
+                                        className="grid h-8 w-8 place-items-center rounded-xl text-base transition hover:bg-slate-100"
+                                      >
+                                        {emoji}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                                ) : null}
                               </div>
                             ) : null}
-                            {message.body && !shouldHideMessageBody ? <div className="whitespace-pre-wrap text-[15px] leading-6">{message.body}</div> : null}
-                            {!message.body && (!message.attachments || message.attachments.length === 0) ? <div className="whitespace-pre-wrap text-[15px] leading-6">{`[${message.contentType}]`}</div> : null}
-                          </article>
+                          </div>
                         </div>
                       );
                     })
@@ -2798,6 +3210,30 @@ export default function HomePage() {
 
               <form onSubmit={handleSendMessage} className="border-t border-slate-200 bg-white px-4 py-2.5 md:px-5">
                 <input ref={attachmentUploadRef} type="file" className="hidden" onChange={(event) => void handleComposerAttachmentChange(event)} />
+                {isEditingMessage && editingMessage ? (
+                  <div className="mb-3 flex items-center justify-between gap-3 rounded-[22px] border border-emerald-100 bg-emerald-50/80 px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-700">Editando mensagem</div>
+                      <div className="mt-1 truncate text-sm text-emerald-900">{editingMessage.body ?? "Mensagem sem texto"}</div>
+                    </div>
+                    <button type="button" onClick={cancelEditingMessage} className="text-xs font-bold uppercase tracking-[0.12em] text-emerald-700 transition hover:text-emerald-900">
+                      Cancelar
+                    </button>
+                  </div>
+                ) : null}
+                {!isEditingMessage && replyToMessage ? (
+                  <div className="mb-3 flex items-center justify-between gap-3 rounded-[22px] border border-sky-100 bg-sky-50/80 px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-sky-700">
+                        Respondendo {replyToMessage.senderName || (replyToMessage.direction === "outbound" ? "você" : "mensagem")}
+                      </div>
+                      <div className="mt-1 truncate text-sm text-sky-900">{summarizeQuotedMessage(replyToMessage)}</div>
+                    </div>
+                    <button type="button" onClick={cancelReplyToMessage} className="text-xs font-bold uppercase tracking-[0.12em] text-sky-700 transition hover:text-sky-900">
+                      Cancelar
+                    </button>
+                  </div>
+                ) : null}
                 {composerAttachment ? (
                   <div className="mb-3 flex items-center justify-between gap-3 rounded-[22px] border border-slate-200 bg-white/90 px-4 py-3 shadow-[0_14px_40px_rgba(148,163,184,0.1)]">
                     <div className="flex min-w-0 items-center gap-3">
@@ -2844,7 +3280,7 @@ export default function HomePage() {
                         </div>
                       ) : null}
                     </div>
-                    <button type="button" aria-label="Anexar arquivo" title="Anexar arquivo" onClick={() => attachmentUploadRef.current?.click()} disabled={shouldDisableComposer || sendLoading} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    <button type="button" aria-label="Anexar arquivo" title="Anexar arquivo" onClick={() => attachmentUploadRef.current?.click()} disabled={shouldDisableComposer || sendLoading || isEditingMessage} className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                       <Paperclip className="h-4 w-4" />
                     </button>
                     <button
@@ -2852,7 +3288,7 @@ export default function HomePage() {
                       aria-label={recordingAudio ? "Parar gravação" : "Gravar áudio"}
                       title={recordingAudio ? "Parar gravação" : "Gravar áudio"}
                       onClick={() => void handleToggleAudioRecording()}
-                      disabled={shouldDisableComposer || sendLoading}
+                      disabled={shouldDisableComposer || sendLoading || isEditingMessage}
                       className={`grid h-10 w-10 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${
                         recordingAudio
                           ? "border-red-200 bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600"
@@ -2868,11 +3304,11 @@ export default function HomePage() {
                       onChange={(event) => setMessageInput(event.target.value)}
                       onKeyDown={handleComposerKeyDown}
                       rows={1}
-                      placeholder={canSendToSelectedTicket ? "Digite uma mensagem ou use /atalho" : composerPlaceholder}
+                      placeholder={canSendToSelectedTicket ? (isEditingMessage ? "Edite a mensagem" : "Digite uma mensagem ou use /atalho") : composerPlaceholder}
                       disabled={shouldDisableComposer}
                       className="min-h-[44px] max-h-28 w-full resize-none rounded-[24px] border border-slate-200 bg-[#f8fafc] px-5 py-2.5 text-sm leading-5 text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                     />
-                    {quickReplyMatches.length > 0 && canSendToSelectedTicket ? (
+                    {quickReplyMatches.length > 0 && canSendToSelectedTicket && !isEditingMessage ? (
                       <div className="absolute bottom-[calc(100%+0.75rem)] left-0 z-20 w-full overflow-hidden rounded-[26px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff,#f8fbfd)] shadow-[0_24px_60px_rgba(15,23,42,0.16)]">
                         <div className="border-b border-slate-100 px-4 py-3 text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
                           Respostas rápidas
@@ -2892,16 +3328,11 @@ export default function HomePage() {
                         </div>
                       </div>
                     ) : null}
-                    {canViewQuickReplies && canSendToSelectedTicket ? (
-                      <div className="mt-1.5 pl-3 text-[11px] text-slate-500">
-                        `Enter` envia. `Shift + Enter` quebra linha. Use <span className="font-semibold text-slate-500">/atalho</span> para aplicar uma resposta rápida.
-                      </div>
-                    ) : null}
-                    {recordingAudio ? (
-                      <div className="mt-1.5 pl-3 text-[11px] font-medium text-red-500">
-                        Gravando áudio. Clique no microfone vermelho para parar e anexar.
-                      </div>
-                    ) : null}
+                      {recordingAudio ? (
+                        <div className="mt-1.5 pl-3 text-[11px] font-medium text-red-500">
+                          Gravando áudio. Clique no microfone vermelho para parar e anexar.
+                        </div>
+                      ) : null}
                   </div>
                   <button
                     type="submit"
@@ -2910,7 +3341,7 @@ export default function HomePage() {
                     className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#1A1C32] px-5 text-sm font-bold uppercase tracking-[0.12em] text-white transition hover:bg-[#252844] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
                   >
                     <Send className="h-4 w-4" />
-                    {sendLoading ? "Enviando" : "Enviar"}
+                    {sendLoading ? (isEditingMessage ? "Salvando" : "Enviando") : (isEditingMessage ? "Salvar" : "Enviar")}
                   </button>
                 </div>
               </form>
@@ -3486,10 +3917,17 @@ export default function HomePage() {
             <button type="button" aria-label={showRail ? "Recolher menu lateral" : "Expandir menu lateral"} title={showRail ? "Recolher menu lateral" : "Expandir menu lateral"} onClick={() => setShowRail((current) => !current)} className="text-white/90 transition hover:text-white">
               <Menu className="h-6 w-6" />
             </button>
-            {brandLogoPreview ? (
+            {shouldRenderBrandImage ? (
               <div className="flex items-center gap-3">
-                <div className="flex h-10 min-w-[180px] items-center rounded-2xl border border-white/10 bg-white px-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
-                  <img src={brandLogoPreview} alt="Logo do painel" className="max-h-7 w-auto object-contain" />
+                <div className="flex h-10 min-w-[180px] items-center px-2">
+                  <img src={brandLogoPreview} alt="Logo do painel" className="max-h-8 w-auto object-contain" />
+                </div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">{workspaceTitle}</div>
+              </div>
+            ) : shouldRenderBrandText ? (
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 min-w-[180px] items-center px-2 text-[24px] font-semibold leading-none tracking-tight text-white">
+                  {brandTextLabel}
                 </div>
                 <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">{workspaceTitle}</div>
               </div>

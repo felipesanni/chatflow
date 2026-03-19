@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
+import type { Prisma } from '@prisma/client';
 import { requirePermission } from '../../lib/auth-guard.js';
-import { sendEvolutionAudio, sendEvolutionMedia, sendEvolutionText } from '../../lib/evolution-client.js';
+import { sendEvolutionAudio, sendEvolutionDeleteMessage, sendEvolutionMedia, sendEvolutionReaction, sendEvolutionText, sendEvolutionUpdateMessage } from '../../lib/evolution-client.js';
 import { loadEnv } from '../../config/env.js';
 import { decryptSecret, encryptSecret } from '../../lib/secrets.js';
 import type { PermissionMap } from '../../lib/permissions.js';
@@ -27,6 +28,14 @@ const createMessageBodySchema = z.object({
       path: ['body'],
     });
   }
+});
+
+const updateMessageBodySchema = z.object({
+  body: z.string().trim().min(1, 'Informe o novo texto da mensagem.'),
+});
+
+const createReactionBodySchema = z.object({
+  emoji: z.string().trim().min(1, 'Informe a reação.').max(16, 'Reação inválida.'),
 });
 
 const env = loadEnv();
@@ -112,6 +121,118 @@ function canReplyToTicket(viewerId: string, ticket: { currentAgentId: string | n
   return ticket.currentAgentId === viewerId;
 }
 
+function formatAgentSignedBody(agentName: string, body: string) {
+  const trimmedBody = body.trim();
+
+  if (!trimmedBody) {
+    return '';
+  }
+
+  return `*${agentName}*\n\n${trimmedBody}`;
+}
+
+function normalizeStoredReactions(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as Array<{
+      emoji: string;
+      actorType: 'agent' | 'contact';
+      actorId: string | null;
+      actorName: string | null;
+      createdAt: string;
+    }>;
+  }
+
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object') {
+      return [];
+    }
+
+    const record = item as Record<string, unknown>;
+    const emoji = typeof record.emoji === 'string' ? record.emoji.trim() : '';
+    if (!emoji) {
+      return [];
+    }
+
+    return [{
+      emoji,
+      actorType: record.actorType === 'agent' ? 'agent' : 'contact',
+      actorId: typeof record.actorId === 'string' ? record.actorId : null,
+      actorName: typeof record.actorName === 'string' ? record.actorName : null,
+      createdAt: typeof record.createdAt === 'string' ? record.createdAt : new Date().toISOString(),
+    }];
+  });
+}
+
+function serializeMessageReactions(rawPayload: unknown) {
+  if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
+    return [];
+  }
+
+  return normalizeStoredReactions((rawPayload as Record<string, unknown>).chatflowReactions);
+}
+
+function serializeDeletedState(rawPayload: unknown) {
+  if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
+    return null;
+  }
+
+  const deleted = (rawPayload as Record<string, unknown>).chatflowDeleted;
+  if (!deleted || typeof deleted !== 'object' || Array.isArray(deleted)) {
+    return null;
+  }
+
+  const record = deleted as Record<string, unknown>;
+  if (record.isDeleted !== true) {
+    return null;
+  }
+
+  return {
+    isDeleted: true,
+    deletedAt: typeof record.deletedAt === 'string' ? record.deletedAt : null,
+    scope: typeof record.scope === 'string' ? record.scope : null,
+  };
+}
+
+function withStoredReaction(
+  rawPayload: Prisma.JsonValue | null | undefined,
+  reaction: {
+    emoji: string;
+    actorType: 'agent' | 'contact';
+    actorId: string | null;
+    actorName: string | null;
+  },
+) {
+  const payload = rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
+    ? { ...(rawPayload as Record<string, unknown>) }
+    : {};
+
+  const current = normalizeStoredReactions(payload.chatflowReactions);
+  const next = [
+    ...current.filter((item) => !(item.actorType === reaction.actorType && item.actorId === reaction.actorId)),
+    {
+      ...reaction,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+
+  payload.chatflowReactions = next;
+  return payload as Prisma.InputJsonValue;
+}
+
+function withDeletedMessage(rawPayload: Prisma.JsonValue | null | undefined) {
+  const payload = rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
+    ? { ...(rawPayload as Record<string, unknown>) }
+    : {};
+
+  payload.chatflowDeleted = {
+    isDeleted: true,
+    deletedAt: new Date().toISOString(),
+    scope: 'everyone',
+  };
+
+  return payload as Prisma.InputJsonValue;
+}
+
 export const messageRoutes: FastifyPluginAsync = async (app) => {
   app.get('/tickets/:ticketId/attachments/:attachmentId/content', async (request, reply) => {
     const access = await requirePermission(app, request, reply, 'tickets.view');
@@ -165,6 +286,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
 
     const decryptedApiKey = decryptSecret(attachment.message.ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
     const targetUrl = resolveExternalAttachmentUrl(attachment.message.ticket.whatsappInstance.baseUrl, source);
+    const requestedRange = Array.isArray(request.headers.range) ? request.headers.range[0] : request.headers.range;
 
     if (!targetUrl) {
       return reply.notFound('Conteudo do anexo indisponivel.');
@@ -173,6 +295,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     const mediaResponse = await fetch(targetUrl, {
       headers: {
         apikey: decryptedApiKey,
+        ...(requestedRange ? { range: requestedRange } : {}),
       },
     });
 
@@ -185,14 +308,23 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     const arrayBuffer = await mediaResponse.arrayBuffer();
     const contentType = mediaResponse.headers.get('content-type') ?? attachment.mimeType;
     const contentLength = mediaResponse.headers.get('content-length');
+    const acceptRanges = mediaResponse.headers.get('accept-ranges');
+    const contentRange = mediaResponse.headers.get('content-range');
     const contentDisposition = attachment.fileName
       ? `inline; filename="${encodeURIComponent(attachment.fileName)}"`
       : undefined;
 
+    reply.code(mediaResponse.status);
     reply.header('Content-Type', contentType);
     reply.header('Cache-Control', 'private, max-age=300');
     if (contentLength) {
       reply.header('Content-Length', contentLength);
+    }
+    if (acceptRanges) {
+      reply.header('Accept-Ranges', acceptRanges);
+    }
+    if (contentRange) {
+      reply.header('Content-Range', contentRange);
     }
     if (contentDisposition) {
       reply.header('Content-Disposition', contentDisposition);
@@ -223,7 +355,15 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     const items = await app.prisma.ticketMessage.findMany({
       where: { ticketId: params.ticketId },
       orderBy: { createdAt: 'asc' },
-      include: { senderAgent: true, attachments: true },
+      include: {
+        senderAgent: true,
+        attachments: true,
+        replyToMessage: {
+          include: {
+            attachments: true,
+          },
+        },
+      },
     });
 
     return {
@@ -235,7 +375,31 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         body: message.body,
         senderName: message.senderNameSnapshot,
         externalMessageId: message.externalMessageId,
+        editedAt: message.editedAt,
         createdAt: message.createdAt,
+        reactions: serializeMessageReactions(message.rawPayload),
+        deleted: serializeDeletedState(message.rawPayload),
+        replyToMessage: message.replyToMessage
+          ? {
+              id: message.replyToMessage.id,
+              direction: message.replyToMessage.direction,
+              contentType: message.replyToMessage.contentType,
+              body: message.replyToMessage.body,
+              senderName: message.replyToMessage.senderNameSnapshot,
+              createdAt: message.replyToMessage.createdAt,
+              deleted: serializeDeletedState(message.replyToMessage.rawPayload),
+              attachments: message.replyToMessage.attachments.map((attachment: any) => ({
+                id: attachment.id,
+                fileName: attachment.fileName,
+                mimeType: attachment.mimeType,
+                sizeBytes: normalizeSizeBytes(attachment.sizeBytes),
+                storage: attachment.storage,
+                storageKey: attachment.storageKey,
+                publicUrl: attachment.publicUrl,
+                createdAt: attachment.createdAt,
+              })),
+            }
+          : null,
         senderAgent: message.senderAgent ? { id: message.senderAgent.id, name: message.senderAgent.name } : null,
         attachments: message.attachments.map((attachment: any) => ({
           id: attachment.id,
@@ -253,6 +417,336 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         role: session.role,
       },
     };
+  });
+
+  app.patch('/tickets/:ticketId/messages/:messageId', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.reply');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({
+      ticketId: z.string().uuid(),
+      messageId: z.string().uuid(),
+    }).parse(request.params);
+    const body = updateMessageBodySchema.parse(request.body);
+
+    const ticket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      include: {
+        currentAgent: true,
+        whatsappInstance: true,
+      },
+    });
+
+    if (!ticket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canReplyToTicket(session.userId, ticket)) {
+      return reply.forbidden('Apenas o agente responsavel pode editar mensagens deste ticket.');
+    }
+
+    if (!ticket.externalChatId) {
+      return reply.badRequest('O ticket nao possui um destino do WhatsApp configurado.');
+    }
+
+    const message = await app.prisma.ticketMessage.findFirst({
+      where: {
+        id: params.messageId,
+        ticketId: params.ticketId,
+      },
+      include: {
+        attachments: true,
+      },
+    });
+
+    if (!message) {
+      return reply.notFound('Mensagem nao encontrada.');
+    }
+
+    if (message.direction !== 'outbound') {
+      return reply.badRequest('Somente mensagens enviadas podem ser editadas.');
+    }
+
+    if (message.attachments.length > 0 || message.contentType !== 'text') {
+      return reply.badRequest('Somente mensagens de texto sem anexos podem ser editadas.');
+    }
+
+    if (!message.externalMessageId) {
+      return reply.badRequest('A mensagem nao possui identificador externo para edicao.');
+    }
+
+    const agentSignature = ticket.currentAgent?.name ?? message.senderNameSnapshot ?? session.email;
+    const signedBody = formatAgentSignedBody(agentSignature, body.body);
+
+    const decryptedApiKey = decryptSecret(ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
+    const delivery = await sendEvolutionUpdateMessage({
+      baseUrl: ticket.whatsappInstance.baseUrl,
+      apiKey: decryptedApiKey,
+      instanceName: ticket.whatsappInstance.evolutionInstanceName,
+      remoteJid: ticket.externalChatId,
+      externalMessageId: message.externalMessageId,
+      text: signedBody,
+    });
+
+    if (!delivery.ok) {
+      return reply.code(400).send({
+        message: 'Falha ao editar a mensagem na Evolution API.',
+        status: delivery.status,
+        payload: delivery.payload,
+      });
+    }
+
+    const updatedMessage = await app.prisma.ticketMessage.update({
+      where: { id: message.id },
+      data: {
+        body: signedBody,
+        editedAt: new Date(),
+      },
+    });
+
+    const latestMessage = await app.prisma.ticketMessage.findFirst({
+      where: { ticketId: ticket.id },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+
+    if (latestMessage?.id === message.id) {
+      await app.prisma.ticket.update({
+        where: { id: ticket.id },
+        data: {
+          lastMessagePreview: body.body.trim(),
+        },
+      });
+
+      app.io.emit('ticket.updated', {
+        ticketId: ticket.id,
+        lastMessagePreview: body.body.trim(),
+        unreadCount: ticket.unreadCount,
+      });
+    }
+
+    await app.prisma.ticketEvent.create({
+      data: {
+        id: randomUUID(),
+        ticketId: ticket.id,
+        eventType: 'message_out',
+        actorUserId: session.userId,
+        metadata: {
+          messageId: updatedMessage.id,
+          externalMessageId: updatedMessage.externalMessageId,
+          contentType: updatedMessage.contentType,
+          edited: true,
+        },
+      },
+    });
+
+    app.io.emit('message.updated', {
+      ticketId: ticket.id,
+      messageId: updatedMessage.id,
+      direction: updatedMessage.direction,
+    });
+
+    return {
+      item: {
+        id: updatedMessage.id,
+        ticketId: updatedMessage.ticketId,
+        direction: updatedMessage.direction,
+        contentType: updatedMessage.contentType,
+        body: updatedMessage.body,
+        senderName: updatedMessage.senderNameSnapshot,
+        externalMessageId: updatedMessage.externalMessageId,
+        editedAt: updatedMessage.editedAt,
+        createdAt: updatedMessage.createdAt,
+        reactions: serializeMessageReactions(updatedMessage.rawPayload),
+        deleted: serializeDeletedState(updatedMessage.rawPayload),
+      },
+    };
+  });
+
+  app.post('/tickets/:ticketId/messages/:messageId/reactions', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.reply');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({
+      ticketId: z.string().uuid(),
+      messageId: z.string().uuid(),
+    }).parse(request.params);
+    const body = createReactionBodySchema.parse(request.body);
+
+    const ticket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      include: {
+        currentAgent: true,
+        whatsappInstance: true,
+      },
+    });
+
+    if (!ticket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canReplyToTicket(session.userId, ticket)) {
+      return reply.forbidden('Apenas o agente responsavel pode reagir neste ticket.');
+    }
+
+    const message = await app.prisma.ticketMessage.findFirst({
+      where: {
+        id: params.messageId,
+        ticketId: params.ticketId,
+      },
+    });
+
+    if (!message) {
+      return reply.notFound('Mensagem nao encontrada.');
+    }
+
+    if (!message.externalMessageId) {
+      return reply.badRequest('A mensagem nao possui identificador externo para reação.');
+    }
+
+    const decryptedApiKey = decryptSecret(ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
+    const delivery = await sendEvolutionReaction({
+      baseUrl: ticket.whatsappInstance.baseUrl,
+      apiKey: decryptedApiKey,
+      instanceName: ticket.whatsappInstance.evolutionInstanceName,
+      remoteJid: ticket.externalChatId,
+      externalMessageId: message.externalMessageId,
+      emoji: body.emoji,
+    });
+
+    if (!delivery.ok) {
+      return reply.code(400).send({
+        message: 'Falha ao enviar a reação para a Evolution API.',
+        status: delivery.status,
+        payload: delivery.payload,
+      });
+    }
+
+    const updatedMessage = await app.prisma.ticketMessage.update({
+      where: { id: message.id },
+      data: {
+        rawPayload: withStoredReaction(message.rawPayload, {
+          emoji: body.emoji,
+          actorType: 'agent',
+          actorId: session.userId,
+          actorName: ticket.currentAgent?.name ?? session.email,
+        }),
+      },
+    });
+
+    app.io.emit('message.updated', {
+      ticketId: ticket.id,
+      messageId: updatedMessage.id,
+      direction: updatedMessage.direction,
+    });
+
+    return reply.code(201).send({
+      item: {
+        id: updatedMessage.id,
+        reactions: serializeMessageReactions(updatedMessage.rawPayload),
+        deleted: serializeDeletedState(updatedMessage.rawPayload),
+      },
+    });
+  });
+
+  app.post('/tickets/:ticketId/messages/:messageId/delete', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.reply');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({
+      ticketId: z.string().uuid(),
+      messageId: z.string().uuid(),
+    }).parse(request.params);
+
+    const ticket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      include: {
+        currentAgent: true,
+        whatsappInstance: true,
+      },
+    });
+
+    if (!ticket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canReplyToTicket(session.userId, ticket)) {
+      return reply.forbidden('Apenas o agente responsavel pode apagar mensagens neste ticket.');
+    }
+
+    const message = await app.prisma.ticketMessage.findFirst({
+      where: {
+        id: params.messageId,
+        ticketId: params.ticketId,
+      },
+    });
+
+    if (!message) {
+      return reply.notFound('Mensagem nao encontrada.');
+    }
+
+    if (message.direction !== 'outbound') {
+      return reply.badRequest('Somente mensagens enviadas podem ser apagadas para todos.');
+    }
+
+    if (!message.externalMessageId) {
+      return reply.badRequest('A mensagem nao possui identificador externo para exclusao.');
+    }
+
+    const decryptedApiKey = decryptSecret(ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
+    const delivery = await sendEvolutionDeleteMessage({
+      baseUrl: ticket.whatsappInstance.baseUrl,
+      apiKey: decryptedApiKey,
+      instanceName: ticket.whatsappInstance.evolutionInstanceName,
+      remoteJid: ticket.externalChatId,
+      externalMessageId: message.externalMessageId,
+    });
+
+    if (!delivery.ok) {
+      return reply.code(400).send({
+        message: 'Falha ao apagar a mensagem na Evolution API.',
+        status: delivery.status,
+        payload: delivery.payload,
+      });
+    }
+
+    const updatedMessage = await app.prisma.ticketMessage.update({
+      where: { id: message.id },
+      data: {
+        rawPayload: withDeletedMessage(message.rawPayload),
+      },
+    });
+
+    await app.prisma.ticketEvent.create({
+      data: {
+        id: randomUUID(),
+        ticketId: ticket.id,
+        eventType: 'message_out',
+        actorUserId: session.userId,
+        metadata: {
+          messageId: updatedMessage.id,
+          externalMessageId: updatedMessage.externalMessageId,
+          contentType: updatedMessage.contentType,
+          deleted: true,
+        },
+      },
+    });
+
+    app.io.emit('message.updated', {
+      ticketId: ticket.id,
+      messageId: updatedMessage.id,
+      direction: updatedMessage.direction,
+    });
+
+    return reply.code(201).send({
+      item: {
+        id: updatedMessage.id,
+        deleted: serializeDeletedState(updatedMessage.rawPayload),
+      },
+    });
   });
 
   app.post('/tickets/:ticketId/messages', async (request, reply) => {
@@ -301,6 +795,8 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
 
     const attachmentInput = body.attachment;
     const parsedAttachment = attachmentInput ? parseDataUrl(attachmentInput.dataUrl) : null;
+    const agentSignature = ticket.currentAgent?.name ?? session.email;
+    const signedBody = trimmedBody ? formatAgentSignedBody(agentSignature, trimmedBody) : '';
 
     const delivery = attachmentInput
       ? attachmentInput.kind === 'audio'
@@ -321,7 +817,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
             fileName: attachmentInput.fileName,
             mimeType: attachmentInput.mimeType || parsedAttachment?.mimeType || 'application/octet-stream',
             base64: parsedAttachment?.base64 ?? '',
-            caption: trimmedBody || undefined,
+            caption: signedBody || undefined,
             quotedMessageId: quotedMessage?.externalMessageId ?? undefined,
           })
       : await sendEvolutionText({
@@ -329,7 +825,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
           apiKey: decryptedApiKey,
           instanceName: ticket.whatsappInstance.evolutionInstanceName,
           remoteJid: ticket.externalChatId,
-          text: trimmedBody,
+          text: signedBody,
           quotedMessageId: quotedMessage?.externalMessageId ?? undefined,
         });
 
@@ -349,7 +845,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         externalMessageId: pickDeliveryMessageId(delivery.payload, delivery.messageId),
         direction: 'outbound',
         contentType: attachmentInput?.kind ?? 'text',
-        body: trimmedBody || (attachmentInput ? `[${attachmentInput.kind}] ${attachmentInput.fileName}` : null),
+        body: signedBody || (attachmentInput ? `[${attachmentInput.kind}] ${attachmentInput.fileName}` : null),
         senderNameSnapshot: ticket.currentAgent?.name ?? session.email,
         replyToMessageId: body.replyToMessageId,
         deliveredAt: new Date(),
@@ -357,7 +853,9 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (attachmentInput) {
-      const fallbackPublicUrl = attachmentInput.kind === 'image' ? attachmentInput.dataUrl : null;
+      const fallbackPublicUrl = attachmentInput.kind === 'image' || attachmentInput.kind === 'audio'
+        ? attachmentInput.dataUrl
+        : null;
       const resolvedPublicUrl = pickAttachmentPublicUrl(delivery.payload) ?? fallbackPublicUrl;
 
       await app.prisma.attachment.create({

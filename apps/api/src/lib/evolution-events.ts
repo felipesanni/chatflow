@@ -26,6 +26,93 @@ function normalizeConnectionPhone(value: unknown) {
   return digits.length > 0 ? digits : null;
 }
 
+function hasUsableEditedBody(value: string | null | undefined) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return false;
+  }
+
+  return normalized.toLowerCase() !== 'mensagem vazia';
+}
+
+function normalizeStoredReactions(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as Array<{
+      emoji: string;
+      actorType: 'agent' | 'contact';
+      actorId: string | null;
+      actorName: string | null;
+      createdAt: string;
+    }>;
+  }
+
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object') {
+      return [];
+    }
+
+    const record = item as Record<string, unknown>;
+    const emoji = typeof record.emoji === 'string' ? record.emoji.trim() : '';
+    if (!emoji) {
+      return [];
+    }
+
+    const actorType = record.actorType === 'agent' ? 'agent' : 'contact';
+    return [{
+      emoji,
+      actorType,
+      actorId: typeof record.actorId === 'string' ? record.actorId : null,
+      actorName: typeof record.actorName === 'string' ? record.actorName : null,
+      createdAt: typeof record.createdAt === 'string' ? record.createdAt : new Date().toISOString(),
+    }];
+  });
+}
+
+function withStoredReaction(
+  rawPayload: Prisma.JsonValue | null | undefined,
+  reaction: {
+    emoji: string;
+    actorType: 'agent' | 'contact';
+    actorId: string | null;
+    actorName: string | null;
+  },
+) {
+  const payload = rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
+    ? { ...(rawPayload as Record<string, unknown>) }
+    : {};
+
+  const current = normalizeStoredReactions(payload.chatflowReactions);
+  const next = [
+    ...current.filter((item) => !(item.actorType === reaction.actorType && item.actorId === reaction.actorId && item.actorName === reaction.actorName)),
+    {
+      ...reaction,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+
+  payload.chatflowReactions = next;
+  return payload as Prisma.InputJsonValue;
+}
+
+function withDeletedMessage(rawPayload: Prisma.JsonValue | null | undefined) {
+  const payload = rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
+    ? { ...(rawPayload as Record<string, unknown>) }
+    : {};
+
+  payload.chatflowDeleted = {
+    isDeleted: true,
+    deletedAt: new Date().toISOString(),
+    scope: 'everyone',
+  };
+
+  return payload as Prisma.InputJsonValue;
+}
+
 async function findOrCreateCustomer(
   prisma: FastifyInstance['prisma'],
   params: { name: string; phoneE164: string; avatarUrl?: string | null },
@@ -191,6 +278,187 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
 
   try {
     const decryptedApiKey = decryptSecret(instance.apiKeyEncrypted, env.SESSION_SECRET);
+
+    if (parsed.isEdited) {
+      const existingMessage = await app.prisma.ticketMessage.findFirst({
+        where: {
+          externalMessageId: parsed.externalMessageId,
+          ticket: {
+            whatsappInstanceId: instance.id,
+          },
+        },
+        include: {
+          ticket: true,
+        },
+      });
+
+      if (!existingMessage || !hasUsableEditedBody(parsed.body)) {
+        await finalize(202, 'Evento de edicao sem mensagem base localizada.');
+        return {
+          statusCode: 202,
+          body: {
+            message: 'Evento de edicao registrado sem atualizar mensagem.',
+            event: parsed.event,
+            externalMessageId: parsed.externalMessageId,
+          },
+        };
+      }
+
+      const updatedMessage = await app.prisma.ticketMessage.update({
+        where: { id: existingMessage.id },
+        data: {
+          body: parsed.body,
+          contentType: parsed.contentType,
+          senderNameSnapshot: parsed.pushName ?? parsed.phone ?? existingMessage.senderNameSnapshot,
+          rawPayload: parsed.rawPayload as Prisma.InputJsonValue,
+          editedAt: parsed.editedAt ?? new Date(),
+        },
+      });
+
+      const latestMessage = await app.prisma.ticketMessage.findFirst({
+        where: { ticketId: existingMessage.ticketId },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      });
+
+      if (latestMessage?.id === existingMessage.id) {
+        await app.prisma.ticket.update({
+          where: { id: existingMessage.ticketId },
+          data: {
+            lastMessagePreview: parsed.body,
+          },
+        });
+
+        app.io.emit('ticket.updated', {
+          ticketId: existingMessage.ticketId,
+          lastMessagePreview: parsed.body,
+          unreadCount: existingMessage.ticket.unreadCount,
+        });
+      }
+
+      app.io.emit('message.updated', {
+        ticketId: existingMessage.ticketId,
+        messageId: updatedMessage.id,
+        direction: updatedMessage.direction,
+      });
+
+      await finalize(202);
+
+      return {
+        statusCode: 202,
+        body: {
+          message: 'Edicao de mensagem processada.',
+          event: parsed.event,
+          ticketId: existingMessage.ticketId,
+          messageId: updatedMessage.id,
+        },
+      };
+    }
+
+    if (parsed.reaction) {
+      const targetMessage = await app.prisma.ticketMessage.findFirst({
+        where: {
+          externalMessageId: parsed.reaction.targetExternalMessageId,
+          ticket: {
+            whatsappInstanceId: instance.id,
+          },
+        },
+      });
+
+      if (!targetMessage) {
+        await finalize(202, 'Evento de reacao sem mensagem base localizada.');
+        return {
+          statusCode: 202,
+          body: {
+            message: 'Evento de reacao registrado sem atualizar mensagem.',
+            event: parsed.event,
+            externalMessageId: parsed.reaction.targetExternalMessageId,
+          },
+        };
+      }
+
+      await app.prisma.ticketMessage.update({
+        where: { id: targetMessage.id },
+        data: {
+          rawPayload: withStoredReaction(targetMessage.rawPayload, {
+            emoji: parsed.reaction.emoji,
+            actorType: parsed.fromMe ? 'agent' : 'contact',
+            actorId: parsed.fromMe ? 'external-device' : parsed.phone,
+            actorName: parsed.pushName ?? parsed.phone ?? parsed.remoteJid,
+          }),
+        },
+      });
+
+      app.io.emit('message.updated', {
+        ticketId: targetMessage.ticketId,
+        messageId: targetMessage.id,
+        direction: targetMessage.direction,
+      });
+
+      await finalize(202);
+
+      return {
+        statusCode: 202,
+        body: {
+          message: 'Reacao processada.',
+          event: parsed.event,
+          ticketId: targetMessage.ticketId,
+          messageId: targetMessage.id,
+        },
+      };
+    }
+
+    if (parsed.deletion) {
+      const targetMessage = await app.prisma.ticketMessage.findFirst({
+        where: {
+          externalMessageId: parsed.deletion.targetExternalMessageId,
+          ticket: {
+            whatsappInstanceId: instance.id,
+          },
+        },
+        include: {
+          ticket: true,
+        },
+      });
+
+      if (!targetMessage) {
+        await finalize(202, 'Evento de exclusao sem mensagem base localizada.');
+        return {
+          statusCode: 202,
+          body: {
+            message: 'Evento de exclusao registrado sem atualizar mensagem.',
+            event: parsed.event,
+            externalMessageId: parsed.deletion.targetExternalMessageId,
+          },
+        };
+      }
+
+      await app.prisma.ticketMessage.update({
+        where: { id: targetMessage.id },
+        data: {
+          rawPayload: withDeletedMessage(targetMessage.rawPayload),
+        },
+      });
+
+      app.io.emit('message.updated', {
+        ticketId: targetMessage.ticketId,
+        messageId: targetMessage.id,
+        direction: targetMessage.direction,
+      });
+
+      await finalize(202);
+
+      return {
+        statusCode: 202,
+        body: {
+          message: 'Exclusao de mensagem processada.',
+          event: parsed.event,
+          ticketId: targetMessage.ticketId,
+          messageId: targetMessage.id,
+        },
+      };
+    }
+
     const profilePictureResponse = parsed.isGroup || !parsed.remoteJid
       ? null
       : await fetchEvolutionProfilePictureUrl({
