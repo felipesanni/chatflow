@@ -3075,14 +3075,15 @@ export default function HomePage() {
                           acc[reaction.emoji] = (acc[reaction.emoji] ?? 0) + 1;
                           return acc;
                         }, {});
+                        const messageAttachments = message.attachments ?? [];
                         const shouldHideMessageBody =
-                          hasAttachment &&
+                          messageAttachments.length > 0 &&
                           (
                             !normalizedBody
                           || /^(imagem|audio|documento|video) recebido$/i.test(normalizedBody)
                           || /^\[(image|audio|document|video)\]\s/i.test(normalizedBody)
                         );
-                        const shouldRenderAttachments = Boolean(message.attachments?.length);
+                        const shouldRenderAttachments = messageAttachments.length > 0;
 
                       if (system) {
                         return (
@@ -3114,7 +3115,7 @@ export default function HomePage() {
                                 ) : null}
                                 {shouldRenderAttachments ? (
                                   <div className={`${message.body && !shouldHideMessageBody ? "mb-3" : ""} space-y-3 ${isDeletedMessage ? "opacity-55 saturate-0" : ""}`}>
-                                    {message.attachments.map((attachment) => (
+                                    {messageAttachments.map((attachment) => (
                                       <div key={attachment.id} className="overflow-hidden rounded-[20px] border border-slate-200/80 bg-white/70">
                                       {attachment.mimeType.startsWith("image/") ? (
                                         <a href={resolveAttachmentUrl(selectedTicket.id, attachment)} target="_blank" rel="noreferrer" className="block">
@@ -3146,7 +3147,7 @@ export default function HomePage() {
                                     {message.body}
                                   </div>
                                 ) : null}
-                                {!message.body && (!message.attachments || message.attachments.length === 0) ? (
+                                {!message.body && messageAttachments.length === 0 ? (
                                   <div className={`whitespace-pre-wrap text-[15px] leading-6 ${isDeletedMessage ? "text-slate-400 line-through decoration-2" : ""}`}>
                                     {`[${message.contentType}]`}
                                   </div>
