@@ -571,6 +571,7 @@ export function parseEvolutionPayload(
   const message = pickMessage(payload);
   const normalizedEvent = normalizeEvolutionEventName(options.event ?? payload.event);
   const resolvedContent = resolveMessageContent(message);
+  const hasDirectUpdateMessage = Boolean(pickObject(message?.update?.message));
   const effectiveKey = resolvedContent.targetKey ?? pickObject(message?.key);
   const remoteJid = typeof effectiveKey?.remoteJid === 'string'
     ? effectiveKey.remoteJid
@@ -610,7 +611,10 @@ export function parseEvolutionPayload(
   );
   const payloadInstance = typeof payload.instance === 'string' ? payload.instance : null;
   const groupName = extractGroupName(payload, message, remoteJid);
-  const isEdited = resolvedContent.isEdited || normalizedEvent === 'MESSAGES_EDITED';
+  const isEdited =
+    resolvedContent.isEdited
+    || normalizedEvent === 'MESSAGES_EDITED'
+    || (normalizedEvent === 'MESSAGES_UPDATE' && hasDirectUpdateMessage);
 
   return {
     event: normalizedEvent,

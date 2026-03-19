@@ -702,7 +702,6 @@ export default function HomePage() {
   const [transferForm, setTransferForm] = React.useState({
     agentId: "",
     queueId: "",
-    reason: "",
   });
   const socketRef = React.useRef<Socket | null>(null);
   const userMenuRef = React.useRef<HTMLDivElement | null>(null);
@@ -1100,11 +1099,10 @@ export default function HomePage() {
   React.useEffect(() => {
     setShowTransferPanel(false);
     setTransferForm({
-      agentId: selectedTicket?.currentAgent?.id ?? "",
-      queueId: selectedTicket?.currentQueue?.id ?? "",
-      reason: "",
+      agentId: "",
+      queueId: "",
     });
-  }, [selectedTicket?.currentAgent?.id, selectedTicket?.currentQueue?.id, selectedTicketId]);
+  }, [selectedTicketId]);
 
   React.useEffect(() => {
     if (activeTab === "grupos" && !canViewGroups) {
@@ -1789,19 +1787,17 @@ export default function HomePage() {
 
     setTransferLoading(true);
     try {
-      await apiFetch(`/tickets/${selectedTicketId}/transfer`, {
-        method: "POST",
-        body: JSON.stringify({
-          agentId: transferForm.agentId || null,
-          queueId: transferForm.queueId || null,
-          reason: transferForm.reason.trim() || undefined,
-        }),
-      });
+        await apiFetch(`/tickets/${selectedTicketId}/transfer`, {
+          method: "POST",
+          body: JSON.stringify({
+            agentId: transferForm.agentId || null,
+            queueId: transferForm.queueId || null,
+          }),
+        });
 
-      await refreshTickets();
-      setShowTransferPanel(false);
-      setTransferForm((current) => ({ ...current, reason: "" }));
-      setPanelMessage("Ticket transferido com sucesso.");
+        await refreshTickets();
+        setShowTransferPanel(false);
+        setPanelMessage("Ticket transferido com sucesso.");
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao transferir ticket.");
     } finally {
@@ -3726,8 +3722,8 @@ export default function HomePage() {
               ) : null}
             </div>
             {showTransferPanel && canTransferSelectedTicket ? (
-              <div className="absolute inset-0 z-40 flex items-start justify-center bg-slate-950/18 px-4 py-20 backdrop-blur-[2px]">
-                <div className="w-full max-w-3xl overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+              <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+                <div className="my-auto flex w-full max-w-3xl max-h-[calc(100vh-3rem)] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)] sm:max-h-[calc(100vh-5rem)]">
                   <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
                     <div>
                       <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Transferir atendimento</div>
@@ -3741,15 +3737,19 @@ export default function HomePage() {
                       <X className="h-4 w-4" />
                     </button>
                   </div>
-                  <form onSubmit={handleTransferTicket} className="space-y-5 px-6 py-6">
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <label className="block text-sm font-medium text-slate-600">
-                        Agente de destino
-                        <select
-                          value={transferForm.agentId}
-                          onChange={(event) => setTransferForm((current) => ({ ...current, agentId: event.target.value }))}
-                          className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-                        >
+                  <form onSubmit={handleTransferTicket} className="flex min-h-0 flex-1 flex-col">
+                      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-6">
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <label className="block text-sm font-medium text-slate-600">
+                          Agente de destino
+                          <div className="mt-1 text-xs font-normal text-slate-400">
+                            Opcional. Deixe em branco para devolver o ticket para aguardando na fila escolhida.
+                          </div>
+                          <select
+                            value={transferForm.agentId}
+                            onChange={(event) => setTransferForm((current) => ({ ...current, agentId: event.target.value }))}
+                            className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                          >
                           <option value="">Sem agente definido</option>
                           {agents.map((agent) => (
                             <option key={agent.id} value={agent.id}>
@@ -3772,21 +3772,15 @@ export default function HomePage() {
                               {queue.name}
                             </option>
                           ))}
-                        </select>
-                      </label>
-                    </div>
+                          </select>
+                        </label>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                        Escolhendo apenas a fila, o ticket volta para <span className="font-semibold text-slate-700">aguardando</span> até alguém dessa fila aceitar o atendimento.
+                      </div>
+                      </div>
 
-                    <label className="block text-sm font-medium text-slate-600">
-                      Motivo
-                      <input
-                        value={transferForm.reason}
-                        onChange={(event) => setTransferForm((current) => ({ ...current, reason: event.target.value }))}
-                        placeholder="Ex.: redistribuição, escalonamento..."
-                        className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-                      />
-                    </label>
-
-                    <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                    <div className="flex flex-col-reverse gap-3 border-t border-slate-200 px-6 py-5 sm:flex-row sm:justify-end">
                       <button
                         type="button"
                         onClick={() => setShowTransferPanel(false)}
@@ -4566,9 +4560,9 @@ export default function HomePage() {
       </div>
 
       {managementModalContent ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-8">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/45 px-4 py-6 sm:py-8">
           <div className="absolute inset-0" onClick={closeManagementModal} aria-hidden="true" />
-          <section className="relative z-10 w-full max-w-3xl rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_25px_80px_rgba(15,23,42,0.28)]">
+          <section className="relative z-10 my-auto flex w-full max-w-3xl max-h-[calc(100vh-3rem)] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_25px_80px_rgba(15,23,42,0.28)] sm:max-h-[calc(100vh-4rem)]">
             <div className="mb-5 flex items-start justify-between gap-4">
               <div>
                 <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Cadastro</div>
@@ -4585,7 +4579,9 @@ export default function HomePage() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            {managementModalContent.content}
+            <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+              {managementModalContent.content}
+            </div>
           </section>
         </div>
       ) : null}

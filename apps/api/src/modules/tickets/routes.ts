@@ -22,7 +22,6 @@ const createTicketBodySchema = z.object({
 const transferTicketBodySchema = z.object({
   agentId: z.string().uuid().optional().nullable(),
   queueId: z.string().uuid().optional().nullable(),
-  reason: z.string().trim().min(1).optional(),
 }).refine((value) => value.agentId || value.queueId, {
   message: 'Informe um agente, uma fila ou ambos para transferir o ticket.',
 });
@@ -478,7 +477,9 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    const reason = body.reason?.trim() || 'Transferencia manual';
+    const reason = body.agentId
+      ? 'Transferencia manual'
+      : 'Transferencia para fila sem agente definido';
 
     const ticket = await app.prisma.ticket.update({
       where: { id: params.ticketId },
