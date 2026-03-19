@@ -805,7 +805,7 @@ export default function HomePage() {
     selectedTicket &&
     selectedTicket.status === "closed" &&
     currentUser.permissions["tickets.close"] &&
-    isSelectedTicketOwnedByCurrentUser,
+    (isSelectedTicketOwnedByCurrentUser || currentUser.role === "admin"),
   );
   const canSendToSelectedTicket = Boolean(
     selectedTicket &&

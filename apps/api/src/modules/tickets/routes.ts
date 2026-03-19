@@ -515,7 +515,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canManageTicket(session.userId, currentTicket)) {
+    if (session.role !== 'admin' && !canManageTicket(session.userId, currentTicket)) {
       return reply.forbidden('Apenas o agente responsavel pode reabrir este ticket.');
     }
 
