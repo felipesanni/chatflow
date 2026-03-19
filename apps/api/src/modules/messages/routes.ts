@@ -135,6 +135,93 @@ function pickMediaBase64(payload: any) {
     ?? null;
 }
 
+function normalizeMimeFamily(value: string | null | undefined) {
+  return (value ?? '')
+    .split(';')[0]
+    ?.trim()
+    .toLowerCase();
+}
+
+function canTrustDirectMediaResponse(expectedMimeType: string, responseContentType: string | null) {
+  const expected = normalizeMimeFamily(expectedMimeType);
+  const received = normalizeMimeFamily(responseContentType);
+
+  if (!received) {
+    return true;
+  }
+
+  if (received === 'application/octet-stream') {
+    return true;
+  }
+
+  if (received.includes('json') || received.startsWith('text/')) {
+    return false;
+  }
+
+  if (expected.startsWith('image/')) {
+    return received.startsWith('image/');
+  }
+
+  if (expected.startsWith('audio/')) {
+    return received.startsWith('audio/');
+  }
+
+  if (expected.startsWith('video/')) {
+    return received.startsWith('video/');
+  }
+
+  if (expected === 'application/pdf') {
+    return received === 'application/pdf';
+  }
+
+  if (expected.startsWith('application/')) {
+    return received === expected;
+  }
+
+  return true;
+}
+
+async function parseMediaResponseAsDataUrl(response: Response, fallbackMimeType: string) {
+  const contentType = response.headers.get('content-type') ?? '';
+
+  if (contentType.includes('application/json')) {
+    let payload: any = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+
+    const base64 = pickMediaBase64(payload);
+    if (typeof base64 !== 'string' || base64.trim().length === 0) {
+      return null;
+    }
+
+    if (base64.startsWith('data:')) {
+      return base64;
+    }
+
+    const mimeType = pickMediaMimeType(payload, fallbackMimeType || 'application/octet-stream');
+    return `data:${mimeType};base64,${base64}`;
+  }
+
+  if (contentType.startsWith('text/')) {
+    const rawText = (await response.text()).trim();
+    if (!rawText) {
+      return null;
+    }
+
+    if (rawText.startsWith('data:')) {
+      return rawText;
+    }
+
+    const normalizedText = rawText.replace(/^["']|["']$/g, '');
+    return `data:${fallbackMimeType || 'application/octet-stream'};base64,${normalizedText}`;
+  }
+
+  return null;
+}
+
 async function fetchEvolutionAttachmentDataUrl(params: {
   baseUrl: string;
   apiKey: string;
@@ -457,43 +544,52 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         ? `inline; filename="${encodeURIComponent(attachment.fileName)}"`
         : undefined;
 
+      let fallbackDataUrl: string | null = null;
+
       if (mediaResponse?.ok) {
-        const arrayBuffer = await mediaResponse.arrayBuffer();
-        const contentType = mediaResponse.headers.get('content-type') ?? attachment.mimeType;
-        const contentLength = mediaResponse.headers.get('content-length');
-        const acceptRanges = mediaResponse.headers.get('accept-ranges');
-        const contentRange = mediaResponse.headers.get('content-range');
+        const responseContentType = mediaResponse.headers.get('content-type');
+        const dataUrlFromDirectResponse = await parseMediaResponseAsDataUrl(mediaResponse.clone(), attachment.mimeType);
 
-        reply.code(mediaResponse.status);
-        reply.header('Content-Type', contentType);
-        reply.header('Cache-Control', 'private, max-age=300');
-        if (contentLength) {
-          reply.header('Content-Length', contentLength);
-        }
-        if (acceptRanges) {
-          reply.header('Accept-Ranges', acceptRanges);
-        }
-        if (contentRange) {
-          reply.header('Content-Range', contentRange);
-        }
-        if (contentDisposition) {
-          reply.header('Content-Disposition', contentDisposition);
-        }
+        if (dataUrlFromDirectResponse) {
+          fallbackDataUrl = dataUrlFromDirectResponse;
+        } else if (canTrustDirectMediaResponse(attachment.mimeType, responseContentType)) {
+          const arrayBuffer = await mediaResponse.arrayBuffer();
+          const contentType = responseContentType ?? attachment.mimeType;
+          const contentLength = mediaResponse.headers.get('content-length');
+          const acceptRanges = mediaResponse.headers.get('accept-ranges');
+          const contentRange = mediaResponse.headers.get('content-range');
 
-        return reply.send(Buffer.from(arrayBuffer));
+          reply.code(mediaResponse.status);
+          reply.header('Content-Type', contentType);
+          reply.header('Cache-Control', 'private, max-age=300');
+          if (contentLength) {
+            reply.header('Content-Length', contentLength);
+          }
+          if (acceptRanges) {
+            reply.header('Accept-Ranges', acceptRanges);
+          }
+          if (contentRange) {
+            reply.header('Content-Range', contentRange);
+          }
+          if (contentDisposition) {
+            reply.header('Content-Disposition', contentDisposition);
+          }
+
+          return reply.send(Buffer.from(arrayBuffer));
+        }
       }
 
-      const fallbackDataUrl = attachment.message.externalMessageId
-        ? await fetchEvolutionAttachmentDataUrl({
-            baseUrl: attachment.message.ticket.whatsappInstance.baseUrl,
-            apiKey: decryptedApiKey,
-            instanceName: attachment.message.ticket.whatsappInstance.evolutionInstanceName,
-            remoteJid: attachment.message.ticket.externalChatId,
-            externalMessageId: attachment.message.externalMessageId,
-            mimeType: attachment.mimeType,
-            fromMe: attachment.message.direction === 'outbound',
-          })
-        : null;
+      if (!fallbackDataUrl && attachment.message.externalMessageId) {
+        fallbackDataUrl = await fetchEvolutionAttachmentDataUrl({
+          baseUrl: attachment.message.ticket.whatsappInstance.baseUrl,
+          apiKey: decryptedApiKey,
+          instanceName: attachment.message.ticket.whatsappInstance.evolutionInstanceName,
+          remoteJid: attachment.message.ticket.externalChatId,
+          externalMessageId: attachment.message.externalMessageId,
+          mimeType: attachment.mimeType,
+          fromMe: attachment.message.direction === 'outbound',
+        });
+      }
 
       if (fallbackDataUrl) {
         const parsed = parseDataUrl(fallbackDataUrl);

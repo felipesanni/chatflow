@@ -196,4 +196,27 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
       },
     });
   });
+
+  app.delete('/customers/:customerId', async (request, reply) => {
+    if (!(await requirePermission(app, request, reply, 'contacts.manage'))) return;
+
+    const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
+
+    const existing = await app.prisma.customer.findUnique({
+      where: { id: params.customerId },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      return reply.notFound('Contato nao encontrado.');
+    }
+
+    await app.prisma.customer.delete({
+      where: { id: params.customerId },
+    });
+
+    return reply.send({
+      message: 'Contato excluido.',
+    });
+  });
 };

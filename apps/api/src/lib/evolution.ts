@@ -94,7 +94,74 @@ function unwrapMessageContainer(value: unknown): Record<string, any> | null {
 
 function normalizePhone(jid: string | undefined) {
   if (!jid) return null;
-  return jid.split('@')[0]?.replace(/[^0-9]/g, '') || null;
+
+  const [localPart, domain = ''] = jid.split('@');
+  const normalizedDomain = domain.toLowerCase();
+
+  if (!localPart || !['s.whatsapp.net', 'c.us'].includes(normalizedDomain)) {
+    return null;
+  }
+
+  const digits = localPart.replace(/[^0-9]/g, '');
+  if (!digits) {
+    return null;
+  }
+
+  if (digits.length < 8 || digits.length > 15) {
+    return null;
+  }
+
+  if (digits.startsWith('0')) {
+    return null;
+  }
+
+  if (/^(\d)\1+$/.test(digits)) {
+    return null;
+  }
+
+  return digits;
+}
+
+function normalizePhoneCandidate(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  const fromJid = normalizePhone(trimmed);
+  if (fromJid) {
+    return fromJid;
+  }
+
+  const digits = trimmed.replace(/[^0-9]/g, '');
+  if (!digits) {
+    return null;
+  }
+
+  if (digits.length < 8 || digits.length > 15) {
+    return null;
+  }
+
+  if (digits.startsWith('0')) {
+    return null;
+  }
+
+  if (/^(\d)\1+$/.test(digits)) {
+    return null;
+  }
+
+  return digits;
+}
+
+function pickPhoneCandidate(values: unknown[]) {
+  for (const value of values) {
+    const normalized = normalizePhoneCandidate(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
 }
 
 function normalizeMediaUrl(value: unknown) {
@@ -197,9 +264,16 @@ function findEditedProtocolMessage(value: unknown, depth = 0): { editedMessage: 
     };
   }
 
+  const directEditedMessage = unwrapMessageContainer(record.editedMessage);
+  if (directEditedMessage) {
+    return {
+      editedMessage: directEditedMessage,
+      targetKey: pickObject(record.key),
+    };
+  }
+
   const nestedCandidates = [
     record.message,
-    record.editedMessage,
     record.ephemeralMessage,
     record.viewOnceMessage,
     record.viewOnceMessageV2,
@@ -492,7 +566,26 @@ export function parseEvolutionPayload(
   const fromMe = typeof effectiveKey?.fromMe === 'boolean'
     ? effectiveKey.fromMe
     : message?.key?.fromMe === true;
-  const phone = normalizePhone(remoteJid ?? undefined);
+  const data = pickObject(payload.data);
+  const messageKey = pickObject(message?.key);
+  const phone = pickPhoneCandidate([
+    remoteJid,
+    effectiveKey?.participant,
+    message?.participant,
+    messageKey?.participant,
+    data?.participant,
+    data?.sender,
+    data?.senderJid,
+    data?.senderLid,
+    data?.phone,
+    data?.number,
+    data?.contact,
+    pickObject(data?.key)?.participant,
+    pickObject(data?.key)?.remoteJid,
+    pickObject(data?.sender)?.id,
+    pickObject(data?.sender)?.jid,
+    pickObject(data?.sender)?.phone,
+  ]);
   const parsedContent = extractText(message, resolvedContent.content);
   const reaction = extractReactionPayload(message, resolvedContent.content);
   const deletion = findDeletedProtocolMessage(
@@ -512,6 +605,7 @@ export function parseEvolutionPayload(
     fromMe,
     phone,
     pushName: message?.pushName ?? null,
+    verifiedBizName: message?.verifiedBizName ?? null,
     groupName,
     body: parsedContent.body,
     contentType: parsedContent.contentType,

@@ -13,7 +13,7 @@ const ticketListQuerySchema = z.object({
 });
 
 const createTicketBodySchema = z.object({
-  customerName: z.string().trim().min(1, 'Informe o nome do contato.'),
+  customerName: z.string().trim().min(1).optional(),
   phone: z.string().trim().min(8, 'Informe um telefone valido.'),
   whatsappInstanceId: z.string().uuid('Selecione uma instancia valida.'),
   queueId: z.string().uuid().optional().nullable(),
@@ -55,7 +55,7 @@ function normalizeRemoteJid(phone: string) {
 
 async function findOrCreateCustomer(
   prisma: FastifyPluginAsync extends never ? never : any,
-  params: { name: string; phoneE164: string },
+  params: { name?: string | null; phoneE164: string },
 ) {
   const existing = await prisma.customer.findFirst({
     where: { phoneE164: params.phoneE164 },
@@ -63,7 +63,7 @@ async function findOrCreateCustomer(
   });
 
   if (existing) {
-    if (existing.name !== params.name) {
+    if (params.name && existing.name !== params.name) {
       return prisma.customer.update({
         where: { id: existing.id },
         data: { name: params.name },
@@ -76,7 +76,7 @@ async function findOrCreateCustomer(
   return prisma.customer.create({
     data: {
       id: randomUUID(),
-      name: params.name,
+      name: params.name ?? params.phoneE164,
       phoneE164: params.phoneE164,
     },
   });
@@ -282,9 +282,10 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const customer = await findOrCreateCustomer(app.prisma, {
-      name: body.customerName,
+      name: body.customerName ?? null,
       phoneE164: normalizedPhone,
     });
+    const customerName = body.customerName ?? customer.name ?? normalizedPhone;
 
     const ticket = await app.prisma.ticket.create({
       data: {
@@ -295,7 +296,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         currentQueueId: queueId,
         externalChatId: remoteJid,
         externalContactId: normalizedPhone,
-        customerNameSnapshot: body.customerName,
+        customerNameSnapshot: customerName,
         status: 'open',
         unreadCount: 0,
         isGroup: false,

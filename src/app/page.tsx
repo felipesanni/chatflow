@@ -416,6 +416,22 @@ function formatPhoneInput(value: string) {
   return `+${digits.slice(0, 2)} (${digits.slice(2, 4)}) ${digits.slice(4, 9)}-${digits.slice(9)}`;
 }
 
+function isReliablePhoneValue(value: string | null | undefined) {
+  if (!value) return false;
+
+  const digits = value.replace(/\D/g, "");
+  if (!digits) return false;
+  if (digits.length < 8 || digits.length > 15) return false;
+  if (digits.startsWith("0")) return false;
+  if (/^(\d)\1+$/.test(digits)) return false;
+  return true;
+}
+
+function formatContactIdentity(value: string | null | undefined) {
+  if (!value) return "Identificador indisponível";
+  return isReliablePhoneValue(value) ? formatPhoneInput(value) : value;
+}
+
 function stripAgentSignature(body: string | null | undefined, agentName: string | null | undefined) {
   const rawBody = body ?? "";
   const normalizedAgentName = (agentName ?? "").trim();
@@ -465,12 +481,54 @@ function resolveAttachmentUrl(ticketId: string, attachment: AttachmentItem) {
 }
 
 function initials(name: string) {
-  return name
-    .split(" ")
-    .filter(Boolean)
+  const normalizedWords = name
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .match(/[\p{L}\p{N}]+/gu) ?? [];
+
+  const value = normalizedWords
     .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
+    .map((part) => Array.from(part)[0]?.toUpperCase() ?? "")
     .join("");
+
+  return value || "C";
+}
+
+function SafeAvatar({
+  src,
+  name,
+  alt,
+  className,
+  textClassName,
+}: {
+  src?: string | null;
+  name: string;
+  alt: string;
+  className: string;
+  textClassName?: string;
+}) {
+  const [imageFailed, setImageFailed] = React.useState(false);
+
+  React.useEffect(() => {
+    setImageFailed(false);
+  }, [src]);
+
+  const showImage = Boolean(src) && !imageFailed;
+
+  return (
+    <div className={className}>
+      {showImage ? (
+        <img
+          src={src ?? undefined}
+          alt={alt}
+          className="h-full w-full object-cover"
+          onError={() => setImageFailed(true)}
+        />
+      ) : (
+        <span className={textClassName}>{initials(name)}</span>
+      )}
+    </div>
+  );
 }
 
 function traduzirStatusTicket(status: "open" | "pending" | "closed") {
@@ -536,6 +594,7 @@ export default function HomePage() {
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
   const [showOnlyUnread, setShowOnlyUnread] = React.useState(false);
   const [showOnlyMine, setShowOnlyMine] = React.useState(false);
+  const [showAllTickets, setShowAllTickets] = React.useState(false);
   const [selectedQueueFilter, setSelectedQueueFilter] = React.useState<string>("all");
   const [showTicketDetails, setShowTicketDetails] = React.useState(false);
   const [showTransferPanel, setShowTransferPanel] = React.useState(false);
@@ -571,11 +630,30 @@ export default function HomePage() {
   const [queueForm, setQueueForm] = React.useState({ name: "", color: "#1A1C32" });
   const [quickReplyForm, setQuickReplyForm] = React.useState({ shortcut: "", content: "", isActive: true });
   const [conversationForm, setConversationForm] = React.useState({
-    customerName: "",
     phone: "",
     whatsappInstanceId: "",
     queueId: "",
+    customerSearch: "",
   });
+  const normalizedConversationPhone = onlyPhoneDigits(conversationForm.phone);
+  const matchingConversationCustomer = React.useMemo(
+    () => customers.find((customer) => customer.phone && onlyPhoneDigits(customer.phone) === normalizedConversationPhone) ?? null,
+    [customers, normalizedConversationPhone],
+  );
+  const filteredConversationCustomers = React.useMemo(() => {
+    const query = conversationForm.customerSearch.trim().toLowerCase();
+    if (!query) return [];
+
+    const digitsQuery = onlyPhoneDigits(query);
+
+    return customers
+      .filter((customer) => {
+        const haystack = [customer.name, customer.phone ?? "", customer.companyName ?? ""].join(" ").toLowerCase();
+        const phoneDigits = onlyPhoneDigits(customer.phone ?? "");
+        return haystack.includes(query) || (digitsQuery.length > 0 && phoneDigits.includes(digitsQuery));
+      })
+      .slice(0, 6);
+  }, [conversationForm.customerSearch, customers]);
   const [customerForm, setCustomerForm] = React.useState({
     name: "",
     phone: "",
@@ -690,8 +768,9 @@ export default function HomePage() {
     const search = searchQuery.trim().toLowerCase();
 
     return tickets.filter((ticket) => {
-      const matchesTab =
-        activeTab === "grupos"
+      const matchesTab = showAllTickets
+        ? true
+        : activeTab === "grupos"
           ? ticket.isGroup
           : activeTab === "aguardando"
             ? ticket.status === "pending" && !ticket.isGroup
@@ -732,7 +811,7 @@ export default function HomePage() {
           .toLowerCase()
           .includes(search);
     });
-  }, [activeTab, searchQuery, selectedQueueFilter, showOnlyMine, showOnlyUnread, tickets, user?.id]);
+  }, [activeTab, searchQuery, selectedQueueFilter, showAllTickets, showOnlyMine, showOnlyUnread, tickets, user?.id]);
 
   const counters = React.useMemo(
     () => ({
@@ -821,15 +900,15 @@ export default function HomePage() {
   }, [managementSearch, tickets]);
 
   React.useEffect(() => {
-    if (visibleTickets.length === 0) {
+    if (tickets.length === 0) {
       setSelectedTicketId(null);
       return;
     }
 
-    if (!selectedTicketId || !visibleTickets.some((ticket) => ticket.id === selectedTicketId)) {
-      setSelectedTicketId(visibleTickets[0]?.id ?? null);
+    if (!selectedTicketId || !tickets.some((ticket) => ticket.id === selectedTicketId)) {
+      setSelectedTicketId(visibleTickets[0]?.id ?? tickets[0]?.id ?? null);
     }
-  }, [selectedTicketId, visibleTickets]);
+  }, [selectedTicketId, tickets, visibleTickets]);
 
   React.useEffect(() => {
     if (activeWorkspace !== "tickets" && showTicketDetails) {
@@ -1774,10 +1853,10 @@ export default function HomePage() {
 
   function resetConversationForm() {
     setConversationForm({
-      customerName: "",
       phone: "",
       whatsappInstanceId: instances[0]?.id ?? "",
       queueId: "",
+      customerSearch: "",
     });
   }
 
@@ -1930,10 +2009,10 @@ export default function HomePage() {
       notes: "",
     });
     setConversationForm({
-      customerName: "",
       phone: "",
       whatsappInstanceId: instances[0]?.id ?? "",
       queueId: "",
+      customerSearch: "",
     });
   }
 
@@ -2053,6 +2132,37 @@ export default function HomePage() {
     }
   }
 
+  async function handleDeleteCustomer(customerId: string) {
+    if (!canManageContacts) return;
+
+    const confirmed = typeof window === "undefined"
+      ? true
+      : window.confirm("Deseja realmente excluir este contato? Os tickets continuarão no histórico, mas o vínculo com o contato será removido.");
+
+    if (!confirmed) {
+      return;
+    }
+
+    setCustomerLoading(true);
+    try {
+      await apiFetch(`/customers/${customerId}`, {
+        method: "DELETE",
+      });
+
+      if (editingCustomerId === customerId) {
+        resetCustomerForm();
+        closeManagementModal();
+      }
+
+      setPanelMessage("Contato excluído.");
+      await refreshCustomers();
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao excluir contato.");
+    } finally {
+      setCustomerLoading(false);
+    }
+  }
+
   async function handleDeleteQuickReply(quickReplyId: string) {
     if (!canManageQuickReplies) return;
 
@@ -2071,11 +2181,14 @@ export default function HomePage() {
     event.preventDefault();
     setConversationLoading(true);
     try {
+      const normalizedPhone = onlyPhoneDigits(conversationForm.phone);
+      const matchedCustomer = customers.find((customer) => customer.phone && onlyPhoneDigits(customer.phone) === normalizedPhone) ?? null;
+
       const payload = await apiFetch<CreateConversationResponse>("/tickets", {
         method: "POST",
         body: JSON.stringify({
-          customerName: conversationForm.customerName,
-          phone: onlyPhoneDigits(conversationForm.phone),
+          customerName: matchedCustomer?.name,
+          phone: normalizedPhone,
           whatsappInstanceId: conversationForm.whatsappInstanceId,
           queueId: conversationForm.queueId || null,
         }),
@@ -2551,10 +2664,16 @@ export default function HomePage() {
                     <DataCell subtle>{formatDateTime(customer.updatedAt)}</DataCell>
                     {canManageContacts ? (
                       <DataCell>
-                        <button type="button" onClick={() => startEditCustomer(customer)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
-                          <Pencil className="h-4 w-4" />
-                          Editar
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <button type="button" onClick={() => startEditCustomer(customer)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                            <Pencil className="h-4 w-4" />
+                            Editar
+                          </button>
+                          <button type="button" onClick={() => void handleDeleteCustomer(customer.id)} className="inline-flex items-center gap-2 text-sm font-medium text-rose-600 transition hover:text-rose-700">
+                            <Trash2 className="h-4 w-4" />
+                            Excluir
+                          </button>
+                        </div>
                       </DataCell>
                     ) : null}
                   </DataRow>
@@ -2989,13 +3108,12 @@ export default function HomePage() {
             <div className="border-b border-slate-200 bg-white px-5 py-3">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
-                  <div className="grid h-12 w-12 place-items-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700">
-                    {selectedTicket.customerAvatarUrl ? (
-                      <img src={selectedTicket.customerAvatarUrl} alt={`Foto de ${selectedTicket.customerName}`} className="h-full w-full object-cover" />
-                    ) : (
-                      initials(selectedTicket.customerName) || "C"
-                    )}
-                  </div>
+                  <SafeAvatar
+                    src={selectedTicket.customerAvatarUrl}
+                    name={selectedTicket.customerName}
+                    alt={`Foto de ${selectedTicket.customerName}`}
+                    className="grid h-12 w-12 place-items-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700"
+                  />
                   <div>
                     <button
                       type="button"
@@ -3009,7 +3127,7 @@ export default function HomePage() {
                       <span className="text-slate-300">•</span>
                       <span>{selectedTicket.currentAgent?.name ?? (selectedTicket.isGroup ? "Conversa de grupo" : "Aguardando atendente")}</span>
                       <span className="text-slate-300">•</span>
-                      <span>{formatPhoneInput(selectedTicket.externalContactId ?? selectedTicket.externalChatId)}</span>
+                      <span>{formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)}</span>
                     </div>
                   </div>
                 </div>
@@ -3102,8 +3220,8 @@ export default function HomePage() {
                       return (
                           <div key={message.id} className={`group flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
                             <div className={`flex items-start gap-2 ${outgoing ? "flex-row-reverse" : ""}`}>
-                              <div className={`flex max-w-[85%] flex-col md:max-w-[70%] ${outgoing ? "items-end" : "items-start"}`}>
-                              <article className={`w-full rounded-[18px] px-4 py-3 text-sm shadow-sm ${outgoing ? "border border-[#cfe9ad] bg-[#dcf8c6] text-slate-800" : "rounded-tl-[8px] border border-[#ece4d8] bg-white text-slate-800"}`}>
+                              <div className={`${shouldRenderAttachments ? "w-full max-w-[min(380px,85vw)] md:max-w-[420px]" : "w-fit max-w-[85%] md:max-w-[70%]"} flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
+                              <article className={`${shouldRenderAttachments ? "w-full" : "w-fit max-w-full"} rounded-[18px] px-4 py-3 text-sm shadow-sm ${outgoing ? "border border-[#cfe9ad] bg-[#dcf8c6] text-slate-800" : "rounded-tl-[8px] border border-[#ece4d8] bg-white text-slate-800"}`}>
                                 {shouldShowInboundGroupSender ? (
                                   <div className="mb-2 text-[14px] font-semibold leading-5 text-sky-700">
                                     {message.senderName}
@@ -3114,15 +3232,15 @@ export default function HomePage() {
                                     <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">
                                       {message.replyToMessage.senderName || (message.replyToMessage.direction === "outbound" ? "Você" : "Mensagem citada")}
                                     </div>
-                                    <div className="mt-1 truncate text-sm text-slate-700">
+                                    <div className="mt-1 break-words text-sm text-slate-700 [overflow-wrap:anywhere]">
                                       {summarizeQuotedMessage(message.replyToMessage)}
                                     </div>
                                   </div>
                                 ) : null}
                                 {shouldRenderAttachments ? (
-                                  <div className={`${message.body && !shouldHideMessageBody ? "mb-3" : ""} space-y-3 ${isDeletedMessage ? "opacity-55 saturate-0" : ""}`}>
+                                  <div className={`${message.body && !shouldHideMessageBody ? "mb-3" : ""} w-full space-y-3 ${isDeletedMessage ? "opacity-55 saturate-0" : ""}`}>
                                     {messageAttachments.map((attachment) => (
-                                      <div key={attachment.id} className="overflow-hidden rounded-[20px] border border-slate-200/80 bg-white/70">
+                                      <div key={attachment.id} className="w-full overflow-hidden rounded-[20px] border border-slate-200/80 bg-white/70">
                                       {attachment.mimeType.startsWith("image/") ? (
                                         <PhotoProvider maskOpacity={0.72}>
                                           <PhotoView src={resolveAttachmentUrl(selectedTicket.id, attachment)}>
@@ -3155,12 +3273,12 @@ export default function HomePage() {
                                 </div>
                               ) : null}
                                 {message.body && !shouldHideMessageBody ? (
-                                  <div className={`whitespace-pre-wrap text-[15px] leading-6 ${isDeletedMessage ? "text-slate-400 line-through decoration-2" : ""}`}>
+                                  <div className={`whitespace-pre-wrap break-words text-[15px] leading-6 [overflow-wrap:anywhere] ${isDeletedMessage ? "text-slate-400 line-through decoration-2" : ""}`}>
                                     {message.body}
                                   </div>
                                 ) : null}
                                 {!message.body && messageAttachments.length === 0 ? (
-                                  <div className={`whitespace-pre-wrap text-[15px] leading-6 ${isDeletedMessage ? "text-slate-400 line-through decoration-2" : ""}`}>
+                                  <div className={`whitespace-pre-wrap break-words text-[15px] leading-6 [overflow-wrap:anywhere] ${isDeletedMessage ? "text-slate-400 line-through decoration-2" : ""}`}>
                                     {`[${message.contentType}]`}
                                   </div>
                                 ) : null}
@@ -3198,7 +3316,7 @@ export default function HomePage() {
                                         setOpenMessageMenuId((current) => current === message.id ? null : message.id);
                                       }}
                                       onPointerDown={(event) => event.stopPropagation()}
-                                      className={`grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-slate-700 ${openMessageMenuId === message.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+                                      className={`grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition hover:bg-slate-50 hover:text-slate-700 ${openMessageMenuId === message.id ? "opacity-100" : "opacity-70 group-hover:opacity-100"}`}
                                     >
                                       <ChevronDown className="h-3.5 w-3.5" />
                                     </button>
@@ -3436,30 +3554,37 @@ export default function HomePage() {
               {showTicketDetails ? (
                 <aside className="hidden w-[320px] shrink-0 border-l border-slate-200 bg-white xl:flex xl:flex-col">
                   <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-                    <div className="text-lg font-semibold text-[#1A1C32]">Dados do contato</div>
+                    <div className="text-lg font-semibold text-[#1A1C32]">{selectedTicket.isGroup ? "Dados do grupo" : "Dados do contato"}</div>
                     <button type="button" onClick={() => setShowTicketDetails(false)} className="text-slate-400 transition hover:text-slate-700">
                       <X className="h-5 w-5" />
                     </button>
                   </div>
                   <div className="space-y-5 overflow-y-auto px-5 py-5">
                     <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-5">
-                      <div className="mx-auto grid h-24 w-24 place-items-center overflow-hidden rounded-full bg-slate-200 text-2xl font-semibold text-slate-600">
-                        {selectedTicket.customerAvatarUrl ? (
-                          <img src={selectedTicket.customerAvatarUrl} alt={`Foto de ${selectedTicket.customerName}`} className="h-full w-full object-cover" />
-                        ) : (
-                          initials(selectedTicket.customerName) || "C"
-                        )}
-                      </div>
+                      <SafeAvatar
+                        src={selectedTicket.customerAvatarUrl}
+                        name={selectedTicket.customerName}
+                        alt={`Foto de ${selectedTicket.customerName}`}
+                        className="mx-auto grid h-24 w-24 place-items-center overflow-hidden rounded-full bg-slate-200 text-2xl font-semibold text-slate-600"
+                      />
                       <div className="mt-4 text-center">
                         <div className="text-xl font-semibold text-slate-900">{selectedTicket.customerName}</div>
                         <div className="mt-4 grid gap-3 text-left">
                           <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Nome</div>
+                            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">{selectedTicket.isGroup ? "Grupo" : "Nome"}</div>
                             <div className="mt-1 text-sm font-semibold text-slate-800">{selectedTicket.customerName}</div>
                           </div>
                           <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Telefone</div>
-                            <div className="mt-1 text-sm font-semibold text-slate-800">{formatPhoneInput(selectedTicket.externalContactId ?? selectedTicket.externalChatId)}</div>
+                            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                              {selectedTicket.isGroup
+                                ? "Identificador"
+                                : isReliablePhoneValue(selectedTicket.externalContactId)
+                                  ? "Telefone"
+                                  : "Identificador"}
+                            </div>
+                            <div className="mt-1 break-all text-sm font-semibold text-slate-800">
+                              {formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -3467,9 +3592,9 @@ export default function HomePage() {
 
                     <div className="space-y-3">
                       <InfoRow title="Status" subtitle={traduzirStatusTicket(selectedTicket.status)} meta={`não lidos: ${selectedTicket.unreadCount}`} />
-                      <InfoRow title="Fila" subtitle={selectedTicket.currentQueue?.name ?? "Sem fila"} meta={selectedTicket.isGroup ? "conversa em grupo" : "conversa individual"} />
+                      <InfoRow title="Fila" subtitle={selectedTicket.currentQueue?.name ?? "Sem fila"} meta={selectedTicket.isGroup ? "grupo do WhatsApp" : "conversa individual"} />
                       <InfoRow title="Responsável" subtitle={selectedTicket.currentAgent?.name ?? "Sem agente"} meta={selectedTicket.whatsappInstance.name} />
-                      <InfoRow title="Atualizado em" subtitle={formatDateTime(selectedTicket.updatedAt)} meta={formatPhoneInput(selectedTicket.externalContactId ?? selectedTicket.externalChatId)} />
+                      <InfoRow title="Atualizado em" subtitle={formatDateTime(selectedTicket.updatedAt)} meta={formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)} />
                     </div>
                   </div>
                 </aside>
@@ -3576,22 +3701,53 @@ export default function HomePage() {
 
       return {
         title: "Nova conversa",
-        description: "Abra um atendimento manual informando contato, instância e fila opcional.",
+        description: "Abra um atendimento manual informando o telefone ou selecionando um contato já existente.",
         content: (
           <form onSubmit={handleCreateConversation} className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-2">
-              <CompactField
-                label="Nome do contato"
-                value={conversationForm.customerName}
-                onChange={(value) => setConversationForm((current) => ({ ...current, customerName: value }))}
-                placeholder="Nome do cliente"
-              />
+            <div className="grid gap-4">
               <CompactField
                 label="Telefone"
                 value={formatPhoneInput(conversationForm.phone)}
                 onChange={(value) => setConversationForm((current) => ({ ...current, phone: onlyPhoneDigits(value) }))}
                 placeholder="+55 (11) 99999-9999"
               />
+            </div>
+            <div className="space-y-3">
+              <CompactField
+                label="Buscar na agenda"
+                value={conversationForm.customerSearch}
+                onChange={(value) => setConversationForm((current) => ({ ...current, customerSearch: value }))}
+                placeholder="Nome, telefone ou empresa"
+              />
+              {matchingConversationCustomer ? (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                  <div className="font-semibold">Contato encontrado</div>
+                  <div className="mt-1">{matchingConversationCustomer.name}</div>
+                  <div className="text-[12px] text-emerald-700">{formatPhoneInput(matchingConversationCustomer.phone ?? "")}</div>
+                </div>
+              ) : null}
+              {!matchingConversationCustomer && filteredConversationCustomers.length > 0 ? (
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                  {filteredConversationCustomers.map((customer) => (
+                    <button
+                      key={customer.id}
+                      type="button"
+                      onClick={() => setConversationForm((current) => ({
+                        ...current,
+                        customerSearch: customer.name,
+                        phone: onlyPhoneDigits(customer.phone ?? ""),
+                      }))}
+                      className="flex w-full items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 hover:bg-slate-50"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-slate-900">{customer.name}</div>
+                        <div className="truncate text-[12px] text-slate-500">{formatPhoneInput(customer.phone ?? "")}</div>
+                      </div>
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">Usar</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <label className="block text-sm font-medium text-slate-600">
@@ -3626,7 +3782,7 @@ export default function HomePage() {
               </label>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-              Depois de criar a conversa, o ticket será aberto automaticamente no atendimento para você enviar a primeira mensagem.
+              Depois de criar a conversa, o ticket será aberto automaticamente no atendimento. Se o número já existir na agenda, o nome cadastrado será reaproveitado.
             </div>
             <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button type="button" onClick={closeManagementModal} className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
@@ -3651,6 +3807,11 @@ export default function HomePage() {
         description: "Cadastre ou atualize os dados principais do contato para manter a operação organizada.",
         content: (
           <form onSubmit={handleCreateCustomer} className="space-y-4">
+            {editingCustomerId ? (
+              <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                Você está editando um contato existente. Ao salvar, o cadastro atual será atualizado e nenhum novo contato será criado.
+              </div>
+            ) : null}
             <div className="grid gap-4 md:grid-cols-2">
               <CompactField
                 label="Nome"
@@ -3690,6 +3851,15 @@ export default function HomePage() {
             </label>
 
             <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              {editingCustomerId ? (
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteCustomer(editingCustomerId)}
+                  className="inline-flex h-11 items-center justify-center rounded-2xl border border-rose-200 bg-rose-50 px-5 text-sm font-semibold text-rose-700 transition hover:bg-rose-100"
+                >
+                  Excluir contato
+                </button>
+              ) : null}
               <button type="button" onClick={closeManagementModal} className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
                 Cancelar
               </button>
@@ -4050,11 +4220,12 @@ export default function HomePage() {
                 onClick={() => setUserMenuOpen((current) => !current)}
                 className="grid h-10 w-10 place-items-center overflow-hidden rounded-full border border-white/10 bg-white/10 text-sm font-semibold uppercase transition hover:bg-white/15"
               >
-                {currentUser.avatarUrl ? (
-                  <img src={currentUser.avatarUrl} alt={`Avatar de ${currentUser.name}`} className="h-full w-full object-cover" />
-                ) : (
-                  initials(currentUser.name) || "CF"
-                )}
+                <SafeAvatar
+                  src={currentUser.avatarUrl}
+                  name={currentUser.name}
+                  alt={`Avatar de ${currentUser.name}`}
+                  className="grid h-full w-full place-items-center overflow-hidden rounded-full text-sm font-semibold uppercase"
+                />
               </button>
               {userMenuOpen ? (
                 <div className="absolute right-0 top-[calc(100%+0.75rem)] z-40 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white py-2 text-left shadow-[0_20px_50px_rgba(15,23,42,0.18)]">
@@ -4110,8 +4281,8 @@ export default function HomePage() {
           </aside>
 
           <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[400px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
-            {ticketWorkspaceAtivo ? (
-              <div className="flex h-full min-w-0 flex-col border-r border-slate-200 bg-white">
+              {ticketWorkspaceAtivo ? (
+                <div className="flex h-full min-h-0 min-w-0 flex-col border-r border-slate-200 bg-white">
                 <div className="space-y-3 border-b border-slate-200 p-3">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -4125,12 +4296,21 @@ export default function HomePage() {
                   </div>
 
                   <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
-                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1 rounded-[16px] border border-slate-200 bg-slate-50 p-1">
-                      <SidebarIconButton icon={Eye} label="Limpar filtros e voltar à caixa de entrada" active={!showOnlyUnread && !showOnlyMine && selectedQueueFilter === "all"} onClick={() => { setShowOnlyUnread(false); setShowOnlyMine(false); setSelectedQueueFilter("all"); setSearchQuery(""); setActiveWorkspace("tickets"); }} />
-                      {canStartConversation ? <SidebarIconButton icon={Plus} label="Iniciar nova conversa" active={false} onClick={openCreateConversationModal} /> : null}
+                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+                        {canStartConversation ? (
+                          <button
+                            type="button"
+                            onClick={openCreateConversationModal}
+                            className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#1A1C32] bg-white px-3 text-[11px] font-bold uppercase tracking-[0.08em] text-[#1A1C32] transition hover:bg-slate-50"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            Novo Ticket
+                          </button>
+                        ) : null}
+                      <SidebarIconButton icon={Eye} label="Mostrar todos os tickets" active={showAllTickets} onClick={() => { setShowAllTickets((current) => !current); setActiveWorkspace("tickets"); }} />
                       <SidebarIconButton icon={CheckSquare} label="Mostrar apenas meus atendimentos" active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
                       <SidebarIconButton icon={EyeOff} label="Mostrar apenas não lidos" active={showOnlyUnread} onClick={() => setShowOnlyUnread((current) => !current)} />
-                    </div>
+                      </div>
                     <div className="relative min-w-0 max-w-full">
                       <select
                         aria-label="Filtrar atendimentos por fila"
@@ -4153,13 +4333,13 @@ export default function HomePage() {
 
                 <div className="border-b border-slate-200 px-3 py-2">
                   <div className={`grid items-center gap-2 ${canViewGroups ? "grid-cols-3" : "grid-cols-2"}`}>
-                  <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
-                  <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
-                  {canViewGroups ? <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" /> : null}
+                  <StatusTab label="ATENDENDO" count={counters.atendendo} active={!showAllTickets && activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
+                  <StatusTab label="AGUARDANDO" count={counters.aguardando} active={!showAllTickets && activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
+                  {canViewGroups ? <StatusTab label="GRUPOS" count={counters.grupos} active={!showAllTickets && activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" /> : null}
                   </div>
                 </div>
 
-                <div className="scrollbar-hide flex-1 min-w-0 overflow-y-auto bg-white px-2 py-2">
+                  <div className="flex-1 min-h-0 min-w-0 overflow-y-auto bg-white px-2 py-2">
                   {visibleTickets.length === 0 ? (
                     <div className="p-10 text-center text-xs font-medium text-slate-400">Nenhum atendimento nesta categoria.</div>
                   ) : (
@@ -4174,13 +4354,12 @@ export default function HomePage() {
                           className={`group relative mb-1.5 flex w-full min-w-0 items-start gap-2.5 rounded-[18px] border text-left transition ${selected ? "border-slate-300 bg-slate-50 shadow-sm" : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"} ${compact ? "p-2.5" : "p-3"}`}
                         >
                           <div className={compact ? "pt-0.5" : "pt-1"}>
-                            <div className={`grid place-items-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700 ${compact ? "h-11 w-11" : "h-12 w-12"}`}>
-                              {ticket.customerAvatarUrl ? (
-                                <img src={ticket.customerAvatarUrl} alt={`Foto de ${ticket.customerName}`} className="h-full w-full object-cover" />
-                              ) : (
-                                initials(ticket.customerName) || "C"
-                              )}
-                            </div>
+                            <SafeAvatar
+                              src={ticket.customerAvatarUrl}
+                              name={ticket.customerName}
+                              alt={`Foto de ${ticket.customerName}`}
+                              className={`grid place-items-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700 ${compact ? "h-11 w-11" : "h-12 w-12"}`}
+                            />
                           </div>
 
                           <div className="min-w-0 flex-1">
@@ -4195,7 +4374,7 @@ export default function HomePage() {
                                   {ticket.lastMessagePreview ?? "Sem mensagem registrada"}
                                 </p>
                                 <p className="mt-1 truncate text-[11px] text-slate-400">
-                                  {formatPhoneInput(ticket.externalContactId ?? ticket.externalChatId)}
+                                  {formatContactIdentity(ticket.externalContactId ?? ticket.externalChatId)}
                                 </p>
                               </div>
                               <span className="whitespace-nowrap text-[11px] font-medium text-slate-400">{formatHour(ticket.updatedAt)}</span>

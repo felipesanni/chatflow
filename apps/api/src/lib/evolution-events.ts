@@ -115,7 +115,7 @@ function withDeletedMessage(rawPayload: Prisma.JsonValue | null | undefined) {
 
 async function findOrCreateCustomer(
   prisma: FastifyInstance['prisma'],
-  params: { name: string; phoneE164: string; avatarUrl?: string | null },
+  params: { name: string; phoneE164: string; avatarUrl?: string | null; preserveExistingName?: boolean },
 ) {
   const existing = await prisma.customer.findFirst({
     where: { phoneE164: params.phoneE164 },
@@ -123,10 +123,13 @@ async function findOrCreateCustomer(
   });
 
   if (existing) {
-    if (existing.name !== params.name || existing.avatarUrl !== (params.avatarUrl ?? null)) {
+    const nextAvatarUrl = params.avatarUrl ?? existing.avatarUrl ?? null;
+    const nextName = params.preserveExistingName ? existing.name : params.name;
+
+    if (existing.name !== nextName || existing.avatarUrl !== nextAvatarUrl) {
       return prisma.customer.update({
         where: { id: existing.id },
-        data: { name: params.name, avatarUrl: params.avatarUrl ?? null },
+        data: { name: nextName, avatarUrl: nextAvatarUrl },
       });
     }
 
@@ -141,6 +144,18 @@ async function findOrCreateCustomer(
       avatarUrl: params.avatarUrl ?? null,
     },
   });
+}
+
+function resolveCustomerDisplayName(parsed: ReturnType<typeof parseEvolutionPayload>, currentName?: string | null) {
+  if (parsed.isGroup) {
+    return parsed.groupName ?? currentName ?? 'Grupo WhatsApp';
+  }
+
+  if (parsed.fromMe) {
+    return parsed.verifiedBizName ?? currentName ?? parsed.phone ?? parsed.remoteJid ?? 'Contato sem nome';
+  }
+
+  return parsed.pushName ?? parsed.verifiedBizName ?? currentName ?? parsed.phone ?? parsed.remoteJid ?? 'Contato sem nome';
 }
 
 function resolveInstanceSnapshot(event: string, payload: Prisma.InputJsonValue | Record<string, unknown>) {
@@ -467,15 +482,18 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           instanceName: instance.evolutionInstanceName,
           remoteJid: parsed.remoteJid,
         }).catch(() => null);
-    const customerAvatarUrl = profilePictureResponse?.profilePictureUrl ?? null;
+    const fetchedCustomerAvatarUrl = profilePictureResponse?.profilePictureUrl ?? null;
+    const desiredCustomerName = resolveCustomerDisplayName(parsed);
 
     const customer = parsed.isGroup || !parsed.phone
       ? null
       : await findOrCreateCustomer(app.prisma, {
-          name: parsed.pushName ?? parsed.phone,
+          name: desiredCustomerName,
           phoneE164: parsed.phone,
-          avatarUrl: customerAvatarUrl,
+          avatarUrl: fetchedCustomerAvatarUrl,
+          preserveExistingName: parsed.fromMe && !parsed.verifiedBizName,
         });
+    const customerAvatarUrl = fetchedCustomerAvatarUrl ?? customer?.avatarUrl ?? null;
 
     let ticket = await app.prisma.ticket.findFirst({
       where: {
@@ -496,9 +514,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           whatsappInstanceId: instance.id,
           externalChatId: parsed.remoteJid,
           externalContactId: parsed.phone,
-          customerNameSnapshot: parsed.isGroup
-            ? (parsed.groupName ?? 'Grupo WhatsApp')
-            : (customer?.name ?? parsed.pushName ?? parsed.phone ?? 'Contato sem nome'),
+          customerNameSnapshot: resolveCustomerDisplayName(parsed, customer?.name),
           customerAvatarUrl,
           status: 'pending',
           unreadCount: parsed.fromMe ? 0 : 1,
@@ -520,9 +536,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         where: { id: ticket.id },
         data: {
           customerId: customer?.id ?? ticket.customerId,
-          customerNameSnapshot: parsed.isGroup
-            ? (parsed.groupName ?? ticket.customerNameSnapshot)
-            : (customer?.name ?? parsed.pushName ?? ticket.customerNameSnapshot),
+          customerNameSnapshot: resolveCustomerDisplayName(parsed, customer?.name ?? ticket.customerNameSnapshot),
           customerAvatarUrl: customerAvatarUrl ?? ticket.customerAvatarUrl,
           lastMessagePreview: parsed.body,
           unreadCount: parsed.fromMe ? 0 : { increment: 1 },

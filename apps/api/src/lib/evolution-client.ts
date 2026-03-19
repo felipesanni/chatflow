@@ -463,8 +463,16 @@ export async function sendEvolutionDeleteMessage(params: DeleteMessageParams) {
         id: params.externalMessageId,
       },
     },
+    {
+      key: {
+        id: params.externalMessageId,
+        remoteJid: params.remoteJid,
+        fromMe: true,
+      },
+    },
   ];
   const endpoints = [
+    { path: '/chat/deleteMessageForEveryone', method: 'POST' as const },
     { path: '/message/deleteMessage', method: 'DELETE' as const },
     { path: '/message/deleteMessage', method: 'POST' as const },
     { path: '/chat/deleteMessage', method: 'DELETE' as const },
