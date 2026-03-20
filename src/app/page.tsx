@@ -2438,6 +2438,7 @@ export default function HomePage() {
       name: "",
       email: "",
       password: "",
+      confirmPassword: "",
       role: "agent",
       queueIds: [],
       permissions: defaultPermissionsForRole("agent"),
@@ -4548,7 +4549,7 @@ export default function HomePage() {
                 Cancelar
               </button>
               <PrimaryAction disabled={customerLoading || !customerForm.name.trim()} className="sm:w-auto sm:px-6">
-                {conversationLoading ? "Iniciando..." : "Iniciar conversa"}
+                {customerLoading ? "Salvando..." : editingCustomerId ? "Salvar alterações" : "Cadastrar contato"}
               </PrimaryAction>
             </div>
           </form>
