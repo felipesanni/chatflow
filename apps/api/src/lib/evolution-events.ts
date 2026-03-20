@@ -5,6 +5,12 @@ import { parseEvolutionPayload } from './evolution.js';
 import { loadEnv } from '../config/env.js';
 import { decryptSecret } from './secrets.js';
 import { fetchEvolutionProfilePictureUrl } from './evolution-client.js';
+import {
+  buildActiveTicketIdentityWhere,
+  buildTicketChatIdentity,
+  withScopedAdvisoryLock,
+  withTicketIdentityLock,
+} from './ticket-identity.js';
 
 const env = loadEnv();
 
@@ -48,67 +54,6 @@ function isEmptyPlaceholderUpdate(parsed: ReturnType<typeof parseEvolutionPayloa
     && parsed.attachments.length === 0
     && parsed.contentType === 'other'
     && parsed.body.trim().toLowerCase() === 'mensagem vazia';
-}
-
-function normalizeTicketIdentityPhone(value: string | null | undefined) {
-  if (typeof value !== 'string') {
-    return null;
-  }
-
-  const digits = value.replace(/[^0-9]/g, '');
-  if (!digits) {
-    return null;
-  }
-
-  if (digits.length < 8 || digits.length > 15) {
-    return null;
-  }
-
-  if (digits.startsWith('0')) {
-    return null;
-  }
-
-  if (/^(\d)\1+$/.test(digits)) {
-    return null;
-  }
-
-  return digits;
-}
-
-function buildTicketChatIdentity(parsed: ReturnType<typeof parseEvolutionPayload>) {
-  const rawRemoteJid = typeof parsed.remoteJid === 'string' && parsed.remoteJid.trim().length > 0
-    ? parsed.remoteJid.trim()
-    : null;
-  const contactId = normalizeTicketIdentityPhone(parsed.phone);
-
-  if (parsed.isGroup) {
-    return {
-      canonicalChatId: rawRemoteJid,
-      contactId,
-      lookupChatIds: rawRemoteJid ? [rawRemoteJid] : [],
-    };
-  }
-
-  const [localPart = '', rawDomain = ''] = rawRemoteJid?.split('@') ?? [];
-  const baseLocalPart = localPart.split(':')[0]?.trim() ?? '';
-  const normalizedDomain = rawDomain.trim().toLowerCase();
-  const baseDigits = normalizeTicketIdentityPhone(baseLocalPart);
-  const canonicalChatId = contactId ?? baseDigits ?? rawRemoteJid;
-  const lookupChatIds = Array.from(new Set([
-    canonicalChatId,
-    rawRemoteJid,
-    baseDigits,
-    baseLocalPart || null,
-    baseDigits && normalizedDomain ? `${baseDigits}@${normalizedDomain}` : null,
-    baseDigits ? `${baseDigits}@s.whatsapp.net` : null,
-    baseDigits ? `${baseDigits}@c.us` : null,
-  ].filter((value): value is string => typeof value === 'string' && value.length > 0)));
-
-  return {
-    canonicalChatId,
-    contactId,
-    lookupChatIds,
-  };
 }
 
 function normalizeStoredReactions(value: unknown) {
@@ -622,82 +567,87 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           preserveExistingName: parsed.fromMe && !parsed.verifiedBizName,
         });
     const customerAvatarUrl = fetchedCustomerAvatarUrl ?? customer?.avatarUrl ?? null;
-    const chatIdentity = buildTicketChatIdentity(parsed);
-
-    let ticket = await app.prisma.ticket.findFirst({
-      where: {
-        whatsappInstanceId: instance.id,
-        status: { in: ['open', 'pending'] },
-        OR: [
-          ...(chatIdentity.lookupChatIds.length > 0
-            ? [{
-                externalChatId: {
-                  in: chatIdentity.lookupChatIds,
-                },
-              }]
-            : []),
-          ...(chatIdentity.contactId
-            ? [{ externalContactId: chatIdentity.contactId }]
-            : []),
-        ],
-      },
-      orderBy: {
-        updatedAt: 'desc',
-      },
+    const chatIdentity = buildTicketChatIdentity({
+      remoteJid: parsed.remoteJid,
+      phone: parsed.phone,
+      isGroup: parsed.isGroup,
+      aliases: parsed.chatAliases,
     });
 
-    if (!ticket) {
-      ticket = await app.prisma.ticket.create({
-        data: {
-          id: randomUUID(),
-          customerId: customer?.id,
-          whatsappInstanceId: instance.id,
-          currentQueueId: instance.defaultQueueId ?? null,
-          externalChatId: chatIdentity.canonicalChatId ?? parsed.remoteJid,
-          externalContactId: chatIdentity.contactId,
-          customerNameSnapshot: resolveCustomerDisplayName(parsed, customer?.name),
-          customerAvatarUrl,
-          status: 'pending',
-          unreadCount: parsed.fromMe ? 0 : 1,
-          isGroup: parsed.isGroup,
-          lastMessagePreview: parsed.body,
+    const ticket = await withTicketIdentityLock(app.prisma, {
+      whatsappInstanceId: instance.id,
+      canonicalChatId: chatIdentity.canonicalChatId ?? parsed.remoteJid,
+    }, async (tx) => {
+      const existingTicket = await tx.ticket.findFirst({
+        where: buildActiveTicketIdentityWhere(instance.id, chatIdentity),
+        orderBy: {
+          updatedAt: 'desc',
         },
       });
 
-      await app.prisma.ticketEvent.create({
+      if (!existingTicket) {
+        const createdTicket = await tx.ticket.create({
+          data: {
+            id: randomUUID(),
+            customerId: customer?.id,
+            whatsappInstanceId: instance.id,
+            currentQueueId: instance.defaultQueueId ?? null,
+            externalChatId: chatIdentity.canonicalChatId ?? parsed.remoteJid,
+            externalContactId: chatIdentity.contactId,
+            customerNameSnapshot: resolveCustomerDisplayName(parsed, customer?.name),
+            customerAvatarUrl,
+            status: 'pending',
+            unreadCount: parsed.fromMe ? 0 : 1,
+            isGroup: parsed.isGroup,
+            lastMessagePreview: parsed.body,
+          },
+        });
+
+        await tx.ticketEvent.create({
+          data: {
+            id: randomUUID(),
+            ticketId: createdTicket.id,
+            eventType: 'created',
+            metadata: { source: params.source, event: parsed.event },
+          },
+        });
+
+        return createdTicket;
+      }
+
+      return tx.ticket.update({
+        where: { id: existingTicket.id },
         data: {
-          id: randomUUID(),
-          ticketId: ticket.id,
-          eventType: 'created',
-          metadata: { source: params.source, event: parsed.event },
-        },
-      });
-    } else {
-      ticket = await app.prisma.ticket.update({
-        where: { id: ticket.id },
-        data: {
-          customerId: customer?.id ?? ticket.customerId,
-          externalChatId: chatIdentity.canonicalChatId ?? ticket.externalChatId,
-          externalContactId: chatIdentity.contactId ?? ticket.externalContactId,
-          customerNameSnapshot: resolveCustomerDisplayName(parsed, customer?.name ?? ticket.customerNameSnapshot),
-          customerAvatarUrl: customerAvatarUrl ?? ticket.customerAvatarUrl,
+          customerId: customer?.id ?? existingTicket.customerId,
+          externalChatId: chatIdentity.canonicalChatId ?? existingTicket.externalChatId,
+          externalContactId: chatIdentity.contactId ?? existingTicket.externalContactId,
+          customerNameSnapshot: resolveCustomerDisplayName(parsed, customer?.name ?? existingTicket.customerNameSnapshot),
+          customerAvatarUrl: customerAvatarUrl ?? existingTicket.customerAvatarUrl,
           lastMessagePreview: parsed.body,
           unreadCount: parsed.fromMe ? 0 : { increment: 1 },
-          status: parsed.fromMe ? ticket.status : ticket.currentAgentId ? ticket.status : 'pending',
+          status: parsed.fromMe ? existingTicket.status : existingTicket.currentAgentId ? existingTicket.status : 'pending',
           updatedAt: new Date(),
         },
       });
-    }
-
-    const existingMessage = await app.prisma.ticketMessage.findFirst({
-      where: {
-        ticketId: ticket.id,
-        externalMessageId: parsed.externalMessageId,
-      },
     });
 
-    if (!existingMessage) {
-      const message = await app.prisma.ticketMessage.create({
+    const messageLockKey = `${instance.id}:${ticket.id}:${parsed.externalMessageId}`;
+    const createdMessage = await withScopedAdvisoryLock(app.prisma, {
+      scope: 'ticket-message',
+      key: messageLockKey,
+    }, async (tx) => {
+      const existingMessage = await tx.ticketMessage.findFirst({
+        where: {
+          ticketId: ticket.id,
+          externalMessageId: parsed.externalMessageId,
+        },
+      });
+
+      if (existingMessage) {
+        return null;
+      }
+
+      const message = await tx.ticketMessage.create({
         data: {
           id: randomUUID(),
           ticketId: ticket.id,
@@ -711,7 +661,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
       });
 
       if (parsed.attachments.length > 0) {
-        await app.prisma.attachment.createMany({
+        await tx.attachment.createMany({
           data: parsed.attachments.map((attachment) => ({
             id: randomUUID(),
             messageId: message.id,
@@ -725,7 +675,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         });
       }
 
-      await app.prisma.ticketEvent.create({
+      await tx.ticketEvent.create({
         data: {
           id: randomUUID(),
           ticketId: ticket.id,
@@ -734,10 +684,14 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         },
       });
 
+      return message;
+    });
+
+    if (createdMessage) {
       app.io.emit('message.created', {
         ticketId: ticket.id,
-        messageId: message.id,
-        direction: message.direction,
+        messageId: createdMessage.id,
+        direction: createdMessage.direction,
       });
     }
 

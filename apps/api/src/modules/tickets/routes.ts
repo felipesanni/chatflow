@@ -4,6 +4,12 @@ import type { FastifyPluginAsync } from 'fastify';
 import { Prisma, type TicketStatus } from '@prisma/client';
 import { requirePermission } from '../../lib/auth-guard.js';
 import type { PermissionMap } from '../../lib/permissions.js';
+import {
+  buildActiveTicketIdentityWhere,
+  buildTicketChatIdentity,
+  normalizeTicketRemoteJid,
+  withTicketIdentityLock,
+} from '../../lib/ticket-identity.js';
 
 const ticketListQuerySchema = z.object({
   status: z.enum(['open', 'pending', 'closed']).optional(),
@@ -52,10 +58,6 @@ const closeTicketBodySchema = z.preprocess((value) => {
 
 function normalizePhone(value: string) {
   return value.replace(/\D+/g, '');
-}
-
-function normalizeRemoteJid(phone: string) {
-  return `${phone}@s.whatsapp.net`;
 }
 
 async function findOrCreateCustomer(
@@ -322,81 +324,94 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    const remoteJid = normalizeRemoteJid(normalizedPhone);
-
-    const existingTicket = await app.prisma.ticket.findFirst({
-      where: {
-        whatsappInstanceId: instance.id,
-        externalChatId: remoteJid,
-        status: { in: ['open', 'pending'] },
-      },
-      include: {
-        currentAgent: true,
-        currentQueue: true,
-        whatsappInstance: true,
-      },
-      orderBy: {
-        updatedAt: 'desc',
-      },
+    const remoteJid = normalizeTicketRemoteJid(normalizedPhone);
+    const chatIdentity = buildTicketChatIdentity({
+      remoteJid,
+      phone: normalizedPhone,
+      isGroup: false,
     });
 
-    if (existingTicket) {
+    const result = await withTicketIdentityLock(app.prisma, {
+      whatsappInstanceId: instance.id,
+      canonicalChatId: chatIdentity.canonicalChatId ?? remoteJid,
+    }, async (tx) => {
+      const existingTicket = await tx.ticket.findFirst({
+        where: buildActiveTicketIdentityWhere(instance.id, chatIdentity),
+        include: {
+          currentAgent: true,
+          currentQueue: true,
+          whatsappInstance: true,
+        },
+        orderBy: {
+          updatedAt: 'desc',
+        },
+      });
+
+      if (existingTicket) {
+        return {
+          item: existingTicket,
+          created: false,
+        };
+      }
+
+      const customer = await findOrCreateCustomer(tx, {
+        name: body.customerName ?? null,
+        phoneE164: normalizedPhone,
+      });
+      const customerName = body.customerName ?? customer.name ?? normalizedPhone;
+
+      const ticket = await tx.ticket.create({
+        data: {
+          id: randomUUID(),
+          customerId: customer.id,
+          whatsappInstanceId: instance.id,
+          currentAgentId: session.userId,
+          currentQueueId: queueId,
+          externalChatId: chatIdentity.canonicalChatId ?? remoteJid,
+          externalContactId: chatIdentity.contactId ?? normalizedPhone,
+          customerNameSnapshot: customerName,
+          status: 'open',
+          unreadCount: 0,
+          isGroup: false,
+        },
+        include: {
+          currentAgent: true,
+          currentQueue: true,
+          whatsappInstance: true,
+        },
+      });
+
+      await tx.ticketEvent.create({
+        data: {
+          id: randomUUID(),
+          ticketId: ticket.id,
+          eventType: 'created',
+          actorUserId: session.userId,
+          metadata: {
+            source: 'manual',
+            createdBy: session.userId,
+          },
+        },
+      });
+
       return {
-        item: serializeTicket(existingTicket),
-        created: false,
+        item: ticket,
+        created: true,
       };
+    });
+
+    if (result.created) {
+      app.io.emit('ticket.updated', {
+        ticketId: result.item.id,
+        status: result.item.status,
+        currentAgentId: result.item.currentAgentId,
+        currentQueueId: result.item.currentQueueId,
+      });
     }
 
-    const customer = await findOrCreateCustomer(app.prisma, {
-      name: body.customerName ?? null,
-      phoneE164: normalizedPhone,
-    });
-    const customerName = body.customerName ?? customer.name ?? normalizedPhone;
-
-    const ticket = await app.prisma.ticket.create({
-      data: {
-        id: randomUUID(),
-        customerId: customer.id,
-        whatsappInstanceId: instance.id,
-        currentAgentId: session.userId,
-        currentQueueId: queueId,
-        externalChatId: remoteJid,
-        externalContactId: normalizedPhone,
-        customerNameSnapshot: customerName,
-        status: 'open',
-        unreadCount: 0,
-        isGroup: false,
-      },
-      include: {
-        currentAgent: true,
-        currentQueue: true,
-        whatsappInstance: true,
-      },
-    });
-
-    await app.prisma.ticketEvent.create({
-      data: {
-        id: randomUUID(),
-        ticketId: ticket.id,
-        eventType: 'created',
-        actorUserId: session.userId,
-        metadata: {
-          source: 'manual',
-          createdBy: session.userId,
-        },
-      },
-    });
-
-    app.io.emit('ticket.updated', {
-      ticketId: ticket.id,
-      status: ticket.status,
-      currentAgentId: ticket.currentAgentId,
-      currentQueueId: ticket.currentQueueId,
-    });
-
-    return reply.code(201).send({
-      item: serializeTicket(ticket),
-      created: true,
+    return reply.code(result.created ? 201 : 200).send({
+      item: serializeTicket(result.item),
+      created: result.created,
     });
   });
 

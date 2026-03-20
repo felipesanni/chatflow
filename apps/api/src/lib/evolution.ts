@@ -194,6 +194,15 @@ function pickFirstNonEmptyString(values: unknown[]) {
   return null;
 }
 
+function pickNonEmptyStringList(values: unknown[]) {
+  return Array.from(new Set(
+    values
+      .filter((value): value is string => typeof value === 'string')
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0),
+  ));
+}
+
 function collectGroupNameCandidates(value: unknown, remoteJid: string, depth = 0, seen = new WeakSet<object>()): string[] {
   if (depth > 8) {
     return [];
@@ -784,17 +793,65 @@ export function parseEvolutionPayload(
     message?.participant,
     messageKey?.participant,
     data?.participant,
+    data?.participantPn,
+    data?.participantPhone,
     data?.sender,
     data?.senderJid,
     data?.senderLid,
+    data?.senderPn,
+    data?.senderPhone,
     data?.phone,
+    data?.phoneNumber,
     data?.number,
+    data?.contactPhone,
+    data?.ownerPn,
     data?.contact,
     pickObject(data?.key)?.participant,
     pickObject(data?.key)?.remoteJid,
     pickObject(data?.sender)?.id,
     pickObject(data?.sender)?.jid,
     pickObject(data?.sender)?.phone,
+    pickObject(data?.sender)?.phoneNumber,
+    pickObject(data?.sender)?.pn,
+    pickObject(data?.contact)?.phone,
+    pickObject(data?.contact)?.phoneNumber,
+    pickObject(data?.contact)?.pn,
+    pickObject(data?.participant)?.phone,
+    pickObject(data?.participant)?.phoneNumber,
+    pickObject(data?.participant)?.pn,
+  ]);
+  const chatAliases = pickNonEmptyStringList([
+    remoteJid,
+    effectiveKey?.participant,
+    message?.participant,
+    messageKey?.participant,
+    data?.participant,
+    data?.participantPn,
+    data?.participantPhone,
+    data?.sender,
+    data?.senderJid,
+    data?.senderLid,
+    data?.senderPn,
+    data?.senderPhone,
+    data?.contact,
+    data?.contactPhone,
+    pickObject(data?.key)?.participant,
+    pickObject(data?.key)?.remoteJid,
+    pickObject(data?.sender)?.id,
+    pickObject(data?.sender)?.jid,
+    pickObject(data?.sender)?.phone,
+    pickObject(data?.sender)?.phoneNumber,
+    pickObject(data?.sender)?.pn,
+    pickObject(data?.contact)?.id,
+    pickObject(data?.contact)?.jid,
+    pickObject(data?.contact)?.phone,
+    pickObject(data?.contact)?.phoneNumber,
+    pickObject(data?.contact)?.pn,
+    pickObject(data?.participant)?.id,
+    pickObject(data?.participant)?.jid,
+    pickObject(data?.participant)?.phone,
+    pickObject(data?.participant)?.phoneNumber,
+    pickObject(data?.participant)?.pn,
   ]);
   const parsedContent = extractText(message, resolvedContent.content);
   const reaction = extractReactionPayload(message, resolvedContent.content);
@@ -813,6 +870,7 @@ export function parseEvolutionPayload(
     externalMessageId,
     fromMe,
     phone,
+    chatAliases,
     pushName: message?.pushName ?? null,
     verifiedBizName: message?.verifiedBizName ?? null,
     groupName,
