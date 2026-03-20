@@ -190,6 +190,19 @@ function extractMetadataAliases(payload: Record<string, unknown>, parsed: Return
 function extractMetadataDisplayName(payload: Record<string, unknown>, parsed: ReturnType<typeof parseEvolutionPayload>) {
   const data = pickObject(payload.data);
 
+  if (parsed.isGroup) {
+    return pickFirstNonEmptyString([
+      parsed.groupName,
+      data?.subject,
+      data?.groupSubject,
+      data?.groupName,
+      pickObject(data?.groupMetadata)?.subject,
+      pickObject(data?.groupMetadata)?.name,
+      pickObject(data?.groupInfo)?.subject,
+      pickObject(data?.groupInfo)?.name,
+    ]);
+  }
+
   return pickFirstNonEmptyString([
     parsed.groupName,
     parsed.pushName,
