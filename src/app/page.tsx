@@ -770,7 +770,8 @@ export default function HomePage() {
   }, [customers, selectedTicket]);
   const selectedTicketDisplayName = React.useMemo(() => {
     if (!selectedTicket) return "";
-    return selectedCustomer?.companyName ? `${selectedTicket.customerName} - ${selectedCustomer.companyName}` : selectedTicket.customerName;
+    const baseName = selectedCustomer?.name ?? selectedTicket.customerName;
+    return selectedCustomer?.companyName ? `${baseName} - ${selectedCustomer.companyName}` : baseName;
   }, [selectedCustomer?.companyName, selectedTicket]);
   const editingMessage = React.useMemo(
     () => messages.find((message) => message.id === editingMessageId) ?? null,
@@ -795,7 +796,8 @@ export default function HomePage() {
       ? customers.find((customer) => customer.id === ticket.customerId)
       : customers.find((customer) => onlyPhoneDigits(customer.phone ?? "") === onlyPhoneDigits(ticket.externalContactId ?? ticket.externalChatId));
 
-    return matchedCustomer?.companyName ? `${ticket.customerName} - ${matchedCustomer.companyName}` : ticket.customerName;
+    const baseName = matchedCustomer?.name ?? ticket.customerName;
+    return matchedCustomer?.companyName ? `${baseName} - ${matchedCustomer.companyName}` : baseName;
   }
 
   const canViewGroups = currentUser.permissions["tickets.groups"];
@@ -2352,7 +2354,7 @@ export default function HomePage() {
     setManagementModal("quickReply");
   }
 
-  function startEditCustomer(customer: CustomerItem) {
+  function startEditCustomer(customer: CustomerItem, options?: { preserveWorkspace?: boolean }) {
     setEditingCustomerId(customer.id);
     setCustomerForm({
       name: customer.name,
@@ -2361,7 +2363,9 @@ export default function HomePage() {
       companyName: customer.companyName ?? "",
       notes: customer.notes ?? "",
     });
-    setActiveWorkspace("contacts");
+    if (!options?.preserveWorkspace) {
+      setActiveWorkspace("contacts");
+    }
     setManagementModal("customer");
   }
 
@@ -4225,7 +4229,7 @@ export default function HomePage() {
                               {!selectedTicket.isGroup && selectedCustomer && canManageContacts ? (
                                 <button
                                   type="button"
-                                  onClick={() => startEditCustomer(selectedCustomer)}
+                                  onClick={() => startEditCustomer(selectedCustomer, { preserveWorkspace: true })}
                                   className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-[0.14em] text-sky-600 transition hover:text-sky-700"
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
