@@ -4,7 +4,7 @@ import type { Prisma } from '@prisma/client';
 import { parseEvolutionPayload } from './evolution.js';
 import { loadEnv } from '../config/env.js';
 import { decryptSecret } from './secrets.js';
-import { fetchEvolutionProfilePictureUrl } from './evolution-client.js';
+import { fetchEvolutionGroupName, fetchEvolutionProfilePictureUrl } from './evolution-client.js';
 import {
   buildActiveTicketIdentityWhere,
   buildTicketChatIdentity,
@@ -13,6 +13,16 @@ import {
 } from './ticket-identity.js';
 
 const env = loadEnv();
+const GENERIC_GROUP_NAME = 'Grupo WhatsApp';
+
+function hasUsableGroupName(value: string | null | undefined) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 && normalized !== GENERIC_GROUP_NAME;
+}
 
 function pickHeaderSecret(value: unknown) {
   if (Array.isArray(value)) {
@@ -164,7 +174,14 @@ async function findOrCreateCustomer(
 
 function resolveCustomerDisplayName(parsed: ReturnType<typeof parseEvolutionPayload>, currentName?: string | null) {
   if (parsed.isGroup) {
-    return parsed.groupName ?? currentName ?? 'Grupo WhatsApp';
+    const normalizedCurrentName = typeof currentName === 'string' ? currentName.trim() : '';
+    const hasSpecificCurrentName = normalizedCurrentName.length > 0 && normalizedCurrentName !== GENERIC_GROUP_NAME;
+    const fallbackCurrentName = normalizedCurrentName.length > 0 ? normalizedCurrentName : null;
+
+    return parsed.groupName
+      ?? (hasSpecificCurrentName ? normalizedCurrentName : null)
+      ?? fallbackCurrentName
+      ?? GENERIC_GROUP_NAME;
   }
 
   if (parsed.fromMe) {
@@ -558,7 +575,19 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           remoteJid: parsed.remoteJid,
         }).catch(() => null);
     const fetchedCustomerAvatarUrl = profilePictureResponse?.profilePictureUrl ?? null;
-    const desiredCustomerName = resolveCustomerDisplayName(parsed);
+    const fetchedGroupName = parsed.isGroup && !hasUsableGroupName(parsed.groupName)
+      ? await fetchEvolutionGroupName({
+          baseUrl: instance.baseUrl,
+          apiKey: decryptedApiKey,
+          instanceName: instance.evolutionInstanceName,
+          remoteJid: resolvedRemoteJid,
+        }).then((response) => response.groupName).catch(() => null)
+      : null;
+    const parsedWithResolvedGroupName = {
+      ...parsed,
+      groupName: fetchedGroupName ?? parsed.groupName,
+    };
+    const desiredCustomerName = resolveCustomerDisplayName(parsedWithResolvedGroupName);
 
     const customer = parsed.isGroup || !parsed.phone
       ? null
@@ -597,7 +626,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
             currentQueueId: instance.defaultQueueId ?? null,
             externalChatId: resolvedExternalChatId,
             externalContactId: chatIdentity.contactId,
-            customerNameSnapshot: resolveCustomerDisplayName(parsed, customer?.name),
+            customerNameSnapshot: resolveCustomerDisplayName(parsedWithResolvedGroupName, customer?.name),
             customerAvatarUrl,
             status: 'pending',
             unreadCount: parsed.fromMe ? 0 : 1,
@@ -624,7 +653,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           customerId: customer?.id ?? existingTicket.customerId,
           externalChatId: chatIdentity.canonicalChatId ?? existingTicket.externalChatId,
           externalContactId: chatIdentity.contactId ?? existingTicket.externalContactId,
-          customerNameSnapshot: resolveCustomerDisplayName(parsed, customer?.name ?? existingTicket.customerNameSnapshot),
+          customerNameSnapshot: resolveCustomerDisplayName(parsedWithResolvedGroupName, customer?.name ?? existingTicket.customerNameSnapshot),
           customerAvatarUrl: customerAvatarUrl ?? existingTicket.customerAvatarUrl,
           lastMessagePreview: parsed.body,
           unreadCount: parsed.fromMe ? 0 : { increment: 1 },

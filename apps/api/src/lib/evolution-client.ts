@@ -73,6 +73,13 @@ interface FetchProfilePictureParams {
   remoteJid: string;
 }
 
+interface FetchGroupNameParams {
+  baseUrl: string;
+  apiKey: string;
+  instanceName: string;
+  remoteJid: string;
+}
+
 const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_EDITED', 'MESSAGES_DELETE', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'];
 const WEBSOCKET_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_EDITED', 'MESSAGES_DELETE', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'];
 const LEGACY_WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'QRCODE_UPDATED', 'CONNECTION_UPDATE'];
@@ -94,6 +101,37 @@ function pickProfilePictureUrl(payload: any) {
     ?? payload?.data?.pictureUrl
     ?? payload?.data?.url
     ?? null;
+}
+
+function pickGroupName(payload: any) {
+  const candidates = [
+    payload?.subject,
+    payload?.name,
+    payload?.groupName,
+    payload?.groupSubject,
+    payload?.title,
+    payload?.data?.subject,
+    payload?.data?.name,
+    payload?.data?.groupName,
+    payload?.data?.groupSubject,
+    payload?.data?.title,
+    payload?.groupMetadata?.subject,
+    payload?.groupMetadata?.name,
+    payload?.groupInfo?.subject,
+    payload?.groupInfo?.name,
+    payload?.data?.groupMetadata?.subject,
+    payload?.data?.groupMetadata?.name,
+    payload?.data?.groupInfo?.subject,
+    payload?.data?.groupInfo?.name,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
 }
 
 export async function sendEvolutionText(params: SendTextParams) {
@@ -570,6 +608,83 @@ export async function fetchEvolutionProfilePictureUrl(params: FetchProfilePictur
     status: response.status,
     payload,
     profilePictureUrl: pickProfilePictureUrl(payload),
+  };
+}
+
+export async function fetchEvolutionGroupName(params: FetchGroupNameParams) {
+  const cleanUrl = params.baseUrl.replace(/\/$/, '');
+
+  async function execute(path: string, body: Record<string, unknown>) {
+    const response = await fetch(`${cleanUrl}${path}/${params.instanceName}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: params.apiKey,
+      },
+      body: JSON.stringify(body),
+    });
+
+    let payload: any = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      payload,
+      groupName: pickGroupName(payload),
+    };
+  }
+
+  const attempts = [
+    {
+      path: '/group/findGroupInfos',
+      body: {
+        groupJid: params.remoteJid,
+      },
+    },
+    {
+      path: '/group/findGroupInfos',
+      body: {
+        groupJid: [params.remoteJid],
+      },
+    },
+    {
+      path: '/group/fetchAllGroups',
+      body: {
+        getParticipants: false,
+      },
+    },
+    {
+      path: '/chat/findMessages',
+      body: {
+        where: {
+          key: {
+            remoteJid: params.remoteJid,
+          },
+        },
+      },
+    },
+  ];
+
+  let lastAttempt = null as Awaited<ReturnType<typeof execute>> | null;
+
+  for (const attempt of attempts) {
+    lastAttempt = await execute(attempt.path, attempt.body);
+
+    if (lastAttempt.ok && lastAttempt.groupName) {
+      return lastAttempt;
+    }
+  }
+
+  return lastAttempt ?? {
+    ok: false,
+    status: 500,
+    payload: null,
+    groupName: null,
   };
 }
 
