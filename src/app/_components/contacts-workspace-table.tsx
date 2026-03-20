@@ -8,8 +8,9 @@ type ContactsWorkspaceTableProps = {
   rows: React.ReactNode;
   DataTable: React.ComponentType<{
     columns: string[];
-    emptyMessage?: string;
+    emptyMessage: string;
     children: React.ReactNode;
+    compact?: boolean;
   }>;
 };
 
