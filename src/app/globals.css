@@ -1,4 +1,3 @@
-@import "react-h5-audio-player/lib/styles.css";
 @import "react-photo-view/dist/react-photo-view.css";
 
 @tailwind base;
@@ -60,75 +59,29 @@
 }
 
 .chatflow-audio-player {
-  --rhap-theme-color: #25d366;
-  --rhap-background-color: #ffffff;
-  --rhap-bar-color: #cbd5e1;
-  --rhap-time-color: #64748b;
-  --rhap-font-family: inherit;
   width: 100%;
-  min-width: 320px;
   border: 1px solid #e8dfd3;
   border-radius: 24px;
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
-  padding: 10px 12px;
+  padding: 10px;
+  background: #fff;
 }
 
-.chatflow-audio-player .rhap_container {
-  background: transparent;
-  box-shadow: none;
-  padding: 0;
+.chatflow-audio-element {
   width: 100%;
-}
-
-.chatflow-audio-player .rhap_main {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.chatflow-audio-player .rhap_main-controls {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 48px;
-  min-width: 48px;
-}
-
-.chatflow-audio-player .rhap_main-controls-button,
-.chatflow-audio-player .rhap_volume-button {
-  color: #25d366;
-}
-
-.chatflow-audio-player .rhap_play-pause-button {
-  width: 40px;
-  height: 40px;
-  font-size: 40px;
-}
-
-.chatflow-audio-player .rhap_progress-filled,
-.chatflow-audio-player .rhap_progress-indicator,
-.chatflow-audio-player .rhap_download-progress,
-.chatflow-audio-player .rhap_volume-filled,
-.chatflow-audio-player .rhap_volume-indicator {
-  background: #25d366;
-}
-
-.chatflow-audio-player .rhap_progress-container,
-.chatflow-audio-player .rhap_volume-bar {
-  cursor: pointer;
-}
-
-.chatflow-audio-player .rhap_progress-section {
-  flex: 1 1 auto;
+  display: block;
   min-width: 0;
+  height: 42px;
+  border-radius: 16px;
+  background: #fff;
 }
 
-.chatflow-audio-player .rhap_controls-section {
-  flex: 0 0 auto;
-}
+@media (max-width: 640px) {
+  .chatflow-audio-player {
+    padding: 8px;
+  }
 
-.chatflow-audio-player .rhap_time {
-  min-width: fit-content;
-  font-variant-numeric: tabular-nums;
+  .chatflow-audio-element {
+    height: 40px;
+  }
 }

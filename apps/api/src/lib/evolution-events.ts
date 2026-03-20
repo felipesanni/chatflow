@@ -357,7 +357,7 @@ async function findOrCreateCustomer(
 
   if (existing) {
     const nextAvatarUrl = params.avatarUrl ?? existing.avatarUrl ?? null;
-    const nextName = params.preserveExistingName ? existing.name : params.name;
+    const nextName = existing.isNameManuallySet || params.preserveExistingName ? existing.name : params.name;
 
     if (existing.name !== nextName || existing.avatarUrl !== nextAvatarUrl) {
       return prisma.customer.update({
@@ -590,10 +590,19 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
             });
 
             if (metadataDisplayName && (!metadataIsGroup || hasUsableGroupName(metadataDisplayName))) {
+              const lockedCustomer = existingTicket.customerId
+                ? await tx.customer.findUnique({
+                    where: { id: existingTicket.customerId },
+                    select: { isNameManuallySet: true, name: true },
+                  })
+                : null;
+              const nextSnapshot = lockedCustomer?.isNameManuallySet
+                ? (lockedCustomer.name || existingTicket.customerNameSnapshot)
+                : metadataDisplayName;
               await tx.ticket.update({
                 where: { id: existingTicket.id },
                 data: {
-                  customerNameSnapshot: metadataDisplayName,
+                  customerNameSnapshot: nextSnapshot,
                   externalChatId: canPromoteMetadataChatId ? (metadataCanonicalChatId ?? existingTicket.externalChatId) : existingTicket.externalChatId,
                   externalContactId: metadataIdentity.contactId ?? existingTicket.externalContactId,
                   updatedAt: new Date(),

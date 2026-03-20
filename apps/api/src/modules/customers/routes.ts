@@ -55,6 +55,7 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         email: customer.email,
         companyName: customer.companyName,
         notes: customer.notes,
+        isNameManuallySet: customer.isNameManuallySet,
         createdAt: customer.createdAt,
         updatedAt: customer.updatedAt,
         lastTicket: customer.tickets[0]
@@ -107,6 +108,7 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         email,
         companyName: body.companyName?.trim() || null,
         notes: body.notes?.trim() || null,
+        isNameManuallySet: true,
       },
     });
 
@@ -119,6 +121,7 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         email: customer.email,
         companyName: customer.companyName,
         notes: customer.notes,
+        isNameManuallySet: customer.isNameManuallySet,
         createdAt: customer.createdAt,
         updatedAt: customer.updatedAt,
         lastTicket: null,
@@ -179,6 +182,7 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         email,
         companyName: body.companyName?.trim() || null,
         notes: body.notes?.trim() || null,
+        isNameManuallySet: true,
       },
     });
 
@@ -191,6 +195,7 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         email: customer.email,
         companyName: customer.companyName,
         notes: customer.notes,
+        isNameManuallySet: customer.isNameManuallySet,
         createdAt: customer.createdAt,
         updatedAt: customer.updatedAt,
       },

@@ -122,6 +122,7 @@ const operationalStatements = [
       email TEXT,
       company_name TEXT,
       notes TEXT,
+      is_name_manually_set BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -129,6 +130,10 @@ const operationalStatements = [
   `
     ALTER TABLE customers
       ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+  `,
+  `
+    ALTER TABLE customers
+      ADD COLUMN IF NOT EXISTS is_name_manually_set BOOLEAN NOT NULL DEFAULT FALSE;
   `,
   `
     CREATE UNIQUE INDEX IF NOT EXISTS customers_phone_e164_key

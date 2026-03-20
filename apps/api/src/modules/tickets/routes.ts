@@ -166,7 +166,7 @@ async function findOrCreateCustomer(
   });
 
   if (existing) {
-    if (params.name && existing.name !== params.name) {
+    if (params.name && existing.name !== params.name && !existing.isNameManuallySet) {
       return prisma.customer.update({
         where: { id: existing.id },
         data: { name: params.name },
@@ -181,6 +181,7 @@ async function findOrCreateCustomer(
       id: randomUUID(),
       name: params.name ?? params.phoneE164,
       phoneE164: params.phoneE164,
+      isNameManuallySet: Boolean(params.name),
     },
   });
 }

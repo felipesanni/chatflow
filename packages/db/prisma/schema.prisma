@@ -109,16 +109,17 @@ model Agent {
 }
 
 model Customer {
-  id          String   @id @db.Uuid
-  name        String
-  phoneE164   String?  @unique @map("phone_e164")
-  avatarUrl   String?  @map("avatar_url")
-  email       String?
-  companyName String?  @map("company_name")
-  notes       String?
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-  tickets     Ticket[]
+  id             String   @id @db.Uuid
+  name           String
+  phoneE164      String?  @unique @map("phone_e164")
+  avatarUrl      String?  @map("avatar_url")
+  email          String?
+  companyName    String?  @map("company_name")
+  notes          String?
+  isNameManuallySet Boolean @default(false) @map("is_name_manually_set")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  tickets        Ticket[]
 
   @@map("customers")
 }

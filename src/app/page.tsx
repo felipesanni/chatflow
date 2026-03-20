@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { io, type Socket } from "socket.io-client";
-import AudioPlayer from "react-h5-audio-player";
 import { PhotoProvider, PhotoView } from "react-photo-view";
 import {
   Activity,
@@ -5335,15 +5334,10 @@ function AudioMessagePlayer(props: {
   src: string;
 }) {
   return (
-      <div className="chatflow-audio-player w-full min-w-[420px] max-w-full md:min-w-[560px] overflow-hidden bg-white">
-      <AudioPlayer
-        src={props.src}
-        preload="metadata"
-        showJumpControls={false}
-        customAdditionalControls={[]}
-        customVolumeControls={[]}
-        layout="horizontal"
-      />
+    <div className="chatflow-audio-player w-full max-w-full overflow-hidden bg-white">
+      <audio className="chatflow-audio-element" controls preload="metadata" src={props.src}>
+        Seu navegador nao suporta audio embutido.
+      </audio>
     </div>
   );
 }
