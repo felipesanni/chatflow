@@ -1733,6 +1733,24 @@ export default function HomePage() {
     );
   }
 
+  function toggleAllVisibleTicketBulkSelection() {
+    const visibleTicketIds = visibleTickets.map((ticket) => ticket.id);
+
+    if (visibleTicketIds.length === 0) {
+      return;
+    }
+
+    setSelectedTicketIdsForBulkDelete((current) => {
+      const allVisibleSelected = visibleTicketIds.every((ticketId) => current.includes(ticketId));
+
+      if (allVisibleSelected) {
+        return current.filter((ticketId) => !visibleTicketIds.includes(ticketId));
+      }
+
+      return Array.from(new Set([...current, ...visibleTicketIds]));
+    });
+  }
+
   function toggleMessageBulkSelection(messageId: string) {
     setSelectedMessageIdsForBulkDelete((current) =>
       current.includes(messageId)
@@ -4919,8 +4937,23 @@ export default function HomePage() {
 
                 {ticketBulkSelectionMode ? (
                   <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-3 py-2">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                      {selectedTicketIdsForBulkDelete.length} ticket(s) selecionado(s)
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        aria-label="Selecionar todos os tickets visíveis"
+                        title="Selecionar todos os tickets visíveis"
+                        onClick={toggleAllVisibleTicketBulkSelection}
+                        className="grid h-5 w-5 place-items-center rounded-md border border-slate-300 bg-white text-slate-500 transition hover:border-slate-400 hover:text-slate-700"
+                      >
+                        {visibleTickets.length > 0 && visibleTickets.every((ticket) => selectedTicketIdsForBulkDelete.includes(ticket.id)) ? (
+                          <CheckSquare className="h-3.5 w-3.5" />
+                        ) : (
+                          <Square className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                        {selectedTicketIdsForBulkDelete.length} ticket(s) selecionado(s)
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <button
