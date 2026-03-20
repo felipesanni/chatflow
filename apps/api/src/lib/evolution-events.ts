@@ -15,7 +15,6 @@ import {
 } from './ticket-identity.js';
 
 const env = loadEnv();
-const GENERIC_GROUP_NAME = 'Grupo WhatsApp';
 const METADATA_ONLY_EVENTS = new Set([
   'SEND_MESSAGE',
   'CONTACTS_UPSERT',
@@ -33,7 +32,7 @@ function hasUsableGroupName(value: string | null | undefined) {
   }
 
   const normalized = value.trim();
-  if (!normalized || normalized === GENERIC_GROUP_NAME) {
+  if (!normalized || normalized === 'Grupo WhatsApp') {
     return false;
   }
 
@@ -407,13 +406,12 @@ function resolveCustomerDisplayName(parsed: ReturnType<typeof parseEvolutionPayl
     const normalizedCurrentName = typeof currentName === 'string' ? currentName.trim() : '';
     const normalizedParsedGroupName = typeof parsed.groupName === 'string' ? parsed.groupName.trim() : '';
     const usableParsedGroupName = hasUsableGroupName(normalizedParsedGroupName) ? normalizedParsedGroupName : null;
-    const hasSpecificCurrentName = hasUsableGroupName(normalizedCurrentName);
-    const fallbackCurrentName = hasUsableGroupName(normalizedCurrentName) ? normalizedCurrentName : null;
+    const usableCurrentName = hasUsableGroupName(normalizedCurrentName) ? normalizedCurrentName : null;
 
     return usableParsedGroupName
-      ?? (hasSpecificCurrentName ? normalizedCurrentName : null)
-      ?? fallbackCurrentName
-      ?? GENERIC_GROUP_NAME;
+      ?? usableCurrentName
+      ?? parsed.remoteJid
+      ?? null;
   }
 
   if (parsed.fromMe) {
@@ -576,7 +574,6 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
       const fetchedMetadataGroupName =
         metadataIsGroup
         && metadataRemoteJid
-        && !hasUsableGroupName(metadataDisplayName)
           ? await fetchEvolutionGroupName({
               baseUrl: instance.baseUrl,
               apiKey: decryptedApiKey,
@@ -978,7 +975,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           remoteJid: profilePictureTarget,
         }).catch(() => null);
     const fetchedCustomerAvatarUrl = profilePictureResponse?.profilePictureUrl ?? null;
-    const fetchedGroupName = parsed.isGroup && !hasUsableGroupName(parsed.groupName)
+    const fetchedGroupName = parsed.isGroup && resolvedRemoteJid
       ? await fetchEvolutionGroupName({
           baseUrl: instance.baseUrl,
           apiKey: decryptedApiKey,
@@ -990,6 +987,17 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
       ...parsed,
       groupName: fetchedGroupName ?? parsed.groupName,
     };
+    if (parsed.isGroup) {
+      app.log.info({
+        action: 'evolution_group_name_resolution',
+        instanceId: instance.id,
+        remoteJid: resolvedRemoteJid,
+        parsedGroupName: parsed.groupName,
+        fetchedGroupName,
+        currentTicketName: preMatchedOutboundMessage?.ticket.customerNameSnapshot ?? aliasedTicket?.customerNameSnapshot ?? null,
+        resolvedGroupName: parsedWithResolvedGroupName.groupName,
+      }, 'Resolucao de nome de grupo processada.');
+    }
     const desiredCustomerName = resolveCustomerDisplayName(parsedWithResolvedGroupName);
 
     const customer = parsed.isGroup || !parsed.phone

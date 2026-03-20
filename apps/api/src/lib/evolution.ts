@@ -218,58 +218,6 @@ function pickNonEmptyStringList(values: unknown[]) {
   ));
 }
 
-function collectGroupNameCandidates(value: unknown, remoteJid: string, depth = 0, seen = new WeakSet<object>()): string[] {
-  if (depth > 8) {
-    return [];
-  }
-
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => collectGroupNameCandidates(item, remoteJid, depth + 1, seen));
-  }
-
-  const record = pickObject(value);
-  if (!record) {
-    return [];
-  }
-
-  if (seen.has(record)) {
-    return [];
-  }
-
-  seen.add(record);
-
-  const maybeGroupId = pickFirstNonEmptyString([
-    record.id,
-    record.jid,
-    record.remoteJid,
-    record.groupId,
-    record.chatId,
-  ]);
-  const looksLikeGroupMetadata =
-    maybeGroupId === remoteJid
-    || record.groupMetadata !== undefined
-    || record.groupInfo !== undefined
-    || Array.isArray(record.participants)
-    || typeof record.descOwner === 'string'
-    || typeof record.owner === 'string';
-
-  const localCandidates = looksLikeGroupMetadata
-    ? [
-        record.subject,
-        record.groupSubject,
-        record.groupName,
-        record.formattedTitle,
-        record.title,
-        record.notify,
-        record.name,
-      ].filter((candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0)
-    : [];
-
-  const nestedCandidates = Object.values(record).flatMap((child) => collectGroupNameCandidates(child, remoteJid, depth + 1, seen));
-
-  return [...localCandidates, ...nestedCandidates];
-}
-
 function findEditedProtocolMessage(value: unknown, depth = 0): { editedMessage: Record<string, any>; targetKey: Record<string, unknown> | null } | null {
   if (depth > 8) {
     return null;
@@ -498,16 +446,13 @@ function extractGroupName(payload: Record<string, unknown>, message: EvolutionMe
   const groupMetadata = pickObject(data?.groupMetadata);
   const groupInfo = pickObject(data?.groupInfo);
   const key = pickObject(message?.key);
-  const recursiveCandidates = collectGroupNameCandidates(payload, remoteJid);
 
   return pickFirstNonEmptyString([
     data?.subject,
     data?.groupSubject,
     data?.groupName,
     groupMetadata?.subject,
-    groupMetadata?.name,
     groupInfo?.subject,
-    groupInfo?.name,
     messageContent?.groupName,
     messageContent?.groupSubject,
     contextInfo?.groupSubject,
@@ -516,7 +461,6 @@ function extractGroupName(payload: Record<string, unknown>, message: EvolutionMe
     payload.subject,
     payload.groupSubject,
     payload.groupName,
-    ...recursiveCandidates,
   ]);
 }
 
