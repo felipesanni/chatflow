@@ -548,6 +548,18 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         ?? metadataAliases.find((alias) => alias.includes('@'))
         ?? null;
       const metadataDisplayName = extractMetadataDisplayName(params.payload, parsed);
+      const fetchedMetadataGroupName =
+        metadataIsGroup
+        && metadataRemoteJid
+        && !hasUsableGroupName(metadataDisplayName)
+          ? await fetchEvolutionGroupName({
+              baseUrl: instance.baseUrl,
+              apiKey: decryptedApiKey,
+              instanceName: instance.evolutionInstanceName,
+              remoteJid: metadataRemoteJid,
+            }).then((response) => response.groupName).catch(() => null)
+          : null;
+      const resolvedMetadataDisplayName = fetchedMetadataGroupName ?? metadataDisplayName;
 
       if (metadataRemoteJid || metadataPhone || metadataAliases.length > 0) {
         const metadataIdentity = buildTicketChatIdentity({
@@ -589,7 +601,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
               aliases: aliasCandidates,
             });
 
-            if (metadataDisplayName && (!metadataIsGroup || hasUsableGroupName(metadataDisplayName))) {
+            if (resolvedMetadataDisplayName && (!metadataIsGroup || hasUsableGroupName(resolvedMetadataDisplayName))) {
               const lockedCustomer = existingTicket.customerId
                 ? await tx.customer.findUnique({
                     where: { id: existingTicket.customerId },
@@ -598,7 +610,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
                 : null;
               const nextSnapshot = lockedCustomer?.isNameManuallySet
                 ? (lockedCustomer.name || existingTicket.customerNameSnapshot)
-                : metadataDisplayName;
+                : resolvedMetadataDisplayName;
               await tx.ticket.update({
                 where: { id: existingTicket.id },
                 data: {

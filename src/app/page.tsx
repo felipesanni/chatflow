@@ -826,6 +826,7 @@ export default function HomePage() {
   const isSelectedTicketOwnedByCurrentUser = Boolean(selectedTicket && selectedTicket.currentAgent?.id === user?.id);
   const canAcceptSelectedTicket = Boolean(
     selectedTicket &&
+    !selectedTicket.isGroup &&
     selectedTicket.status !== "closed" &&
     selectedTicket.currentAgent?.id !== user?.id &&
     currentUser.permissions["tickets.accept"] &&
@@ -847,7 +848,7 @@ export default function HomePage() {
     selectedTicket &&
     selectedTicket.status !== "closed" &&
     currentUser.permissions["tickets.reply"] &&
-    (isSelectedTicketOwnedByCurrentUser || canReplyUnassignedTickets),
+    (selectedTicket.isGroup ? canViewGroups : (isSelectedTicketOwnedByCurrentUser || canReplyUnassignedTickets)),
   );
   const isSelectedTicketClosed = Boolean(selectedTicket?.status === "closed");
   const shouldDisableComposer = Boolean(!selectedTicket || !canSendToSelectedTicket);
@@ -3620,7 +3621,7 @@ export default function HomePage() {
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12px] text-slate-500">
                       <span>{formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)}</span>
                       <span className="text-slate-300">•</span>
-                      <span>{selectedTicket.currentAgent?.name ?? (selectedTicket.isGroup ? "Conversa de grupo" : "Aguardando atendente")}</span>
+                      <span>{selectedTicket.isGroup ? "Conversa compartilhada" : (selectedTicket.currentAgent?.name ?? "Aguardando atendente")}</span>
                     </div>
                   </div>
                 </div>
@@ -3660,10 +3661,12 @@ export default function HomePage() {
                       {messageBulkSelectionMode ? "Cancelar seleção" : "Apagar mensagens"}
                     </button>
                   ) : null}
-                  <button type="button" aria-label="Assumir atendimento selecionado" title="Assumir atendimento" onClick={() => void handleAcceptTicket()} disabled={!canAcceptSelectedTicket} className="inline-flex h-9 items-center gap-2 rounded-full bg-[#e7eff8] px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#385a7a] transition hover:bg-[#dbe7f3] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
-                    <CheckSquare className="h-4 w-4" />
-                    {selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Atendimento fechado" : "Aceitar atendimento"}
-                  </button>
+                  {!selectedTicket.isGroup ? (
+                    <button type="button" aria-label="Assumir atendimento selecionado" title="Assumir atendimento" onClick={() => void handleAcceptTicket()} disabled={!canAcceptSelectedTicket} className="inline-flex h-9 items-center gap-2 rounded-full bg-[#e7eff8] px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#385a7a] transition hover:bg-[#dbe7f3] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
+                      <CheckSquare className="h-4 w-4" />
+                      {selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Atendimento fechado" : "Aceitar atendimento"}
+                    </button>
+                  ) : null}
                   {canTransferSelectedTicket ? (
                     <button
                       type="button"
@@ -5284,7 +5287,7 @@ export default function HomePage() {
                                 ) : (
                                   <>
                                     <MiniBadge className="bg-red-500 text-white" text={ticket.currentQueue?.name ?? "SEM FILA"} />
-                                    <MiniBadge className="bg-slate-900 text-white" text={ticket.currentAgent?.name ?? "SEM AGENTE"} />
+                  <MiniBadge className="bg-slate-900 text-white" text={ticket.isGroup ? "COMPARTILHADO" : (ticket.currentAgent?.name ?? "SEM AGENTE")} />
                                   </>
                                 )}
                               </div>

@@ -104,6 +104,47 @@ function pickProfilePictureUrl(payload: any) {
 }
 
 function pickGroupName(payload: any) {
+  function collectCandidates(value: any, depth = 0, seen = new WeakSet<object>()): string[] {
+    if (!value || depth > 6) {
+      return [];
+    }
+
+    if (Array.isArray(value)) {
+      return value.flatMap((item) => collectCandidates(item, depth + 1, seen));
+    }
+
+    if (typeof value === 'object') {
+      if (seen.has(value)) {
+        return [];
+      }
+
+      seen.add(value);
+
+      const record = value as Record<string, unknown>;
+      const localCandidates = [
+        record.subject,
+        record.name,
+        record.groupName,
+        record.groupSubject,
+        record.title,
+        record.pushName,
+        record.notify,
+      ]
+        .filter((candidate): candidate is string => typeof candidate === 'string')
+        .map((candidate) => candidate.trim())
+        .filter((candidate) => candidate.length > 0);
+
+      return [
+        ...localCandidates,
+        ...Object.values(record).flatMap((item) => collectCandidates(item, depth + 1, seen)),
+      ];
+    }
+
+    return typeof value === 'string' && value.trim().length > 0
+      ? [value.trim()]
+      : [];
+  }
+
   const candidates = [
     payload?.subject,
     payload?.name,
@@ -123,6 +164,7 @@ function pickGroupName(payload: any) {
     payload?.data?.groupMetadata?.name,
     payload?.data?.groupInfo?.subject,
     payload?.data?.groupInfo?.name,
+    ...collectCandidates(payload),
   ];
 
   for (const candidate of candidates) {

@@ -349,10 +349,14 @@ function canViewTicket(
   viewerId: string,
   permissions: PermissionMap,
   viewerQueueIds: string[],
-  ticket: { currentAgentId: string | null; currentQueueId?: string | null; status?: string | null },
+  ticket: { currentAgentId: string | null; currentQueueId?: string | null; status?: string | null; isGroup?: boolean | null },
 ) {
   if (ticket.status === 'closed' && !permissions['tickets.closedView']) {
     return false;
+  }
+
+  if (ticket.isGroup) {
+    return permissions['tickets.groups'];
   }
 
   if (permissions['tickets.viewAll']) {
@@ -385,8 +389,12 @@ function canReplyToTicket(
   viewerId: string,
   permissions: PermissionMap,
   viewerQueueIds: string[],
-  ticket: { currentAgentId: string | null; currentQueueId?: string | null; status?: string | null },
+  ticket: { currentAgentId: string | null; currentQueueId?: string | null; status?: string | null; isGroup?: boolean | null },
 ) {
+  if (ticket.isGroup) {
+    return permissions['tickets.groups'];
+  }
+
   if (ticket.currentAgentId === viewerId) {
     return true;
   }
@@ -405,7 +413,7 @@ function formatAgentSignedBody(agentName: string, body: string) {
     return '';
   }
 
-  return `*${agentName}*\n\n${trimmedBody}`;
+  return `*${agentName}*\n${trimmedBody}`;
 }
 
 function normalizeStoredReactions(value: unknown) {
@@ -695,7 +703,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
     const ticket = await app.prisma.ticket.findUnique({
       where: { id: params.ticketId },
-      select: { id: true, currentAgentId: true, currentQueueId: true, status: true },
+      select: { id: true, currentAgentId: true, currentQueueId: true, status: true, isGroup: true },
     });
 
     if (!ticket) {
@@ -1139,6 +1147,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         currentAgentId: true,
         currentQueueId: true,
         status: true,
+        isGroup: true,
       },
     });
 
@@ -1199,6 +1208,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         currentAgentId: true,
         currentQueueId: true,
         status: true,
+        isGroup: true,
       },
     });
 
@@ -1300,7 +1310,9 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
 
     const signedBody = isInternalNote
       ? trimmedBody
-      : (trimmedBody ? formatAgentSignedBody(agentSignature, trimmedBody) : '');
+      : ticket.isGroup
+        ? trimmedBody
+        : (trimmedBody ? formatAgentSignedBody(agentSignature, trimmedBody) : '');
     const parsedAttachment = attachmentInput ? parseDataUrl(attachmentInput.dataUrl) : null;
 
     let externalMessageId: string | null = null;
@@ -1405,7 +1417,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
           : (trimmedBody || (attachmentInput ? `[${attachmentInput.kind}] ${attachmentInput.fileName}` : null)),
         unreadCount: 0,
         status: 'open',
-        currentAgentId: ticket.currentAgentId ?? session.userId,
+        currentAgentId: ticket.isGroup ? null : (ticket.currentAgentId ?? session.userId),
         updatedAt: new Date(),
       },
     });

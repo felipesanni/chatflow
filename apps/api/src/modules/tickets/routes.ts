@@ -209,10 +209,14 @@ function canViewTicket(
   viewerId: string,
   permissions: PermissionMap,
   viewerQueueIds: string[],
-  ticket: { currentAgentId: string | null; currentQueueId: string | null; status?: string | null },
+  ticket: { currentAgentId: string | null; currentQueueId: string | null; status?: string | null; isGroup?: boolean | null },
 ) {
   if (ticket.status === 'closed' && !permissions['tickets.closedView']) {
     return false;
+  }
+
+  if (ticket.isGroup) {
+    return permissions['tickets.groups'];
   }
 
   if (permissions['tickets.viewAll']) {
@@ -241,7 +245,11 @@ function canViewTicket(
   return ticket.currentAgentId === null || canViewOtherUsers;
 }
 
-function canManageTicket(viewerId: string, ticket: { currentAgentId: string | null }) {
+function canManageTicket(viewerId: string, ticket: { currentAgentId: string | null; isGroup?: boolean | null }) {
+  if (ticket.isGroup) {
+    return false;
+  }
+
   return ticket.currentAgentId === viewerId;
 }
 
@@ -329,9 +337,15 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const visibilityFilters = [
-      { currentAgentId: session.userId },
+      ...(access.permissions['tickets.groups']
+        ? [{
+            isGroup: true,
+          }]
+        : []),
+      { currentAgentId: session.userId, isGroup: false },
       ...(access.queueIds.length > 0
         ? [{
+            isGroup: false,
             ...(access.permissions['tickets.viewOthers']
               ? {}
               : { currentAgentId: null }),
@@ -340,6 +354,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         : []),
       ...(access.permissions['tickets.viewUnassigned']
         ? [{
+            isGroup: false,
             ...(access.permissions['tickets.viewOthers']
               ? {}
               : { currentAgentId: null }),
@@ -619,6 +634,10 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
 
     if (!canViewTicket(session.userId, access.permissions, access.queueIds, currentTicket)) {
       return reply.forbidden('Voce nao possui permissao para assumir este ticket.');
+    }
+
+    if (currentTicket.isGroup) {
+      return reply.badRequest('Grupos do WhatsApp nao precisam ser assumidos.');
     }
 
     if (currentTicket.currentAgentId && currentTicket.currentAgentId !== session.userId) {
