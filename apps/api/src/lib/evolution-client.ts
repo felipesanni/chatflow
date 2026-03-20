@@ -148,6 +148,30 @@ function pickGroupName(payload: any) {
   return null;
 }
 
+function summarizeGroupLookupPayload(payload: any) {
+  const topLevelKeys = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? Object.keys(payload).slice(0, 20)
+    : [];
+  const data = payload?.data;
+  const dataKeys = data && typeof data === 'object' && !Array.isArray(data)
+    ? Object.keys(data).slice(0, 20)
+    : [];
+  const firstDataItem = Array.isArray(data) && data[0] && typeof data[0] === 'object'
+    ? data[0]
+    : null;
+  const firstDataItemKeys = firstDataItem
+    ? Object.keys(firstDataItem).slice(0, 20)
+    : [];
+
+  return {
+    topLevelKeys,
+    dataKeys,
+    firstDataItemKeys,
+    hasDataArray: Array.isArray(data),
+    dataLength: Array.isArray(data) ? data.length : null,
+  };
+}
+
 export async function sendEvolutionText(params: SendTextParams) {
   const cleanUrl = params.baseUrl.replace(/\/$/, '');
   const destination = normalizeDestination(params.remoteJid);
@@ -650,6 +674,11 @@ export async function fetchEvolutionGroupName(params: FetchGroupNameParams) {
       status: response.status,
       payload,
       groupName: pickGroupName(payload),
+      debug: {
+        path,
+        body,
+        payloadSummary: summarizeGroupLookupPayload(payload),
+      },
     };
   }
 
@@ -699,6 +728,11 @@ export async function fetchEvolutionGroupName(params: FetchGroupNameParams) {
     status: 500,
     payload: null,
     groupName: null,
+    debug: {
+      path: null,
+      body: null,
+      payloadSummary: summarizeGroupLookupPayload(null),
+    },
   };
 }
 

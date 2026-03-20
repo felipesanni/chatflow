@@ -581,7 +581,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         ?? metadataAliases.find((alias) => alias.includes('@'))
         ?? null;
       const metadataDisplayName = extractMetadataDisplayName(params.payload, parsed);
-      const fetchedMetadataGroupName =
+      const fetchedMetadataGroupLookup =
         metadataIsGroup
         && metadataRemoteJid
           ? await fetchEvolutionGroupName({
@@ -589,8 +589,20 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
               apiKey: decryptedApiKey,
               instanceName: instance.evolutionInstanceName,
               remoteJid: metadataRemoteJid,
-            }).then((response) => response.groupName).catch(() => null)
+            }).catch(() => null)
           : null;
+      const fetchedMetadataGroupName = fetchedMetadataGroupLookup?.groupName ?? null;
+      if (metadataIsGroup && metadataRemoteJid && fetchedMetadataGroupLookup) {
+        app.log.info({
+          action: 'evolution_group_lookup_debug',
+          instanceId: instance.id,
+          remoteJid: metadataRemoteJid,
+          phase: 'metadata',
+          status: fetchedMetadataGroupLookup.status,
+          groupName: fetchedMetadataGroupLookup.groupName,
+          ...fetchedMetadataGroupLookup.debug,
+        }, 'Consulta de nome de grupo na Evolution concluida.');
+      }
       const resolvedMetadataDisplayName = fetchedMetadataGroupName ?? metadataDisplayName;
 
       if (metadataRemoteJid || metadataPhone || metadataAliases.length > 0) {
@@ -985,14 +997,26 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           remoteJid: profilePictureTarget,
         }).catch(() => null);
     const fetchedCustomerAvatarUrl = profilePictureResponse?.profilePictureUrl ?? null;
-    const fetchedGroupName = parsed.isGroup && resolvedRemoteJid
+    const fetchedGroupLookup = parsed.isGroup && resolvedRemoteJid
       ? await fetchEvolutionGroupName({
           baseUrl: instance.baseUrl,
           apiKey: decryptedApiKey,
           instanceName: instance.evolutionInstanceName,
           remoteJid: resolvedRemoteJid,
-        }).then((response) => response.groupName).catch(() => null)
+        }).catch(() => null)
       : null;
+    const fetchedGroupName = fetchedGroupLookup?.groupName ?? null;
+    if (parsed.isGroup && resolvedRemoteJid && fetchedGroupLookup) {
+      app.log.info({
+        action: 'evolution_group_lookup_debug',
+        instanceId: instance.id,
+        remoteJid: resolvedRemoteJid,
+        phase: 'message',
+        status: fetchedGroupLookup.status,
+        groupName: fetchedGroupLookup.groupName,
+        ...fetchedGroupLookup.debug,
+      }, 'Consulta de nome de grupo na Evolution concluida.');
+    }
     const parsedWithResolvedGroupName = {
       ...parsed,
       groupName: fetchedGroupName ?? parsed.groupName,
