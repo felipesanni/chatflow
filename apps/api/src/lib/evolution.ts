@@ -419,29 +419,37 @@ function findMessageKeyCandidate(value: unknown, depth = 0, seen = new WeakSet<o
   return null;
 }
 
-function resolveMessageContent(message: EvolutionMessage | null): ResolvedEvolutionContent {
-  const content = pickObject(message?.message) ?? pickObject(message?.update?.message);
+function resolveMessageContent(message: EvolutionMessage | null, payload?: Record<string, unknown>): ResolvedEvolutionContent {
+  const contentCandidates = [
+    pickObject(message?.message),
+    pickObject(message?.update?.message),
+    pickObject(payload?.data),
+    pickObject(payload),
+  ].filter((candidate): candidate is Record<string, unknown> => Boolean(candidate));
 
-  if (!content) {
-    return {
-      content: null,
-      isEdited: false,
-      targetKey: null,
-    };
-  }
+  for (const content of contentCandidates) {
+    const editedProtocolMessage = findEditedProtocolMessage(content);
 
-  const editedProtocolMessage = findEditedProtocolMessage(content);
+    if (editedProtocolMessage) {
+      return {
+        content: editedProtocolMessage.editedMessage,
+        isEdited: true,
+        targetKey: editedProtocolMessage.targetKey,
+      };
+    }
 
-  if (editedProtocolMessage) {
-    return {
-      content: editedProtocolMessage.editedMessage,
-      isEdited: true,
-      targetKey: editedProtocolMessage.targetKey,
-    };
+    const unwrapped = unwrapMessageContainer(content);
+    if (unwrapped) {
+      return {
+        content: unwrapped,
+        isEdited: false,
+        targetKey: null,
+      };
+    }
   }
 
   return {
-    content: unwrapMessageContainer(content),
+    content: null,
     isEdited: false,
     targetKey: null,
   };
@@ -736,8 +744,12 @@ export function parseEvolutionPayload(
 ) {
   const message = pickMessage(payload);
   const normalizedEvent = normalizeEvolutionEventName(options.event ?? payload.event);
-  const resolvedContent = resolveMessageContent(message);
-  const hasDirectUpdateMessage = Boolean(pickObject(message?.update?.message));
+  const resolvedContent = resolveMessageContent(message, payload);
+  const hasDirectUpdateMessage = Boolean(
+    pickObject(message?.update?.message)
+    ?? pickObject(pickObject(payload.data)?.update)?.message
+    ?? pickObject(payload.data),
+  );
   const effectiveKey =
     resolvedContent.targetKey
     ?? findMessageKeyCandidate([
