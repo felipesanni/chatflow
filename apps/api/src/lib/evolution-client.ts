@@ -105,69 +105,42 @@ function pickProfilePictureUrl(payload: any) {
 }
 
 function pickGroupName(payload: any) {
-  function collectCandidates(value: any, depth = 0, seen = new WeakSet<object>()): string[] {
-    if (!value || depth > 6) {
-      return [];
+  function isUsableGroupNameCandidate(value: unknown) {
+    if (typeof value !== 'string') {
+      return false;
     }
 
-    if (Array.isArray(value)) {
-      return value.flatMap((item) => collectCandidates(item, depth + 1, seen));
+    const normalized = value.trim();
+    if (normalized.length < 2 || normalized.length > 120) {
+      return false;
     }
 
-    if (typeof value === 'object') {
-      if (seen.has(value)) {
-        return [];
-      }
-
-      seen.add(value);
-
-      const record = value as Record<string, unknown>;
-      const localCandidates = [
-        record.subject,
-        record.name,
-        record.groupName,
-        record.groupSubject,
-        record.title,
-      ]
-        .filter((candidate): candidate is string => typeof candidate === 'string')
-        .map((candidate) => candidate.trim())
-        .filter((candidate) => candidate.length > 0);
-
-      return [
-        ...localCandidates,
-        ...Object.values(record).flatMap((item) => collectCandidates(item, depth + 1, seen)),
-      ];
+    if (normalized.includes('@g.us') || normalized.includes('@s.whatsapp.net') || normalized.includes('@c.us')) {
+      return false;
     }
 
-    return typeof value === 'string' && value.trim().length > 0
-      ? [value.trim()]
-      : [];
+    if (/^[a-z0-9]{20,}$/i.test(normalized)) {
+      return false;
+    }
+
+    return true;
   }
 
   const candidates = [
     payload?.subject,
-    payload?.name,
     payload?.groupName,
     payload?.groupSubject,
-    payload?.title,
     payload?.data?.subject,
-    payload?.data?.name,
     payload?.data?.groupName,
     payload?.data?.groupSubject,
-    payload?.data?.title,
     payload?.groupMetadata?.subject,
-    payload?.groupMetadata?.name,
     payload?.groupInfo?.subject,
-    payload?.groupInfo?.name,
     payload?.data?.groupMetadata?.subject,
-    payload?.data?.groupMetadata?.name,
     payload?.data?.groupInfo?.subject,
-    payload?.data?.groupInfo?.name,
-    ...collectCandidates(payload),
   ];
 
   for (const candidate of candidates) {
-    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+    if (isUsableGroupNameCandidate(candidate)) {
       return candidate.trim();
     }
   }

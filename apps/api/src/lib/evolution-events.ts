@@ -33,7 +33,19 @@ function hasUsableGroupName(value: string | null | undefined) {
   }
 
   const normalized = value.trim();
-  return normalized.length > 0 && normalized !== GENERIC_GROUP_NAME;
+  if (!normalized || normalized === GENERIC_GROUP_NAME) {
+    return false;
+  }
+
+  if (normalized.includes('@g.us') || normalized.includes('@s.whatsapp.net') || normalized.includes('@c.us')) {
+    return false;
+  }
+
+  if (/^[a-z0-9]{20,}$/i.test(normalized)) {
+    return false;
+  }
+
+  return true;
 }
 
 function isOpaqueDirectChatJid(value: string | null | undefined) {
@@ -197,9 +209,7 @@ function extractMetadataDisplayName(payload: Record<string, unknown>, parsed: Re
       data?.groupSubject,
       data?.groupName,
       pickObject(data?.groupMetadata)?.subject,
-      pickObject(data?.groupMetadata)?.name,
       pickObject(data?.groupInfo)?.subject,
-      pickObject(data?.groupInfo)?.name,
     ]);
   }
 
@@ -395,8 +405,8 @@ async function findOrCreateCustomer(
 function resolveCustomerDisplayName(parsed: ReturnType<typeof parseEvolutionPayload>, currentName?: string | null) {
   if (parsed.isGroup) {
     const normalizedCurrentName = typeof currentName === 'string' ? currentName.trim() : '';
-    const hasSpecificCurrentName = normalizedCurrentName.length > 0 && normalizedCurrentName !== GENERIC_GROUP_NAME;
-    const fallbackCurrentName = normalizedCurrentName.length > 0 ? normalizedCurrentName : null;
+    const hasSpecificCurrentName = hasUsableGroupName(normalizedCurrentName);
+    const fallbackCurrentName = hasUsableGroupName(normalizedCurrentName) ? normalizedCurrentName : null;
 
     return parsed.groupName
       ?? (hasSpecificCurrentName ? normalizedCurrentName : null)
@@ -956,13 +966,14 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
       };
     }
 
-    const profilePictureResponse = parsed.isGroup || !parsed.remoteJid
+    const profilePictureTarget = resolvedRemoteJid ?? parsed.remoteJid;
+    const profilePictureResponse = !profilePictureTarget
       ? null
       : await fetchEvolutionProfilePictureUrl({
           baseUrl: instance.baseUrl,
           apiKey: decryptedApiKey,
           instanceName: instance.evolutionInstanceName,
-          remoteJid: parsed.remoteJid,
+          remoteJid: profilePictureTarget,
         }).catch(() => null);
     const fetchedCustomerAvatarUrl = profilePictureResponse?.profilePictureUrl ?? null;
     const fetchedGroupName = parsed.isGroup && !hasUsableGroupName(parsed.groupName)
