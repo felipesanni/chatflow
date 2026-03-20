@@ -190,6 +190,7 @@ function serializeTicket(ticket: any) {
   return {
     id: ticket.id,
     status: ticket.status,
+    customerId: ticket.customerId,
     customerName: ticket.customerNameSnapshot,
     externalChatId: ticket.externalChatId,
     externalContactId: ticket.externalContactId,

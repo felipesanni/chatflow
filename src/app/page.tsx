@@ -61,6 +61,7 @@ type AuthResponse = {
 type TicketItem = {
   id: string;
   status: "open" | "pending" | "closed";
+  customerId?: string | null;
   customerName: string;
   externalChatId: string;
   externalContactId?: string | null;
@@ -736,6 +737,9 @@ export default function HomePage() {
     companyName: "",
     notes: "",
   });
+  const [inlineCustomerName, setInlineCustomerName] = React.useState("");
+  const [inlineCustomerCompanyName, setInlineCustomerCompanyName] = React.useState("");
+  const [inlineCustomerEditing, setInlineCustomerEditing] = React.useState(false);
   const [transferForm, setTransferForm] = React.useState({
     agentId: "",
     queueId: "",
@@ -755,6 +759,17 @@ export default function HomePage() {
     () => tickets.find((ticket) => ticket.id === selectedTicketId) ?? null,
     [tickets, selectedTicketId],
   );
+  const selectedCustomer = React.useMemo(() => {
+    if (!selectedTicket) return null;
+
+    if (selectedTicket.customerId) {
+      const customerById = customers.find((customer) => customer.id === selectedTicket.customerId);
+      if (customerById) return customerById;
+    }
+
+    const selectedDigits = onlyPhoneDigits(selectedTicket.externalContactId ?? selectedTicket.externalChatId);
+    return customers.find((customer) => onlyPhoneDigits(customer.phone ?? "") === selectedDigits) ?? null;
+  }, [customers, selectedTicket]);
   const editingMessage = React.useMemo(
     () => messages.find((message) => message.id === editingMessageId) ?? null,
     [editingMessageId, messages],
@@ -1098,6 +1113,12 @@ export default function HomePage() {
   React.useEffect(() => {
     setShowTicketDetails(false);
   }, [selectedTicketId]);
+
+  React.useEffect(() => {
+    setInlineCustomerEditing(false);
+    setInlineCustomerName(selectedCustomer?.name ?? selectedTicket?.customerName ?? "");
+    setInlineCustomerCompanyName(selectedCustomer?.companyName ?? "");
+  }, [selectedCustomer, selectedTicket]);
 
   React.useEffect(() => {
     setEditingMessageId(null);
@@ -2595,6 +2616,31 @@ export default function HomePage() {
     }
   }
 
+  async function handleInlineCustomerSave() {
+    if (!canManageContacts || !selectedCustomer) return;
+
+    setCustomerLoading(true);
+    try {
+      await apiFetch(`/customers/${selectedCustomer.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: inlineCustomerName.trim(),
+          phone: onlyPhoneDigits(selectedCustomer.phone ?? selectedTicket?.externalContactId ?? selectedTicket?.externalChatId ?? ""),
+          email: selectedCustomer.email ?? "",
+          companyName: inlineCustomerCompanyName.trim(),
+          notes: selectedCustomer.notes ?? "",
+        }),
+      });
+      setInlineCustomerEditing(false);
+      setPanelMessage("Contato atualizado.");
+      await Promise.all([refreshCustomers(), refreshTickets()]);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao salvar contato.");
+    } finally {
+      setCustomerLoading(false);
+    }
+  }
+
   async function handleDeleteQuickReply(quickReplyId: string) {
     if (!canManageQuickReplies) return;
 
@@ -3773,7 +3819,7 @@ export default function HomePage() {
                                   {selectedForBulkDelete ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
                                 </button>
                               ) : null}
-                              <div className={`${shouldRenderAttachments ? "w-full max-w-[min(420px,88vw)] md:max-w-[460px]" : "w-auto max-w-full"} flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
+                              <div className={`${hasAudioAttachment ? "w-full min-w-[280px] max-w-[min(420px,88vw)] md:min-w-[340px] md:max-w-[460px]" : shouldRenderAttachments ? "w-full max-w-[min(420px,88vw)] md:max-w-[460px]" : "w-auto max-w-full"} flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
                               <article
                                 onClick={messageBulkSelectionMode ? () => toggleMessageBulkSelection(message.id) : undefined}
                                 className={`${shouldRenderAttachments ? "w-full" : "inline-flex w-auto max-w-full flex-col"} rounded-[18px] px-4 py-3 text-sm shadow-sm ${internalNote ? "border border-[#eadc7a] bg-[#fff08a] text-slate-800" : outgoing ? "border border-[#cfe9ad] bg-[#dcf8c6] text-slate-800" : "rounded-tl-[8px] border border-[#ece4d8] bg-white text-slate-800"} ${messageBulkSelectionMode ? "cursor-pointer" : ""} ${selectedForBulkDelete ? "ring-2 ring-rose-300 ring-offset-2 ring-offset-transparent" : ""}`}
@@ -4173,9 +4219,65 @@ export default function HomePage() {
                         <div className="text-xl font-semibold text-slate-900">{selectedTicket.customerName}</div>
                         <div className="mt-4 grid gap-3 text-left">
                           <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">{selectedTicket.isGroup ? "Grupo" : "Nome"}</div>
-                            <div className="mt-1 text-sm font-semibold text-slate-800">{selectedTicket.customerName}</div>
+                            <div className="flex items-center justify-between gap-3 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                              <span>{selectedTicket.isGroup ? "Grupo" : "Nome"}</span>
+                              {!selectedTicket.isGroup && selectedCustomer && canManageContacts ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setInlineCustomerEditing((current) => !current)}
+                                  className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-[0.14em] text-sky-600 transition hover:text-sky-700"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                  {inlineCustomerEditing ? "Fechar" : "Editar"}
+                                </button>
+                              ) : null}
+                            </div>
+                            {inlineCustomerEditing && selectedCustomer ? (
+                              <div className="mt-3 space-y-3">
+                                <input
+                                  value={inlineCustomerName}
+                                  onChange={(event) => setInlineCustomerName(event.target.value)}
+                                  placeholder="Nome do contato"
+                                  className="h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                                />
+                                <input
+                                  value={inlineCustomerCompanyName}
+                                  onChange={(event) => setInlineCustomerCompanyName(event.target.value)}
+                                  placeholder="Empresa"
+                                  className="h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                                />
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setInlineCustomerEditing(false);
+                                      setInlineCustomerName(selectedCustomer.name);
+                                      setInlineCustomerCompanyName(selectedCustomer.companyName ?? "");
+                                    }}
+                                    className="inline-flex h-9 items-center justify-center rounded-full border border-slate-200 px-3 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                                  >
+                                    Cancelar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleInlineCustomerSave()}
+                                    disabled={customerLoading || !inlineCustomerName.trim()}
+                                    className="inline-flex h-9 items-center justify-center rounded-full bg-[#1A1C32] px-3 text-xs font-semibold text-white transition hover:bg-[#252844] disabled:cursor-not-allowed disabled:bg-slate-300"
+                                  >
+                                    {customerLoading ? "Salvando..." : "Salvar"}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="mt-1 text-sm font-semibold text-slate-800">{selectedCustomer?.name ?? selectedTicket.customerName}</div>
+                            )}
                           </div>
+                          {!selectedTicket.isGroup ? (
+                            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                              <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Empresa</div>
+                              <div className="mt-1 text-sm font-semibold text-slate-800">{selectedCustomer?.companyName ?? "Sem empresa"}</div>
+                            </div>
+                          ) : null}
                           <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                             <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
                               {selectedTicket.isGroup
@@ -5334,7 +5436,7 @@ function AudioMessagePlayer(props: {
   src: string;
 }) {
   return (
-    <div className="chatflow-audio-player w-full max-w-full overflow-hidden bg-white">
+    <div className="chatflow-audio-player w-full min-w-[260px] max-w-full overflow-hidden bg-white md:min-w-[320px]">
       <audio className="chatflow-audio-element" controls preload="metadata" src={props.src}>
         Seu navegador nao suporta audio embutido.
       </audio>

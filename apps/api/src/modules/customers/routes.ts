@@ -186,6 +186,13 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
       },
     });
 
+    await app.prisma.ticket.updateMany({
+      where: { customerId: customer.id },
+      data: {
+        customerNameSnapshot: customer.name,
+      },
+    });
+
     return reply.send({
       item: {
         id: customer.id,
