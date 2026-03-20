@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 
 export const healthRoutes: FastifyPluginAsync = async (app) => {
-  app.get('/health', async () => {
+  app.get('/health', async (_request, reply) => {
     const startedAt = new Date().toISOString();
 
     try {
@@ -14,7 +14,7 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
         dataHora: startedAt,
       };
     } catch {
-      return app.code(503).send({
+      return reply.code(503).send({
         status: 'degradado',
         servico: 'chatflow-api',
         banco: 'desconectado',
