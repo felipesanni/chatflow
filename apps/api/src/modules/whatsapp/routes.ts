@@ -17,12 +17,18 @@ const optionalWebhookSecretSchema = z.string().trim().optional().transform((valu
   return value;
 });
 
+const optionalQueueIdSchema = z.string().uuid().optional().nullable().transform((value) => {
+  if (!value) return undefined;
+  return value;
+});
+
 const createInstanceSchema = z.object({
   name: z.string().min(2),
   evolutionInstanceName: z.string().min(2),
   baseUrl: z.string().url(),
   apiKey: z.string().min(1),
   webhookSecret: optionalWebhookSecretSchema,
+  defaultQueueId: optionalQueueIdSchema,
 });
 
 const updateInstanceSchema = z.object({
@@ -31,6 +37,7 @@ const updateInstanceSchema = z.object({
   baseUrl: z.string().url(),
   apiKey: z.string().min(1).optional().or(z.literal('')),
   webhookSecret: optionalWebhookSecretSchema,
+  defaultQueueId: optionalQueueIdSchema,
 });
 
 const env = loadEnv();
@@ -68,6 +75,13 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
         name: true,
         evolutionInstanceName: true,
         baseUrl: true,
+        defaultQueueId: true,
+        defaultQueue: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
         status: true,
         phoneNumber: true,
         createdAt: true,
@@ -82,6 +96,18 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
     if (!(await requirePermission(app, request, reply, 'channels.manage'))) return;
 
     const body = createInstanceSchema.parse(request.body);
+
+    if (body.defaultQueueId) {
+      const queue = await app.prisma.queue.findUnique({
+        where: { id: body.defaultQueueId },
+        select: { id: true },
+      });
+
+      if (!queue) {
+        return reply.code(400).send({ message: 'Fila padrão não encontrada.' });
+      }
+    }
+
     const websocketSetup = await configureEvolutionWebSocket({
       baseUrl: body.baseUrl,
       apiKey: body.apiKey,
@@ -112,6 +138,7 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
         baseUrl: body.baseUrl,
         apiKeyEncrypted: encryptSecret(body.apiKey, env.SESSION_SECRET),
         webhookSecret: body.webhookSecret,
+        defaultQueueId: body.defaultQueueId ?? null,
         status: 'disconnected',
       },
       select: {
@@ -119,6 +146,13 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
         name: true,
         evolutionInstanceName: true,
         baseUrl: true,
+        defaultQueueId: true,
+        defaultQueue: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
         status: true,
         phoneNumber: true,
         createdAt: true,
@@ -137,6 +171,17 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
 
     const params = z.object({ instanceId: z.string().uuid() }).parse(request.params);
     const body = updateInstanceSchema.parse(request.body);
+
+    if (body.defaultQueueId) {
+      const queue = await app.prisma.queue.findUnique({
+        where: { id: body.defaultQueueId },
+        select: { id: true },
+      });
+
+      if (!queue) {
+        return reply.code(400).send({ message: 'Fila padrão não encontrada.' });
+      }
+    }
 
     const existing = await app.prisma.whatsAppInstance.findUnique({
       where: { id: params.instanceId },
@@ -182,12 +227,20 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
         baseUrl: body.baseUrl,
         ...(body.apiKey && body.apiKey.trim().length > 0 ? { apiKeyEncrypted: encryptSecret(body.apiKey, env.SESSION_SECRET) } : {}),
         webhookSecret: body.webhookSecret || null,
+        defaultQueueId: body.defaultQueueId ?? null,
       },
       select: {
         id: true,
         name: true,
         evolutionInstanceName: true,
         baseUrl: true,
+        defaultQueueId: true,
+        defaultQueue: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
         status: true,
         phoneNumber: true,
         createdAt: true,

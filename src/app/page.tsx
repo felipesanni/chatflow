@@ -145,6 +145,8 @@ type InstanceItem = {
   name: string;
   evolutionInstanceName: string;
   baseUrl: string;
+  defaultQueueId?: string | null;
+  defaultQueue?: { id: string; name: string } | null;
   status: string;
   phoneNumber: string | null;
   createdAt: string;
@@ -678,6 +680,7 @@ export default function HomePage() {
     baseUrl: "",
     apiKey: "",
     webhookSecret: "",
+    defaultQueueId: "",
   });
   const [agentForm, setAgentForm] = React.useState({
     name: "",
@@ -2189,6 +2192,7 @@ export default function HomePage() {
       baseUrl: "",
       apiKey: "",
       webhookSecret: "",
+      defaultQueueId: "",
     });
   }
 
@@ -2236,6 +2240,7 @@ export default function HomePage() {
       baseUrl: instance.baseUrl,
       apiKey: "",
       webhookSecret: "",
+      defaultQueueId: instance.defaultQueueId ?? "",
     });
     setActiveWorkspace("settings");
     setAdminSection("instances");
@@ -2418,9 +2423,14 @@ export default function HomePage() {
     event.preventDefault();
     setInstanceLoading(true);
     try {
+      const payload = {
+        ...instanceForm,
+        defaultQueueId: instanceForm.defaultQueueId || null,
+      };
+
       await apiFetch(editingInstanceId ? `/whatsapp/instances/${editingInstanceId}` : "/whatsapp/instances", {
         method: editingInstanceId ? "PUT" : "POST",
-        body: JSON.stringify(instanceForm),
+        body: JSON.stringify(payload),
       });
       resetInstanceForm();
       closeManagementModal();
@@ -4473,6 +4483,21 @@ export default function HomePage() {
               <CompactField label="URL base" value={instanceForm.baseUrl} onChange={(value) => setInstanceForm((current) => ({ ...current, baseUrl: value }))} placeholder={publicUrls.apiBaseUrl} />
               <CompactField label="Chave da API" value={instanceForm.apiKey} onChange={(value) => setInstanceForm((current) => ({ ...current, apiKey: value }))} placeholder="Token da Evolution" />
             </div>
+            <label className="block text-sm font-medium text-slate-600">
+              Fila padrão da instância
+              <select
+                value={instanceForm.defaultQueueId}
+                onChange={(event) => setInstanceForm((current) => ({ ...current, defaultQueueId: event.target.value }))}
+                className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+              >
+                <option value="">Sem fila padrão</option>
+                {queues.map((queue) => (
+                  <option key={queue.id} value={queue.id}>
+                    {queue.name}
+                  </option>
+                ))}
+              </select>
+            </label>
             <CompactField label="Segredo do webhook" value={instanceForm.webhookSecret} onChange={(value) => setInstanceForm((current) => ({ ...current, webhookSecret: value }))} placeholder="Opcional" />
             <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button type="button" onClick={closeManagementModal} className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">

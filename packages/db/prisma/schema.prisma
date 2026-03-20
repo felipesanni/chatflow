@@ -131,6 +131,7 @@ model Queue {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
   tickets     Ticket[] @relation("current_queue")
+  defaultForInstances WhatsAppInstance[] @relation("default_queue")
   queueAgents QueueAgent[]
   assignmentsFrom TicketAssignment[] @relation("assignment_from_queue")
   assignmentsTo   TicketAssignment[] @relation("assignment_to_queue")
@@ -157,11 +158,13 @@ model WhatsAppInstance {
   baseUrl               String          @map("base_url")
   apiKeyEncrypted       String          @map("api_key_encrypted")
   webhookSecret         String?         @map("webhook_secret")
+  defaultQueueId        String?         @map("default_queue_id") @db.Uuid
   status                InstanceStatus  @default(disconnected)
   phoneNumber           String?         @map("phone_number")
   lastSeenAt            DateTime?       @map("last_seen_at")
   createdAt             DateTime        @default(now()) @map("created_at")
   updatedAt             DateTime        @updatedAt @map("updated_at")
+  defaultQueue          Queue?          @relation("default_queue", fields: [defaultQueueId], references: [id], onDelete: SetNull)
   tickets               Ticket[]
   webhookLogs           WebhookLog[]
 

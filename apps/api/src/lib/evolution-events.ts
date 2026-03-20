@@ -512,6 +512,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           id: randomUUID(),
           customerId: customer?.id,
           whatsappInstanceId: instance.id,
+          currentQueueId: instance.defaultQueueId ?? null,
           externalChatId: parsed.remoteJid,
           externalContactId: parsed.phone,
           customerNameSnapshot: resolveCustomerDisplayName(parsed, customer?.name),
