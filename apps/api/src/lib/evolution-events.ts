@@ -421,6 +421,16 @@ function resolveCustomerDisplayName(parsed: ReturnType<typeof parseEvolutionPayl
   return parsed.pushName ?? parsed.verifiedBizName ?? currentName ?? parsed.phone ?? parsed.remoteJid ?? 'Contato sem nome';
 }
 
+function ensureTicketDisplayName(
+  parsed: ReturnType<typeof parseEvolutionPayload>,
+  currentName?: string | null,
+) {
+  return resolveCustomerDisplayName(parsed, currentName)
+    ?? parsed.remoteJid
+    ?? currentName
+    ?? 'Contato sem nome';
+}
+
 function resolveInstanceSnapshot(event: string, payload: Prisma.InputJsonValue | Record<string, unknown>) {
   const raw = payload as Record<string, any>;
   const data = (raw?.data && typeof raw.data === 'object' ? raw.data : {}) as Record<string, any>;
@@ -998,7 +1008,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         resolvedGroupName: parsedWithResolvedGroupName.groupName,
       }, 'Resolucao de nome de grupo processada.');
     }
-    const desiredCustomerName = resolveCustomerDisplayName(parsedWithResolvedGroupName);
+    const desiredCustomerName = ensureTicketDisplayName(parsedWithResolvedGroupName);
 
     const customer = parsed.isGroup || !parsed.phone
       ? null
@@ -1010,7 +1020,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         });
     const customerAvatarUrl = fetchedCustomerAvatarUrl ?? customer?.avatarUrl ?? null;
     const chatIdentity = preliminaryChatIdentity;
-    const resolvedExternalChatId = preliminaryExternalChatId;
+    const resolvedExternalChatId = preliminaryExternalChatId ?? resolvedRemoteJid;
     const aliasCandidates = preliminaryAliasCandidates;
     const canPromoteResolvedChatId =
       parsed.isGroup
@@ -1022,7 +1032,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           where: { id: preMatchedOutboundMessage.ticket.id },
           data: {
             customerId: customer?.id ?? preMatchedOutboundMessage.ticket.customerId,
-            customerNameSnapshot: resolveCustomerDisplayName(
+            customerNameSnapshot: ensureTicketDisplayName(
               parsedWithResolvedGroupName,
               customer?.name ?? preMatchedOutboundMessage.ticket.customerNameSnapshot,
             ),
@@ -1039,7 +1049,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
               customerId: customer?.id ?? aliasedTicket.customerId,
               externalChatId: canPromoteResolvedChatId ? resolvedExternalChatId : aliasedTicket.externalChatId,
               externalContactId: chatIdentity.contactId ?? aliasedTicket.externalContactId,
-              customerNameSnapshot: resolveCustomerDisplayName(
+              customerNameSnapshot: ensureTicketDisplayName(
                 parsedWithResolvedGroupName,
                 customer?.name ?? aliasedTicket.customerNameSnapshot,
               ),
@@ -1070,7 +1080,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
                 currentQueueId: instance.defaultQueueId ?? null,
                 externalChatId: resolvedExternalChatId,
                 externalContactId: chatIdentity.contactId,
-                customerNameSnapshot: resolveCustomerDisplayName(parsedWithResolvedGroupName, customer?.name),
+                customerNameSnapshot: ensureTicketDisplayName(parsedWithResolvedGroupName, customer?.name),
                 customerAvatarUrl,
                 status: 'pending',
                 unreadCount: parsed.fromMe ? 0 : 1,
@@ -1097,7 +1107,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
               customerId: customer?.id ?? existingTicket.customerId,
               externalChatId: canPromoteResolvedChatId ? (chatIdentity.canonicalChatId ?? existingTicket.externalChatId) : existingTicket.externalChatId,
               externalContactId: chatIdentity.contactId ?? existingTicket.externalContactId,
-              customerNameSnapshot: resolveCustomerDisplayName(parsedWithResolvedGroupName, customer?.name ?? existingTicket.customerNameSnapshot),
+              customerNameSnapshot: ensureTicketDisplayName(parsedWithResolvedGroupName, customer?.name ?? existingTicket.customerNameSnapshot),
               customerAvatarUrl: customerAvatarUrl ?? existingTicket.customerAvatarUrl,
               lastMessagePreview: parsed.body,
               unreadCount: parsed.fromMe ? 0 : { increment: 1 },
