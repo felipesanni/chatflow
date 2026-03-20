@@ -47,6 +47,8 @@ const EVENT_ALIASES: Record<string, string> = {
   'messages.upsert': 'MESSAGES_UPSERT',
   'messages.update': 'MESSAGES_UPDATE',
   'messages.edited': 'MESSAGES_EDITED',
+  'messages.delete': 'MESSAGES_DELETE',
+  'messages.deleted': 'MESSAGES_DELETE',
   'qrcode.updated': 'QRCODE_UPDATED',
   'connection.update': 'CONNECTION_UPDATE',
 };
@@ -291,6 +293,84 @@ function findEditedProtocolMessage(value: unknown, depth = 0): { editedMessage: 
   return null;
 }
 
+function looksLikeMessageKey(value: unknown) {
+  const record = pickObject(value);
+  if (!record) {
+    return false;
+  }
+
+  return (
+    typeof record.id === 'string'
+    || typeof record.remoteJid === 'string'
+    || typeof record.participant === 'string'
+    || typeof record.fromMe === 'boolean'
+  );
+}
+
+function findMessageKeyCandidate(value: unknown, depth = 0, seen = new WeakSet<object>()): Record<string, unknown> | null {
+  if (depth > 8) {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = findMessageKeyCandidate(item, depth + 1, seen);
+      if (nested) {
+        return nested;
+      }
+    }
+
+    return null;
+  }
+
+  const record = pickObject(value);
+  if (!record) {
+    return null;
+  }
+
+  if (seen.has(record)) {
+    return null;
+  }
+
+  seen.add(record);
+
+  if (looksLikeMessageKey(record)) {
+    return record;
+  }
+
+  const prioritizedCandidates = [
+    record.key,
+    record.messageKey,
+    record.message?.key,
+    record.update?.key,
+    record.protocolMessage?.key,
+    record.reactionMessage?.key,
+    record.editedMessage?.key,
+    record.originalMessageKey,
+    record.originalKey,
+    record.targetKey,
+    record.messages,
+    record.keys,
+    record.data,
+  ];
+
+  for (const candidate of prioritizedCandidates) {
+    const nested = findMessageKeyCandidate(candidate, depth + 1, seen);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  for (const candidate of Object.values(record)) {
+    const nested = findMessageKeyCandidate(candidate, depth + 1, seen);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
 function resolveMessageContent(message: EvolutionMessage | null): ResolvedEvolutionContent {
   const content = pickObject(message?.message) ?? pickObject(message?.update?.message);
 
@@ -404,6 +484,44 @@ function extractReactionPayload(message: EvolutionMessage | null, content: Recor
 
   return {
     emoji,
+    targetExternalMessageId,
+  };
+}
+
+function extractDeletionPayload(
+  payload: Record<string, unknown>,
+  message: EvolutionMessage | null,
+  content: Record<string, any> | null,
+  normalizedEvent: string,
+): ParsedDeletionPayload | null {
+  const protocolDeletion = findDeletedProtocolMessage(
+    pickObject(message?.message)
+    ?? pickObject(message?.update?.message)
+    ?? content
+    ?? pickObject(payload.data),
+  );
+
+  if (protocolDeletion) {
+    return protocolDeletion;
+  }
+
+  if (normalizedEvent !== 'MESSAGES_DELETE') {
+    return null;
+  }
+
+  const candidateKey = findMessageKeyCandidate([
+    message?.update,
+    message,
+    payload.data,
+    payload,
+  ]);
+  const targetExternalMessageId = typeof candidateKey?.id === 'string' ? candidateKey.id.trim() : '';
+
+  if (!targetExternalMessageId) {
+    return null;
+  }
+
+  return {
     targetExternalMessageId,
   };
 }
@@ -572,7 +690,17 @@ export function parseEvolutionPayload(
   const normalizedEvent = normalizeEvolutionEventName(options.event ?? payload.event);
   const resolvedContent = resolveMessageContent(message);
   const hasDirectUpdateMessage = Boolean(pickObject(message?.update?.message));
-  const effectiveKey = resolvedContent.targetKey ?? pickObject(message?.key);
+  const effectiveKey =
+    resolvedContent.targetKey
+    ?? findMessageKeyCandidate([
+      message?.update,
+      pickObject(payload.data)?.key,
+      pickObject(payload.data)?.messageKey,
+      pickObject(payload.data)?.messages,
+      pickObject(payload.data)?.keys,
+      payload.data,
+    ])
+    ?? pickObject(message?.key);
   const remoteJid = typeof effectiveKey?.remoteJid === 'string'
     ? effectiveKey.remoteJid
     : message?.key?.remoteJid ?? null;
@@ -604,11 +732,7 @@ export function parseEvolutionPayload(
   ]);
   const parsedContent = extractText(message, resolvedContent.content);
   const reaction = extractReactionPayload(message, resolvedContent.content);
-  const deletion = findDeletedProtocolMessage(
-    pickObject(message?.message)
-    ?? pickObject(message?.update?.message)
-    ?? pickObject(payload.data),
-  );
+  const deletion = extractDeletionPayload(payload, message, resolvedContent.content, normalizedEvent);
   const payloadInstance = typeof payload.instance === 'string' ? payload.instance : null;
   const groupName = extractGroupName(payload, message, remoteJid);
   const isEdited =

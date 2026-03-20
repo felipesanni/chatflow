@@ -81,6 +81,7 @@ type MessageItem = {
   contentType: string;
   body: string | null;
   senderName: string | null;
+  internalNote?: boolean;
   editedAt?: string | null;
   createdAt: string;
   replyToMessage?: ReplyMessageItem | null;
@@ -111,6 +112,7 @@ type ReplyMessageItem = {
   body: string | null;
   senderName: string | null;
   createdAt: string;
+  internalNote?: boolean;
   deleted?: MessageDeletedState | null;
   hiddenForMe?: boolean;
   attachments?: AttachmentItem[];
@@ -641,6 +643,7 @@ export default function HomePage() {
   const [messageInput, setMessageInput] = React.useState("");
   const [editingMessageId, setEditingMessageId] = React.useState<string | null>(null);
   const [replyToMessageId, setReplyToMessageId] = React.useState<string | null>(null);
+  const [composerInternalNoteMode, setComposerInternalNoteMode] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
   const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "grupos">("atendendo");
   const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
@@ -737,6 +740,7 @@ export default function HomePage() {
   const [transferForm, setTransferForm] = React.useState({
     agentId: "",
     queueId: "",
+    note: "",
   });
   const socketRef = React.useRef<Socket | null>(null);
   const userMenuRef = React.useRef<HTMLDivElement | null>(null);
@@ -820,12 +824,14 @@ export default function HomePage() {
   const shouldDisableComposer = Boolean(!selectedTicket || !canSendToSelectedTicket);
   const isEditingMessage = Boolean(editingMessageId);
   const composerPlaceholder = !selectedTicket
-    ? "Selecione um ticket para conversar"
-    : isSelectedTicketClosed
-      ? "Ticket fechado para envio"
-      : isEditingMessage
-        ? "Edite a mensagem"
-        : "Aceite o atendimento para responder";
+      ? "Selecione um ticket para conversar"
+      : isSelectedTicketClosed
+        ? "Ticket fechado para envio"
+        : composerInternalNoteMode
+          ? "Digite uma observação interna"
+        : isEditingMessage
+          ? "Edite a mensagem"
+          : "Aceite o atendimento para responder";
   const canTransferSelectedTicket = Boolean(
     selectedTicket &&
     selectedTicket.status !== "closed" &&
@@ -1151,6 +1157,7 @@ export default function HomePage() {
     setTransferForm({
       agentId: "",
       queueId: "",
+      note: "",
     });
   }, [selectedTicketId]);
 
@@ -1660,6 +1667,22 @@ export default function HomePage() {
     setComposerAttachment(null);
   }
 
+  function toggleComposerInternalNoteMode() {
+    if (isEditingMessage) {
+      return;
+    }
+
+    setComposerInternalNoteMode((current) => {
+      const next = !current;
+      if (next) {
+        setComposerAttachment(null);
+        setReplyToMessageId(null);
+        setShowEmojiPicker(false);
+      }
+      return next;
+    });
+  }
+
   function handleStartEditingMessage(message: MessageItem) {
     if (!canSendToSelectedTicket) {
       return;
@@ -1668,24 +1691,27 @@ export default function HomePage() {
     setReplyToMessageId(null);
     setEditingMessageId(message.id);
     setComposerAttachment(null);
+    setComposerInternalNoteMode(Boolean(message.internalNote));
     setShowEmojiPicker(false);
     setMessageInput(stripAgentSignature((message.body ?? "").trim(), currentUser.name).trim());
     setPanelMessage("Modo de edição ativado.");
   }
 
   function handleStartReplyingToMessage(message: MessageItem) {
-    if (!canSendToSelectedTicket || message.direction === "system") {
+    if (!canSendToSelectedTicket || message.direction === "system" || message.internalNote) {
       return;
     }
 
     setEditingMessageId(null);
     setReplyToMessageId(message.id);
+    setComposerInternalNoteMode(false);
     setShowEmojiPicker(false);
     setPanelMessage("Respondendo mensagem.");
   }
 
   function cancelEditingMessage() {
     setEditingMessageId(null);
+    setComposerInternalNoteMode(false);
     setMessageInput("");
     setPanelMessage("Edição cancelada.");
   }
@@ -1896,6 +1922,7 @@ export default function HomePage() {
           method: "POST",
           body: JSON.stringify({
             body: resolvedBody,
+            internalNote: composerInternalNoteMode,
             replyToMessageId: replyToMessageId ?? undefined,
             attachment: composerAttachment
               ? {
@@ -1912,6 +1939,7 @@ export default function HomePage() {
 
       setEditingMessageId(null);
       setReplyToMessageId(null);
+      setComposerInternalNoteMode(false);
       setMessageInput("");
       setComposerAttachment(null);
       await refreshMessages(selectedTicketId);
@@ -1969,11 +1997,17 @@ export default function HomePage() {
           body: JSON.stringify({
             agentId: transferForm.agentId || null,
             queueId: transferForm.queueId || null,
+            note: transferForm.note,
           }),
         });
 
         await refreshTickets();
         setShowTransferPanel(false);
+        setTransferForm({
+          agentId: "",
+          queueId: "",
+          note: "",
+        });
         setPanelMessage("Ticket transferido com sucesso.");
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao transferir ticket.");
@@ -2183,6 +2217,14 @@ export default function HomePage() {
       }
     }
   }
+
+  React.useEffect(() => {
+    setComposerInternalNoteMode(false);
+    setComposerAttachment(null);
+    setReplyToMessageId(null);
+    setEditingMessageId(null);
+    setMessageInput("");
+  }, [selectedTicketId]);
 
   function resetInstanceForm() {
     setEditingInstanceId(null);
@@ -3649,10 +3691,11 @@ export default function HomePage() {
                     <div className="text-center text-sm text-slate-500">Carregando mensagens...</div>
                   ) : messages.length === 0 ? (
                     <EmptyMessages />
-                  ) : (
+                    ) : (
                       messages.map((message) => {
                         const outgoing = message.direction === "outbound";
                         const system = message.direction === "system";
+                        const internalNote = Boolean(message.internalNote);
                         const isDeletedMessage = Boolean(message.deleted?.isDeleted);
                         const hasAttachment = Boolean(message.attachments?.length);
                         const normalizedBody = (message.body ?? "").trim();
@@ -3664,7 +3707,7 @@ export default function HomePage() {
                         const canEditMessage = outgoing && !hasAttachment && Boolean(normalizedBody) && !isDeletedMessage;
                         const canDeleteMessage = outgoing && !isDeletedMessage;
                         const canDeleteMessageForMe = !system;
-                        const canReplyToMessage = !system && !isEditingMessage && !isDeletedMessage;
+                        const canReplyToMessage = !system && !internalNote && !isEditingMessage && !isDeletedMessage;
                         const messageMenuActionCount =
                           (canReplyToMessage ? 1 : 0)
                           + (canEditMessage ? 1 : 0)
@@ -3674,7 +3717,7 @@ export default function HomePage() {
                           16
                           + (canReplyToMessage ? 48 : 0)
                           + (messageMenuActionCount * 44);
-                        const parsedSignedBody = outgoing ? parseMessageSignature(message.body) : null;
+                        const parsedSignedBody = outgoing && !internalNote ? parseMessageSignature(message.body) : null;
                         const displayedMessageSignature = parsedSignedBody?.signature ?? null;
                         const displayedMessageBody = parsedSignedBody ? parsedSignedBody.body : (message.body ?? "");
                         const groupedReactions = (message.reactions ?? []).reduce<Record<string, number>>((acc, reaction) => {
@@ -3734,8 +3777,13 @@ export default function HomePage() {
                               <div className={`${shouldRenderAttachments ? "w-full max-w-[min(420px,88vw)] md:max-w-[460px]" : "w-auto max-w-full"} flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
                               <article
                                 onClick={messageBulkSelectionMode ? () => toggleMessageBulkSelection(message.id) : undefined}
-                                className={`${shouldRenderAttachments ? "w-full" : "inline-flex w-auto max-w-full flex-col"} rounded-[18px] px-4 py-3 text-sm shadow-sm ${outgoing ? "border border-[#cfe9ad] bg-[#dcf8c6] text-slate-800" : "rounded-tl-[8px] border border-[#ece4d8] bg-white text-slate-800"} ${messageBulkSelectionMode ? "cursor-pointer" : ""} ${selectedForBulkDelete ? "ring-2 ring-rose-300 ring-offset-2 ring-offset-transparent" : ""}`}
+                                className={`${shouldRenderAttachments ? "w-full" : "inline-flex w-auto max-w-full flex-col"} rounded-[18px] px-4 py-3 text-sm shadow-sm ${internalNote ? "border border-[#eadc7a] bg-[#fff08a] text-slate-800" : outgoing ? "border border-[#cfe9ad] bg-[#dcf8c6] text-slate-800" : "rounded-tl-[8px] border border-[#ece4d8] bg-white text-slate-800"} ${messageBulkSelectionMode ? "cursor-pointer" : ""} ${selectedForBulkDelete ? "ring-2 ring-rose-300 ring-offset-2 ring-offset-transparent" : ""}`}
                               >
+                                {internalNote ? (
+                                  <div className="mb-1.5 text-[14px] font-semibold leading-5 text-slate-900">
+                                    {message.senderName || "Observação"} - Observação:
+                                  </div>
+                                ) : null}
                                 {shouldShowInboundGroupSender ? (
                                   <div className="mb-2 text-[14px] font-semibold leading-5 text-sky-700">
                                     {message.senderName}
@@ -4021,7 +4069,21 @@ export default function HomePage() {
                         </div>
                       ) : null}
                     </div>
-                    <button type="button" aria-label="Anexar arquivo" title="Anexar arquivo" onClick={() => attachmentUploadRef.current?.click()} disabled={shouldDisableComposer || sendLoading || isEditingMessage} className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    <button
+                      type="button"
+                      aria-label={composerInternalNoteMode ? "Desativar observação interna" : "Ativar observação interna"}
+                      title={composerInternalNoteMode ? "Desativar observação interna" : "Ativar observação interna"}
+                      onClick={toggleComposerInternalNoteMode}
+                      disabled={shouldDisableComposer || sendLoading || isEditingMessage}
+                      className={`grid h-9 w-9 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                        composerInternalNoteMode
+                          ? "border-[#eadc7a] bg-[#fff08a] text-[#5a4a00]"
+                          : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+                      }`}
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                    </button>
+                    <button type="button" aria-label="Anexar arquivo" title="Anexar arquivo" onClick={() => attachmentUploadRef.current?.click()} disabled={shouldDisableComposer || sendLoading || isEditingMessage || composerInternalNoteMode} className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                       <Paperclip className="h-4 w-4" />
                     </button>
                     <button
@@ -4029,7 +4091,7 @@ export default function HomePage() {
                       aria-label={recordingAudio ? "Parar gravação" : "Gravar áudio"}
                       title={recordingAudio ? "Parar gravação" : "Gravar áudio"}
                       onClick={() => void handleToggleAudioRecording()}
-                      disabled={shouldDisableComposer || sendLoading || isEditingMessage}
+                      disabled={shouldDisableComposer || sendLoading || isEditingMessage || composerInternalNoteMode}
                       className={`grid h-9 w-9 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${
                         recordingAudio
                           ? "border-red-200 bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600"
@@ -4045,9 +4107,13 @@ export default function HomePage() {
                       onChange={(event) => setMessageInput(event.target.value)}
                       onKeyDown={handleComposerKeyDown}
                       rows={1}
-                      placeholder={canSendToSelectedTicket ? (isEditingMessage ? "Edite a mensagem" : "Digite uma mensagem ou use /atalho") : composerPlaceholder}
+                      placeholder={canSendToSelectedTicket ? (isEditingMessage ? "Edite a mensagem" : composerPlaceholder) : composerPlaceholder}
                       disabled={shouldDisableComposer}
-                      className="min-h-[44px] max-h-28 w-full resize-none rounded-[24px] border border-slate-200 bg-[#f8fafc] px-5 py-2.5 text-sm leading-5 text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                      className={`min-h-[44px] max-h-28 w-full resize-none rounded-[24px] border px-5 py-2.5 text-sm leading-5 text-slate-700 outline-none transition disabled:cursor-not-allowed disabled:text-slate-400 ${
+                        composerInternalNoteMode
+                          ? "border-[#eadc7a] bg-[#fff7b8] focus:border-[#d6c14a] focus:bg-[#fffbe0] disabled:bg-[#f5efb7]"
+                          : "border-slate-200 bg-[#f8fafc] focus:border-slate-300 focus:bg-white disabled:bg-slate-100"
+                      }`}
                     />
                     {quickReplyMatches.length > 0 && canSendToSelectedTicket && !isEditingMessage ? (
                       <div className="absolute bottom-[calc(100%+0.75rem)] left-0 z-20 w-full overflow-hidden rounded-[26px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff,#f8fbfd)] shadow-[0_24px_60px_rgba(15,23,42,0.16)]">
@@ -4146,11 +4212,14 @@ export default function HomePage() {
                       <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Transferir atendimento</div>
                       <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{selectedTicket.customerName}</div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowTransferPanel(false)}
-                      className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
-                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowTransferPanel(false);
+                          setTransferForm({ agentId: "", queueId: "", note: "" });
+                        }}
+                        className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                      >
                       <X className="h-4 w-4" />
                     </button>
                   </div>
@@ -4173,11 +4242,11 @@ export default function HomePage() {
                         </select>
                       </label>
 
-                      <label className="block text-sm font-medium text-slate-600">
-                        Fila de destino
-                        <select
-                          value={transferForm.queueId}
-                          onChange={(event) => setTransferForm((current) => ({ ...current, queueId: event.target.value }))}
+                        <label className="block text-sm font-medium text-slate-600">
+                          Fila de destino
+                          <select
+                            value={transferForm.queueId}
+                            onChange={(event) => setTransferForm((current) => ({ ...current, queueId: event.target.value }))}
                           className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
                         >
                           <option value="">Sem fila</option>
@@ -4185,18 +4254,31 @@ export default function HomePage() {
                             <option key={queue.id} value={queue.id}>
                               {queue.name}
                             </option>
-                          ))}
-                          </select>
+                            ))}
+                            </select>
+                          </label>
+                        </div>
+                        <label className="block text-sm font-medium text-slate-600">
+                          Observação
+                          <textarea
+                            value={transferForm.note}
+                            onChange={(event) => setTransferForm((current) => ({ ...current, note: event.target.value }))}
+                            rows={5}
+                            placeholder="Mensagem interna da transferência. Não vai para o cliente."
+                            className="mt-2 w-full resize-none rounded-2xl border border-slate-200 bg-[#fff7c7] px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-[#d8c458] focus:bg-[#fff9da]"
+                          />
                         </label>
-                      </div>
-                      </div>
+                        </div>
 
                     <div className="flex flex-col-reverse gap-3 border-t border-slate-200 px-6 py-5 sm:flex-row sm:justify-end">
-                      <button
-                        type="button"
-                        onClick={() => setShowTransferPanel(false)}
-                        className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
-                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowTransferPanel(false);
+                            setTransferForm({ agentId: "", queueId: "", note: "" });
+                          }}
+                          className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                        >
                         Cancelar
                       </button>
                       <button

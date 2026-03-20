@@ -19,10 +19,15 @@ declare module 'fastify' {
 const SOCKET_EVENTS = [
   'messages.upsert',
   'messages.update',
+  'messages.edited',
+  'messages.delete',
+  'messages.deleted',
   'connection.update',
   'qrcode.updated',
   'MESSAGES_UPSERT',
   'MESSAGES_UPDATE',
+  'MESSAGES_EDITED',
+  'MESSAGES_DELETE',
   'CONNECTION_UPDATE',
   'QRCODE_UPDATED',
 ] as const;

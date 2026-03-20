@@ -279,7 +279,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
     }
   }
 
-  if (!instance || !parsed.remoteJid) {
+  if (!instance) {
     await finalize(202, 'Evento registrado sem persistencia de ticket.');
     return {
       statusCode: 202,
@@ -308,6 +308,15 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
       });
 
       if (!existingMessage || !hasUsableEditedBody(parsed.body)) {
+        app.log.warn({
+          action: 'evolution_edit_message_not_found',
+          event: parsed.event,
+          instanceId: instance.id,
+          externalMessageId: parsed.externalMessageId,
+          remoteJid: parsed.remoteJid,
+          hasUsableEditedBody: hasUsableEditedBody(parsed.body),
+        }, 'Evento de edicao recebido sem localizar a mensagem base.');
+
         await finalize(202, 'Evento de edicao sem mensagem base localizada.');
         return {
           statusCode: 202,
@@ -381,6 +390,14 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
       });
 
       if (!targetMessage) {
+        app.log.warn({
+          action: 'evolution_reaction_message_not_found',
+          event: parsed.event,
+          instanceId: instance.id,
+          externalMessageId: parsed.reaction.targetExternalMessageId,
+          remoteJid: parsed.remoteJid,
+        }, 'Evento de reacao recebido sem localizar a mensagem base.');
+
         await finalize(202, 'Evento de reacao sem mensagem base localizada.');
         return {
           statusCode: 202,
@@ -437,6 +454,14 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
       });
 
       if (!targetMessage) {
+        app.log.warn({
+          action: 'evolution_delete_message_not_found',
+          event: parsed.event,
+          instanceId: instance.id,
+          externalMessageId: parsed.deletion.targetExternalMessageId,
+          remoteJid: parsed.remoteJid,
+        }, 'Evento de exclusao recebido sem localizar a mensagem base.');
+
         await finalize(202, 'Evento de exclusao sem mensagem base localizada.');
         return {
           statusCode: 202,
@@ -470,6 +495,18 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           event: parsed.event,
           ticketId: targetMessage.ticketId,
           messageId: targetMessage.id,
+        },
+      };
+    }
+
+    if (!parsed.remoteJid) {
+      await finalize(202, 'Evento registrado sem persistencia de ticket.');
+      return {
+        statusCode: 202,
+        body: {
+          message: 'Evento registrado sem persistencia de ticket.',
+          event: parsed.event,
+          instance: parsed.instanceName,
         },
       };
     }

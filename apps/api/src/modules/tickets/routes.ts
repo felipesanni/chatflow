@@ -23,6 +23,7 @@ const createTicketBodySchema = z.object({
 const transferTicketBodySchema = z.object({
   agentId: z.string().uuid().optional().nullable(),
   queueId: z.string().uuid().optional().nullable(),
+  note: z.string().trim().optional().default(''),
 }).refine((value) => value.agentId || value.queueId, {
   message: 'Informe um agente, uma fila ou ambos para transferir o ticket.',
 });
@@ -623,25 +624,50 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       },
     });
 
-    await app.prisma.ticketEvent.create({
-      data: {
-        id: randomUUID(),
-        ticketId: ticket.id,
-        eventType: 'transferred',
+      await app.prisma.ticketEvent.create({
+        data: {
+          id: randomUUID(),
+          ticketId: ticket.id,
+          eventType: 'transferred',
         actorUserId: session.userId,
         metadata: {
-          reason,
-          fromAgentId: currentTicket.currentAgentId,
-          toAgentId: body.agentId ?? null,
-          fromQueueId: currentTicket.currentQueueId,
-          toQueueId: body.queueId ?? currentTicket.currentQueueId ?? null,
+            reason,
+            fromAgentId: currentTicket.currentAgentId,
+            toAgentId: body.agentId ?? null,
+            fromQueueId: currentTicket.currentQueueId,
+            toQueueId: body.queueId ?? currentTicket.currentQueueId ?? null,
+            note: body.note.trim() || null,
+          },
         },
-      },
-    });
+      });
 
-    app.io.emit('ticket.updated', {
-      ticketId: ticket.id,
-      status: ticket.status,
+      if (body.note.trim()) {
+        const internalNote = await app.prisma.ticketMessage.create({
+          data: {
+            id: randomUUID(),
+            ticketId: ticket.id,
+            senderAgentId: session.userId,
+            direction: 'outbound',
+            contentType: 'text',
+            body: body.note.trim(),
+            senderNameSnapshot: currentTicket.currentAgent?.name ?? session.email,
+            rawPayload: {
+              chatflowInternalNote: true,
+              source: 'ticket_transfer',
+            } as Prisma.InputJsonValue,
+          },
+        });
+
+        app.io.emit('message.created', {
+          ticketId: ticket.id,
+          messageId: internalNote.id,
+          direction: internalNote.direction,
+        });
+      }
+
+      app.io.emit('ticket.updated', {
+        ticketId: ticket.id,
+        status: ticket.status,
       currentAgentId: ticket.currentAgentId,
       currentQueueId: ticket.currentQueueId,
     });

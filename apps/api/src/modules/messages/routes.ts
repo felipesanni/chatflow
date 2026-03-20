@@ -20,12 +20,21 @@ const createMessageBodySchema = z.object({
   body: z.string().trim().optional().default(''),
   replyToMessageId: z.string().uuid().optional(),
   attachment: outgoingAttachmentSchema.optional(),
+  internalNote: z.boolean().optional().default(false),
 }).superRefine((value, ctx) => {
   if (!value.body.trim() && !value.attachment) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'Informe uma mensagem ou anexe um arquivo para enviar.',
       path: ['body'],
+    });
+  }
+
+  if (value.internalNote && value.attachment) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Observações internas não aceitam anexos.',
+      path: ['attachment'],
     });
   }
 });
@@ -461,6 +470,14 @@ function serializeDeletedState(rawPayload: unknown) {
   };
 }
 
+function serializeInternalNoteState(rawPayload: unknown) {
+  if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
+    return false;
+  }
+
+  return (rawPayload as Record<string, unknown>).chatflowInternalNote === true;
+}
+
 function normalizeHiddenForUserIds(value: unknown) {
   if (!Array.isArray(value)) {
     return [] as string[];
@@ -506,6 +523,15 @@ function withDeletedMessage(rawPayload: Prisma.JsonValue | null | undefined) {
     scope: 'everyone',
   };
 
+  return payload as Prisma.InputJsonValue;
+}
+
+function withInternalNote(rawPayload: Prisma.JsonValue | null | undefined) {
+  const payload = rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
+    ? { ...(rawPayload as Record<string, unknown>) }
+    : {};
+
+  payload.chatflowInternalNote = true;
   return payload as Prisma.InputJsonValue;
 }
 
@@ -702,25 +728,27 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         ticketId: message.ticketId,
         direction: message.direction,
         contentType: message.contentType,
-        body: message.body,
-        senderName: message.senderNameSnapshot,
-        externalMessageId: message.externalMessageId,
-        editedAt: message.editedAt,
-        createdAt: message.createdAt,
-        reactions: serializeMessageReactions(message.rawPayload),
-        deleted: serializeDeletedState(message.rawPayload),
-        hiddenForMe: normalizeHiddenForUserIds(message.rawPayload?.chatflowHiddenForUserIds).includes(session.userId),
-        replyToMessage: message.replyToMessage
-          ? {
-              id: message.replyToMessage.id,
-              direction: message.replyToMessage.direction,
-              contentType: message.replyToMessage.contentType,
-              body: message.replyToMessage.body,
-              senderName: message.replyToMessage.senderNameSnapshot,
-              createdAt: message.replyToMessage.createdAt,
-              deleted: serializeDeletedState(message.replyToMessage.rawPayload),
-              hiddenForMe: normalizeHiddenForUserIds(message.replyToMessage.rawPayload?.chatflowHiddenForUserIds).includes(session.userId),
-              attachments: message.replyToMessage.attachments.map((attachment: any) => ({
+          body: message.body,
+          senderName: message.senderNameSnapshot,
+          externalMessageId: message.externalMessageId,
+          editedAt: message.editedAt,
+          internalNote: serializeInternalNoteState(message.rawPayload),
+          createdAt: message.createdAt,
+          reactions: serializeMessageReactions(message.rawPayload),
+          deleted: serializeDeletedState(message.rawPayload),
+          hiddenForMe: normalizeHiddenForUserIds(message.rawPayload?.chatflowHiddenForUserIds).includes(session.userId),
+          replyToMessage: message.replyToMessage
+            ? {
+                id: message.replyToMessage.id,
+                direction: message.replyToMessage.direction,
+                contentType: message.replyToMessage.contentType,
+                body: message.replyToMessage.body,
+                senderName: message.replyToMessage.senderNameSnapshot,
+                createdAt: message.replyToMessage.createdAt,
+                internalNote: serializeInternalNoteState(message.replyToMessage.rawPayload),
+                deleted: serializeDeletedState(message.replyToMessage.rawPayload),
+                hiddenForMe: normalizeHiddenForUserIds(message.replyToMessage.rawPayload?.chatflowHiddenForUserIds).includes(session.userId),
+                attachments: message.replyToMessage.attachments.map((attachment: any) => ({
                 id: attachment.id,
                 fileName: attachment.fileName,
                 mimeType: attachment.mimeType,
@@ -778,10 +806,6 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.forbidden('Apenas o agente responsavel pode editar mensagens deste ticket.');
     }
 
-    if (!ticket.externalChatId) {
-      return reply.badRequest('O ticket nao possui um destino do WhatsApp configurado.');
-    }
-
     const message = await app.prisma.ticketMessage.findFirst({
       where: {
         id: params.messageId,
@@ -804,29 +828,37 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.badRequest('Somente mensagens de texto sem anexos podem ser editadas.');
     }
 
-    if (!message.externalMessageId) {
+    const isInternalNote = serializeInternalNoteState(message.rawPayload);
+
+    if (!isInternalNote && !ticket.externalChatId) {
+      return reply.badRequest('O ticket nao possui um destino do WhatsApp configurado.');
+    }
+
+    if (!isInternalNote && !message.externalMessageId) {
       return reply.badRequest('A mensagem nao possui identificador externo para edicao.');
     }
 
     const agentSignature = ticket.currentAgent?.name ?? message.senderNameSnapshot ?? session.email;
-    const signedBody = formatAgentSignedBody(agentSignature, body.body);
+    const signedBody = isInternalNote ? body.body.trim() : formatAgentSignedBody(agentSignature, body.body);
 
-    const decryptedApiKey = decryptSecret(ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
-    const delivery = await sendEvolutionUpdateMessage({
-      baseUrl: ticket.whatsappInstance.baseUrl,
-      apiKey: decryptedApiKey,
-      instanceName: ticket.whatsappInstance.evolutionInstanceName,
-      remoteJid: ticket.externalChatId,
-      externalMessageId: message.externalMessageId,
-      text: signedBody,
-    });
-
-    if (!delivery.ok) {
-      return reply.code(400).send({
-        message: 'Falha ao editar a mensagem na Evolution API.',
-        status: delivery.status,
-        payload: delivery.payload,
+    if (!isInternalNote) {
+      const decryptedApiKey = decryptSecret(ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
+      const delivery = await sendEvolutionUpdateMessage({
+        baseUrl: ticket.whatsappInstance.baseUrl,
+        apiKey: decryptedApiKey,
+        instanceName: ticket.whatsappInstance.evolutionInstanceName,
+        remoteJid: ticket.externalChatId!,
+        externalMessageId: message.externalMessageId!,
+        text: signedBody,
       });
+
+      if (!delivery.ok) {
+        return reply.code(400).send({
+          message: 'Falha ao editar a mensagem na Evolution API.',
+          status: delivery.status,
+          payload: delivery.payload,
+        });
+      }
     }
 
     const updatedMessage = await app.prisma.ticketMessage.update({
@@ -847,13 +879,13 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       await app.prisma.ticket.update({
         where: { id: ticket.id },
         data: {
-          lastMessagePreview: body.body.trim(),
+          lastMessagePreview: isInternalNote ? `Observação: ${body.body.trim()}` : body.body.trim(),
         },
       });
 
       app.io.emit('ticket.updated', {
         ticketId: ticket.id,
-        lastMessagePreview: body.body.trim(),
+        lastMessagePreview: isInternalNote ? `Observação: ${body.body.trim()}` : body.body.trim(),
         unreadCount: ticket.unreadCount,
       });
     }
@@ -869,6 +901,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
           externalMessageId: updatedMessage.externalMessageId,
           contentType: updatedMessage.contentType,
           edited: true,
+          internalNote: isInternalNote,
         },
       },
     });
@@ -889,6 +922,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         senderName: updatedMessage.senderNameSnapshot,
         externalMessageId: updatedMessage.externalMessageId,
         editedAt: updatedMessage.editedAt,
+        internalNote: serializeInternalNoteState(updatedMessage.rawPayload),
         createdAt: updatedMessage.createdAt,
         reactions: serializeMessageReactions(updatedMessage.rawPayload),
         deleted: serializeDeletedState(updatedMessage.rawPayload),
@@ -1025,26 +1059,30 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.badRequest('Somente mensagens enviadas podem ser apagadas para todos.');
     }
 
-    if (!message.externalMessageId) {
+    const isInternalNote = serializeInternalNoteState(message.rawPayload);
+
+    if (!isInternalNote && !message.externalMessageId) {
       return reply.badRequest('A mensagem nao possui identificador externo para exclusao.');
     }
 
-    const decryptedApiKey = decryptSecret(ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
+    if (!isInternalNote) {
+      const decryptedApiKey = decryptSecret(ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
       const delivery = await sendEvolutionDeleteMessage({
         baseUrl: ticket.whatsappInstance.baseUrl,
         apiKey: decryptedApiKey,
         instanceName: ticket.whatsappInstance.evolutionInstanceName,
         remoteJid: ticket.externalChatId,
-        externalMessageId: message.externalMessageId,
+        externalMessageId: message.externalMessageId!,
         fromMe: true,
       });
 
-    if (!delivery.ok) {
-      return reply.code(400).send({
-        message: 'Falha ao apagar a mensagem na Evolution API.',
-        status: delivery.status,
-        payload: delivery.payload,
-      });
+      if (!delivery.ok) {
+        return reply.code(400).send({
+          message: 'Falha ao apagar a mensagem na Evolution API.',
+          status: delivery.status,
+          payload: delivery.payload,
+        });
+      }
     }
 
     const updatedMessage = await app.prisma.ticketMessage.update({
@@ -1065,6 +1103,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
           externalMessageId: updatedMessage.externalMessageId,
           contentType: updatedMessage.contentType,
           deleted: true,
+          internalNote: isInternalNote,
         },
       },
     });
@@ -1247,67 +1286,79 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.forbidden('Apenas o agente responsavel pode responder este ticket.');
     }
 
-    if (!ticket.externalChatId) {
-      return reply.badRequest('O ticket nao possui um destino do WhatsApp configurado.');
-    }
-
     const quotedMessage = body.replyToMessageId
       ? await app.prisma.ticketMessage.findUnique({ where: { id: body.replyToMessageId } })
       : null;
 
-    const decryptedApiKey = decryptSecret(ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
+    const attachmentInput = body.attachment;
+    const agentSignature = ticket.currentAgent?.name ?? session.email;
+    const isInternalNote = body.internalNote === true;
 
-    if (!ticket.whatsappInstance.apiKeyEncrypted.startsWith('enc:')) {
-      await app.prisma.whatsAppInstance.update({
-        where: { id: ticket.whatsappInstance.id },
-        data: {
-          apiKeyEncrypted: encryptSecret(decryptedApiKey, env.SESSION_SECRET),
-        },
-      });
+    if (!isInternalNote && !ticket.externalChatId) {
+      return reply.badRequest('O ticket nao possui um destino do WhatsApp configurado.');
     }
 
-    const attachmentInput = body.attachment;
+    const signedBody = isInternalNote
+      ? trimmedBody
+      : (trimmedBody ? formatAgentSignedBody(agentSignature, trimmedBody) : '');
     const parsedAttachment = attachmentInput ? parseDataUrl(attachmentInput.dataUrl) : null;
-    const agentSignature = ticket.currentAgent?.name ?? session.email;
-    const signedBody = trimmedBody ? formatAgentSignedBody(agentSignature, trimmedBody) : '';
 
-    const delivery = attachmentInput
-      ? attachmentInput.kind === 'audio'
-        ? await sendEvolutionAudio({
-            baseUrl: ticket.whatsappInstance.baseUrl,
-            apiKey: decryptedApiKey,
-            instanceName: ticket.whatsappInstance.evolutionInstanceName,
-            remoteJid: ticket.externalChatId,
-            base64: parsedAttachment?.base64 ?? '',
-            quotedMessageId: quotedMessage?.externalMessageId ?? undefined,
-          })
-        : await sendEvolutionMedia({
-            baseUrl: ticket.whatsappInstance.baseUrl,
-            apiKey: decryptedApiKey,
-            instanceName: ticket.whatsappInstance.evolutionInstanceName,
-            remoteJid: ticket.externalChatId,
-            mediaType: attachmentInput.kind === 'image' ? 'image' : 'document',
-            fileName: attachmentInput.fileName,
-            mimeType: attachmentInput.mimeType || parsedAttachment?.mimeType || 'application/octet-stream',
-            base64: parsedAttachment?.base64 ?? '',
-            caption: signedBody || undefined,
-            quotedMessageId: quotedMessage?.externalMessageId ?? undefined,
-          })
-      : await sendEvolutionText({
-          baseUrl: ticket.whatsappInstance.baseUrl,
-          apiKey: decryptedApiKey,
-          instanceName: ticket.whatsappInstance.evolutionInstanceName,
-          remoteJid: ticket.externalChatId,
-          text: signedBody,
-          quotedMessageId: quotedMessage?.externalMessageId ?? undefined,
+    let externalMessageId: string | null = null;
+    let deliveryPayload: any = null;
+
+    if (!isInternalNote) {
+      const decryptedApiKey = decryptSecret(ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
+
+      if (!ticket.whatsappInstance.apiKeyEncrypted.startsWith('enc:')) {
+        await app.prisma.whatsAppInstance.update({
+          where: { id: ticket.whatsappInstance.id },
+          data: {
+            apiKeyEncrypted: encryptSecret(decryptedApiKey, env.SESSION_SECRET),
+          },
         });
+      }
 
-    if (!delivery.ok) {
-      return reply.code(400).send({
-        message: 'Falha ao enviar a mensagem para a Evolution API.',
-        status: delivery.status,
-        payload: delivery.payload,
-      });
+      const delivery = attachmentInput
+        ? attachmentInput.kind === 'audio'
+          ? await sendEvolutionAudio({
+              baseUrl: ticket.whatsappInstance.baseUrl,
+              apiKey: decryptedApiKey,
+              instanceName: ticket.whatsappInstance.evolutionInstanceName,
+              remoteJid: ticket.externalChatId!,
+              base64: parsedAttachment?.base64 ?? '',
+              quotedMessageId: quotedMessage?.externalMessageId ?? undefined,
+            })
+          : await sendEvolutionMedia({
+              baseUrl: ticket.whatsappInstance.baseUrl,
+              apiKey: decryptedApiKey,
+              instanceName: ticket.whatsappInstance.evolutionInstanceName,
+              remoteJid: ticket.externalChatId!,
+              mediaType: attachmentInput.kind === 'image' ? 'image' : 'document',
+              fileName: attachmentInput.fileName,
+              mimeType: attachmentInput.mimeType || parsedAttachment?.mimeType || 'application/octet-stream',
+              base64: parsedAttachment?.base64 ?? '',
+              caption: signedBody || undefined,
+              quotedMessageId: quotedMessage?.externalMessageId ?? undefined,
+            })
+        : await sendEvolutionText({
+            baseUrl: ticket.whatsappInstance.baseUrl,
+            apiKey: decryptedApiKey,
+            instanceName: ticket.whatsappInstance.evolutionInstanceName,
+            remoteJid: ticket.externalChatId!,
+            text: signedBody,
+            quotedMessageId: quotedMessage?.externalMessageId ?? undefined,
+          });
+
+      if (!delivery.ok) {
+        return reply.code(400).send({
+          message: 'Falha ao enviar a mensagem para a Evolution API.',
+          status: delivery.status,
+          payload: delivery.payload,
+        });
+      }
+
+      deliveryPayload = delivery.payload;
+      externalMessageId = pickDeliveryMessageId(delivery.payload, delivery.messageId);
     }
 
     const message = await app.prisma.ticketMessage.create({
@@ -1315,21 +1366,22 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         id: randomUUID(),
         ticketId: ticket.id,
         senderAgentId: session.userId,
-        externalMessageId: pickDeliveryMessageId(delivery.payload, delivery.messageId),
+        externalMessageId,
         direction: 'outbound',
         contentType: attachmentInput?.kind ?? 'text',
         body: signedBody || (attachmentInput ? `[${attachmentInput.kind}] ${attachmentInput.fileName}` : null),
         senderNameSnapshot: ticket.currentAgent?.name ?? session.email,
         replyToMessageId: body.replyToMessageId,
-        deliveredAt: new Date(),
+        deliveredAt: isInternalNote ? null : new Date(),
+        rawPayload: isInternalNote ? withInternalNote(null) : undefined,
       },
     });
 
-    if (attachmentInput) {
+    if (attachmentInput && !isInternalNote) {
       const fallbackPublicUrl = attachmentInput.kind === 'image' || attachmentInput.kind === 'audio'
         ? attachmentInput.dataUrl
         : null;
-      const resolvedPublicUrl = pickAttachmentPublicUrl(delivery.payload) ?? fallbackPublicUrl;
+      const resolvedPublicUrl = pickAttachmentPublicUrl(deliveryPayload) ?? fallbackPublicUrl;
 
       await app.prisma.attachment.create({
         data: {
@@ -1348,7 +1400,9 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     await app.prisma.ticket.update({
       where: { id: ticket.id },
       data: {
-        lastMessagePreview: trimmedBody || (attachmentInput ? `[${attachmentInput.kind}] ${attachmentInput.fileName}` : null),
+        lastMessagePreview: isInternalNote
+          ? `Observação: ${trimmedBody}`
+          : (trimmedBody || (attachmentInput ? `[${attachmentInput.kind}] ${attachmentInput.fileName}` : null)),
         unreadCount: 0,
         status: 'open',
         currentAgentId: ticket.currentAgentId ?? session.userId,
@@ -1364,9 +1418,10 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         actorUserId: session.userId,
         metadata: {
           messageId: message.id,
-          externalMessageId: pickDeliveryMessageId(delivery.payload, delivery.messageId),
+          externalMessageId,
           contentType: attachmentInput?.kind ?? 'text',
           attachmentName: attachmentInput?.fileName ?? null,
+          internalNote: isInternalNote,
         },
       },
     });
@@ -1379,7 +1434,9 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
 
     app.io.emit('ticket.updated', {
       ticketId: ticket.id,
-      lastMessagePreview: trimmedBody || (attachmentInput ? `[${attachmentInput.kind}] ${attachmentInput.fileName}` : null),
+      lastMessagePreview: isInternalNote
+        ? `Observação: ${trimmedBody}`
+        : (trimmedBody || (attachmentInput ? `[${attachmentInput.kind}] ${attachmentInput.fileName}` : null)),
       unreadCount: 0,
     });
 
