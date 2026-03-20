@@ -405,10 +405,12 @@ async function findOrCreateCustomer(
 function resolveCustomerDisplayName(parsed: ReturnType<typeof parseEvolutionPayload>, currentName?: string | null) {
   if (parsed.isGroup) {
     const normalizedCurrentName = typeof currentName === 'string' ? currentName.trim() : '';
+    const normalizedParsedGroupName = typeof parsed.groupName === 'string' ? parsed.groupName.trim() : '';
+    const usableParsedGroupName = hasUsableGroupName(normalizedParsedGroupName) ? normalizedParsedGroupName : null;
     const hasSpecificCurrentName = hasUsableGroupName(normalizedCurrentName);
     const fallbackCurrentName = hasUsableGroupName(normalizedCurrentName) ? normalizedCurrentName : null;
 
-    return parsed.groupName
+    return usableParsedGroupName
       ?? (hasSpecificCurrentName ? normalizedCurrentName : null)
       ?? fallbackCurrentName
       ?? GENERIC_GROUP_NAME;
