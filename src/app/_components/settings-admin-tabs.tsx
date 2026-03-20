@@ -7,8 +7,8 @@ type SettingsAdminTabsProps = {
   onChange: (section: "branding" | "instances" | "agents" | "queues") => void;
   AdminTab: React.ComponentType<{
     label: string;
-    active?: boolean;
-    onClick?: () => void;
+    active: boolean;
+    onClick: () => void;
   }>;
 };
 
