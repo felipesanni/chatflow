@@ -71,13 +71,14 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     if (!(await requirePermission(app, request, reply, 'agents.manage'))) return;
 
     const body = createAgentSchema.parse(request.body);
+    const normalizedPassword = body.password.trim();
     const userId = randomUUID();
 
     await app.prisma.user.create({
       data: {
         id: userId,
         email: body.email.toLowerCase(),
-        passwordHash: hashPassword(body.password),
+        passwordHash: hashPassword(normalizedPassword),
         role: body.role,
         permissions: sanitizePermissions(body.permissions, body.role),
         status: 'active',
@@ -130,6 +131,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
 
     const params = z.object({ agentId: z.string().uuid() }).parse(request.params);
     const body = updateAgentSchema.parse(request.body);
+    const normalizedPassword = body.password?.trim() ?? '';
 
     const existing = await app.prisma.agent.findUnique({
       where: { id: params.agentId },
@@ -160,7 +162,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
           email: normalizedEmail,
           role: body.role,
           permissions: sanitizePermissions(body.permissions, body.role),
-          ...(body.password ? { passwordHash: hashPassword(body.password) } : {}),
+          ...(normalizedPassword ? { passwordHash: hashPassword(normalizedPassword) } : {}),
         },
       });
 

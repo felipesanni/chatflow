@@ -139,7 +139,7 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
 
     const existing = await app.prisma.customer.findUnique({
       where: { id: params.customerId },
-      select: { id: true },
+      select: { id: true, phoneE164: true },
     });
 
     if (!existing) {
@@ -186,9 +186,30 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
       },
     });
 
+    const ticketIdentityCandidates = Array.from(new Set([
+      customer.phoneE164,
+      existing.phoneE164,
+      customer.phoneE164 ? `${customer.phoneE164}@s.whatsapp.net` : null,
+      customer.phoneE164 ? `${customer.phoneE164}@c.us` : null,
+      existing.phoneE164 ? `${existing.phoneE164}@s.whatsapp.net` : null,
+      existing.phoneE164 ? `${existing.phoneE164}@c.us` : null,
+    ].filter((value): value is string => Boolean(value))));
+
     await app.prisma.ticket.updateMany({
-      where: { customerId: customer.id },
+      where: {
+        OR: [
+          { customerId: customer.id },
+          {
+            isGroup: false,
+            OR: [
+              { externalContactId: { in: ticketIdentityCandidates } },
+              { externalChatId: { in: ticketIdentityCandidates } },
+            ],
+          },
+        ],
+      },
       data: {
+        customerId: customer.id,
         customerNameSnapshot: customer.name,
       },
     });

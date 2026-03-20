@@ -689,6 +689,7 @@ export default function HomePage() {
     name: "",
     email: "",
     password: "",
+    confirmPassword: "",
     role: "agent" as "admin" | "agent",
     queueIds: [] as string[],
     permissions: defaultPermissionsForRole("agent"),
@@ -737,9 +738,6 @@ export default function HomePage() {
     companyName: "",
     notes: "",
   });
-  const [inlineCustomerName, setInlineCustomerName] = React.useState("");
-  const [inlineCustomerCompanyName, setInlineCustomerCompanyName] = React.useState("");
-  const [inlineCustomerEditing, setInlineCustomerEditing] = React.useState(false);
   const [transferForm, setTransferForm] = React.useState({
     agentId: "",
     queueId: "",
@@ -770,6 +768,10 @@ export default function HomePage() {
     const selectedDigits = onlyPhoneDigits(selectedTicket.externalContactId ?? selectedTicket.externalChatId);
     return customers.find((customer) => onlyPhoneDigits(customer.phone ?? "") === selectedDigits) ?? null;
   }, [customers, selectedTicket]);
+  const selectedTicketDisplayName = React.useMemo(() => {
+    if (!selectedTicket) return "";
+    return selectedCustomer?.companyName ? `${selectedTicket.customerName} - ${selectedCustomer.companyName}` : selectedTicket.customerName;
+  }, [selectedCustomer?.companyName, selectedTicket]);
   const editingMessage = React.useMemo(
     () => messages.find((message) => message.id === editingMessageId) ?? null,
     [editingMessageId, messages],
@@ -787,6 +789,14 @@ export default function HomePage() {
     avatarUrl: null,
     permissions: defaultPermissionsForRole("agent"),
   };
+
+  function formatTicketDisplayName(ticket: TicketItem) {
+    const matchedCustomer = ticket.customerId
+      ? customers.find((customer) => customer.id === ticket.customerId)
+      : customers.find((customer) => onlyPhoneDigits(customer.phone ?? "") === onlyPhoneDigits(ticket.externalContactId ?? ticket.externalChatId));
+
+    return matchedCustomer?.companyName ? `${ticket.customerName} - ${matchedCustomer.companyName}` : ticket.customerName;
+  }
 
   const canViewGroups = currentUser.permissions["tickets.groups"];
   const canViewChannels = currentUser.permissions["channels.view"];
@@ -1113,12 +1123,6 @@ export default function HomePage() {
   React.useEffect(() => {
     setShowTicketDetails(false);
   }, [selectedTicketId]);
-
-  React.useEffect(() => {
-    setInlineCustomerEditing(false);
-    setInlineCustomerName(selectedCustomer?.name ?? selectedTicket?.customerName ?? "");
-    setInlineCustomerCompanyName(selectedCustomer?.companyName ?? "");
-  }, [selectedCustomer, selectedTicket]);
 
   React.useEffect(() => {
     setEditingMessageId(null);
@@ -2260,7 +2264,7 @@ export default function HomePage() {
 
   function resetAgentForm() {
     setEditingAgentId(null);
-    setAgentForm({ name: "", email: "", password: "", role: "agent", queueIds: [], permissions: defaultPermissionsForRole("agent") });
+    setAgentForm({ name: "", email: "", password: "", confirmPassword: "", role: "agent", queueIds: [], permissions: defaultPermissionsForRole("agent") });
     setManagementModalTab("general");
   }
 
@@ -2315,6 +2319,7 @@ export default function HomePage() {
       name: agent.name,
       email: agent.email,
       password: "",
+      confirmPassword: "",
       role: agent.role,
       queueIds: agent.queues.map((queue) => queue.id),
       permissions: normalizePermissions(agent.role, agent.permissions),
@@ -2508,15 +2513,34 @@ export default function HomePage() {
 
   async function handleCreateAgent(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const trimmedPassword = agentForm.password.trim();
+
+    if (!editingAgentId && trimmedPassword.length < 8) {
+      setPanelMessage("Informe uma senha com ao menos 8 caracteres.");
+      return;
+    }
+
+    if (trimmedPassword && trimmedPassword !== agentForm.confirmPassword) {
+      setPanelMessage("A confirmação da senha não confere.");
+      return;
+    }
+
     setAgentLoading(true);
     try {
+      const payload = {
+        ...agentForm,
+        password: trimmedPassword,
+        queueIds: agentForm.role === "admin" ? queues.map((queue) => queue.id) : agentForm.queueIds,
+        permissions: agentForm.permissions,
+      };
+
       await apiFetch(editingAgentId ? `/agents/${editingAgentId}` : "/agents", {
         method: editingAgentId ? "PUT" : "POST",
-        body: JSON.stringify({ ...agentForm, queueIds: agentForm.role === "admin" ? queues.map((queue) => queue.id) : agentForm.queueIds, permissions: agentForm.permissions }),
+        body: JSON.stringify(payload),
       });
       resetAgentForm();
       closeManagementModal();
-      setPanelMessage(editingAgentId ? "Agente atualizado." : "Agente criado.");
+      setPanelMessage(editingAgentId ? (trimmedPassword ? "Agente e senha atualizados." : "Agente atualizado.") : "Agente criado.");
       await refreshAgents();
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao criar agente.");
@@ -2611,31 +2635,6 @@ export default function HomePage() {
       await refreshCustomers();
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao excluir contato.");
-    } finally {
-      setCustomerLoading(false);
-    }
-  }
-
-  async function handleInlineCustomerSave() {
-    if (!canManageContacts || !selectedCustomer) return;
-
-    setCustomerLoading(true);
-    try {
-      await apiFetch(`/customers/${selectedCustomer.id}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          name: inlineCustomerName.trim(),
-          phone: onlyPhoneDigits(selectedCustomer.phone ?? selectedTicket?.externalContactId ?? selectedTicket?.externalChatId ?? ""),
-          email: selectedCustomer.email ?? "",
-          companyName: inlineCustomerCompanyName.trim(),
-          notes: selectedCustomer.notes ?? "",
-        }),
-      });
-      setInlineCustomerEditing(false);
-      setPanelMessage("Contato atualizado.");
-      await Promise.all([refreshCustomers(), refreshTickets()]);
-    } catch (error) {
-      setPanelMessage(error instanceof Error ? error.message : "Falha ao salvar contato.");
     } finally {
       setCustomerLoading(false);
     }
@@ -3614,7 +3613,7 @@ export default function HomePage() {
                       onClick={() => setShowTicketDetails(true)}
                       className="text-left transition hover:opacity-80"
                     >
-                      <h3 className="text-[16px] font-semibold leading-tight tracking-[-0.02em] text-[#1A1C32]">{selectedTicket.customerName}</h3>
+                      <h3 className="text-[16px] font-semibold leading-tight tracking-[-0.02em] text-[#1A1C32]">{selectedTicketDisplayName}</h3>
                     </button>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12px] text-slate-500">
                       <span>{formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)}</span>
@@ -4224,53 +4223,15 @@ export default function HomePage() {
                               {!selectedTicket.isGroup && selectedCustomer && canManageContacts ? (
                                 <button
                                   type="button"
-                                  onClick={() => setInlineCustomerEditing((current) => !current)}
+                                  onClick={() => startEditCustomer(selectedCustomer)}
                                   className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-[0.14em] text-sky-600 transition hover:text-sky-700"
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
-                                  {inlineCustomerEditing ? "Fechar" : "Editar"}
+                                  Editar
                                 </button>
                               ) : null}
                             </div>
-                            {inlineCustomerEditing && selectedCustomer ? (
-                              <div className="mt-3 space-y-3">
-                                <input
-                                  value={inlineCustomerName}
-                                  onChange={(event) => setInlineCustomerName(event.target.value)}
-                                  placeholder="Nome do contato"
-                                  className="h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-                                />
-                                <input
-                                  value={inlineCustomerCompanyName}
-                                  onChange={(event) => setInlineCustomerCompanyName(event.target.value)}
-                                  placeholder="Empresa"
-                                  className="h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-                                />
-                                <div className="flex gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setInlineCustomerEditing(false);
-                                      setInlineCustomerName(selectedCustomer.name);
-                                      setInlineCustomerCompanyName(selectedCustomer.companyName ?? "");
-                                    }}
-                                    className="inline-flex h-9 items-center justify-center rounded-full border border-slate-200 px-3 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-                                  >
-                                    Cancelar
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => void handleInlineCustomerSave()}
-                                    disabled={customerLoading || !inlineCustomerName.trim()}
-                                    className="inline-flex h-9 items-center justify-center rounded-full bg-[#1A1C32] px-3 text-xs font-semibold text-white transition hover:bg-[#252844] disabled:cursor-not-allowed disabled:bg-slate-300"
-                                  >
-                                    {customerLoading ? "Salvando..." : "Salvar"}
-                                  </button>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="mt-1 text-sm font-semibold text-slate-800">{selectedCustomer?.name ?? selectedTicket.customerName}</div>
-                            )}
+                            <div className="mt-1 text-sm font-semibold text-slate-800">{selectedCustomer?.name ?? selectedTicket.customerName}</div>
                           </div>
                           {!selectedTicket.isGroup ? (
                             <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
@@ -4721,8 +4682,9 @@ export default function HomePage() {
               <div className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <CompactField label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} placeholder="Nome completo" />
-                  <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} placeholder="usuario@empresa.com" />
-                  <CompactField label={editingAgentId ? "Nova senha" : "Senha"} type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} placeholder={editingAgentId ? "Opcional para manter a atual" : "Senha de acesso"} />
+                  <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} placeholder="usuario@empresa.com" autoComplete="email" />
+                  <CompactField label={editingAgentId ? "Nova senha" : "Senha"} type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} placeholder={editingAgentId ? "Opcional para manter a atual" : "Senha de acesso"} autoComplete="new-password" />
+                  <CompactField label={editingAgentId ? "Confirmar nova senha" : "Confirmar senha"} type="password" value={agentForm.confirmPassword} onChange={(value) => setAgentForm((current) => ({ ...current, confirmPassword: value }))} placeholder="Repita a senha" autoComplete="new-password" />
                   <label className="block text-sm font-medium text-slate-600">
                     Perfil
                     <select
@@ -5230,7 +5192,7 @@ export default function HomePage() {
                                   <div className="flex items-center gap-1.5">
                                     <Phone className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
                                     <p className={`truncate font-semibold text-slate-800 ${compact ? "text-[13px]" : "text-[14px]"}`}>
-                                      {ticket.customerName}
+                                      {formatTicketDisplayName(ticket)}
                                     </p>
                                     {selected ? <span className="rounded-full bg-[#1A1C32] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-white">Ativo</span> : null}
                                   </div>
@@ -5499,7 +5461,7 @@ function AdminPanelCard(props: { title: string; icon: React.ComponentType<{ clas
   );
 }
 
-function CompactField(props: { label: string; value: string; onChange: (value: string) => void; type?: string; placeholder?: string }) {
+function CompactField(props: { label: string; value: string; onChange: (value: string) => void; type?: string; placeholder?: string; autoComplete?: string }) {
   return (
     <label className="block text-sm font-medium text-slate-600">
       {props.label}
@@ -5508,6 +5470,7 @@ function CompactField(props: { label: string; value: string; onChange: (value: s
         value={props.value}
         onChange={(event) => props.onChange(event.target.value)}
         placeholder={props.placeholder}
+        autoComplete={props.autoComplete}
         className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
       />
     </label>
