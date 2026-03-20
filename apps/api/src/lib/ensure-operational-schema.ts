@@ -228,6 +228,25 @@ const operationalStatements = [
     );
   `,
   `
+    CREATE TABLE IF NOT EXISTS ticket_chat_aliases (
+      id UUID PRIMARY KEY,
+      whatsapp_instance_id UUID NOT NULL REFERENCES whatsapp_instances(id) ON DELETE CASCADE,
+      ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+      alias TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `,
+  `
+    CREATE UNIQUE INDEX IF NOT EXISTS ticket_chat_aliases_instance_alias_key
+      ON ticket_chat_aliases(whatsapp_instance_id, alias);
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS ticket_chat_aliases_ticket_id_idx
+      ON ticket_chat_aliases(ticket_id);
+  `,
+  `
     CREATE INDEX IF NOT EXISTS ticket_messages_ticket_id_created_at_idx
       ON ticket_messages(ticket_id, created_at ASC);
   `,

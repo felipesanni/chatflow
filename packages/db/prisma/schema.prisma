@@ -166,6 +166,7 @@ model WhatsAppInstance {
   updatedAt             DateTime        @updatedAt @map("updated_at")
   defaultQueue          Queue?          @relation("default_queue", fields: [defaultQueueId], references: [id], onDelete: SetNull)
   tickets               Ticket[]
+  chatAliases           TicketChatAlias[]
   webhookLogs           WebhookLog[]
 
   @@map("whatsapp_instances")
@@ -194,6 +195,7 @@ model Ticket {
   whatsappInstance     WhatsAppInstance @relation(fields: [whatsappInstanceId], references: [id])
   currentAgent         Agent?           @relation("current_agent", fields: [currentAgentId], references: [id], onDelete: SetNull)
   currentQueue         Queue?           @relation("current_queue", fields: [currentQueueId], references: [id], onDelete: SetNull)
+  chatAliases          TicketChatAlias[]
   messages             TicketMessage[]
   assignments          TicketAssignment[]
   events               TicketEvent[]
@@ -202,6 +204,22 @@ model Ticket {
   @@index([currentAgentId, updatedAt(sort: Desc)])
   @@index([currentQueueId, updatedAt(sort: Desc)])
   @@map("tickets")
+}
+
+model TicketChatAlias {
+  id                 String           @id @db.Uuid
+  whatsappInstanceId String           @map("whatsapp_instance_id") @db.Uuid
+  ticketId           String           @map("ticket_id") @db.Uuid
+  alias              String
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+  lastSeenAt         DateTime         @default(now()) @map("last_seen_at")
+  whatsappInstance   WhatsAppInstance @relation(fields: [whatsappInstanceId], references: [id], onDelete: Cascade)
+  ticket             Ticket           @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@unique([whatsappInstanceId, alias])
+  @@index([ticketId])
+  @@map("ticket_chat_aliases")
 }
 
 model TicketMessage {

@@ -7,6 +7,7 @@ import type { PermissionMap } from '../../lib/permissions.js';
 import {
   ACTIVE_TICKET_STATUSES,
   buildActiveTicketIdentityWhere,
+  buildTicketAliasCandidates,
   buildTicketChatIdentity,
   normalizeTicketRemoteJid,
   withTicketIdentityLock,
@@ -479,6 +480,11 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       phone: normalizedPhone,
       isGroup: false,
     });
+    const aliasCandidates = buildTicketAliasCandidates({
+      remoteJid,
+      canonicalChatId: chatIdentity.canonicalChatId ?? remoteJid,
+      contactId: chatIdentity.contactId ?? normalizedPhone,
+    });
 
     const result = await withTicketIdentityLock(app.prisma, {
       whatsappInstanceId: instance.id,
@@ -548,6 +554,28 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         created: true,
       };
     });
+
+    for (const alias of aliasCandidates) {
+      await app.prisma.ticketChatAlias.upsert({
+        where: {
+          whatsappInstanceId_alias: {
+            whatsappInstanceId: instance.id,
+            alias,
+          },
+        },
+        create: {
+          id: randomUUID(),
+          whatsappInstanceId: instance.id,
+          ticketId: result.item.id,
+          alias,
+          lastSeenAt: new Date(),
+        },
+        update: {
+          ticketId: result.item.id,
+          lastSeenAt: new Date(),
+        },
+      });
+    }
 
     if (result.created) {
       app.io.emit('ticket.updated', {
@@ -1052,6 +1080,16 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         },
         data: {
           ticketId: currentPrimary.id,
+        },
+      });
+
+      await tx.ticketChatAlias.updateMany({
+        where: {
+          ticketId: { in: duplicateIds },
+        },
+        data: {
+          ticketId: currentPrimary.id,
+          lastSeenAt: new Date(),
         },
       });
 

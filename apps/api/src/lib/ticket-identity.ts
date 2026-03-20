@@ -8,6 +8,34 @@ export interface TicketChatIdentity {
   lookupChatIds: string[];
 }
 
+export function buildTicketAliasCandidates(params: {
+  remoteJid?: string | null;
+  canonicalChatId?: string | null;
+  contactId?: string | null;
+  aliases?: string[] | null;
+}) {
+  const normalizedContactId = normalizeTicketIdentityPhone(params.contactId);
+  const rawRemoteJid = typeof params.remoteJid === 'string' && params.remoteJid.trim().length > 0
+    ? params.remoteJid.trim()
+    : null;
+  const canonicalChatId = typeof params.canonicalChatId === 'string' && params.canonicalChatId.trim().length > 0
+    ? params.canonicalChatId.trim()
+    : null;
+  const aliases = (params.aliases ?? [])
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  return Array.from(new Set([
+    rawRemoteJid,
+    canonicalChatId,
+    ...aliases,
+    normalizedContactId ? normalizeTicketRemoteJid(normalizedContactId) : null,
+    normalizedContactId ? `${normalizedContactId}@c.us` : null,
+    normalizedContactId,
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0)));
+}
+
 export function normalizeTicketIdentityPhone(value: string | null | undefined) {
   if (typeof value !== 'string') {
     return null;

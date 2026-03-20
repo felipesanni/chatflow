@@ -7,6 +7,7 @@ import { decryptSecret } from './secrets.js';
 import { fetchEvolutionGroupName, fetchEvolutionProfilePictureUrl } from './evolution-client.js';
 import {
   buildActiveTicketIdentityWhere,
+  buildTicketAliasCandidates,
   buildTicketChatIdentity,
   withScopedAdvisoryLock,
   withTicketIdentityLock,
@@ -22,6 +23,84 @@ function hasUsableGroupName(value: string | null | undefined) {
 
   const normalized = value.trim();
   return normalized.length > 0 && normalized !== GENERIC_GROUP_NAME;
+}
+
+function isOpaqueDirectChatJid(value: string | null | undefined) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || normalized.includes('@g.us')) {
+    return false;
+  }
+
+  return normalized.includes('@') && !normalized.endsWith('@s.whatsapp.net') && !normalized.endsWith('@c.us');
+}
+
+async function findAliasedActiveTicket(
+  prisma: FastifyInstance['prisma'],
+  params: {
+    whatsappInstanceId: string;
+    aliases: string[];
+  },
+) {
+  if (params.aliases.length === 0) {
+    return null;
+  }
+
+  const aliasRecord = await prisma.ticketChatAlias.findFirst({
+    where: {
+      whatsappInstanceId: params.whatsappInstanceId,
+      alias: {
+        in: params.aliases,
+      },
+      ticket: {
+        status: {
+          in: ['open', 'pending'],
+        },
+      },
+    },
+    include: {
+      ticket: true,
+    },
+    orderBy: {
+      lastSeenAt: 'desc',
+    },
+  });
+
+  return aliasRecord?.ticket ?? null;
+}
+
+async function persistTicketAliases(
+  tx: Prisma.TransactionClient,
+  params: {
+    whatsappInstanceId: string;
+    ticketId: string;
+    aliases: string[];
+  },
+) {
+  for (const alias of params.aliases) {
+    await tx.ticketChatAlias.upsert({
+      where: {
+        whatsappInstanceId_alias: {
+          whatsappInstanceId: params.whatsappInstanceId,
+          alias,
+        },
+      },
+      create: {
+        id: randomUUID(),
+        whatsappInstanceId: params.whatsappInstanceId,
+        ticketId: params.ticketId,
+        alias,
+        lastSeenAt: new Date(),
+      },
+      update: {
+        ticketId: params.ticketId,
+        lastSeenAt: new Date(),
+      },
+    });
+  }
 }
 
 function pickHeaderSecret(value: unknown) {
@@ -552,7 +631,23 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
       };
     }
 
-    if (!parsed.remoteJid) {
+    const preMatchedOutboundMessage = parsed.fromMe
+      ? await app.prisma.ticketMessage.findFirst({
+          where: {
+            externalMessageId: parsed.externalMessageId,
+            ticket: {
+              whatsappInstanceId: instance.id,
+            },
+          },
+          include: {
+            ticket: true,
+          },
+        })
+      : null;
+
+    const resolvedRemoteJid = parsed.remoteJid ?? preMatchedOutboundMessage?.ticket.externalChatId;
+
+    if (!resolvedRemoteJid) {
       await finalize(202, 'Evento registrado sem persistencia de ticket.');
       return {
         statusCode: 202,
@@ -564,7 +659,52 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
       };
     }
 
-    const resolvedRemoteJid = parsed.remoteJid;
+    const preliminaryChatIdentity = buildTicketChatIdentity({
+      remoteJid: resolvedRemoteJid,
+      phone: parsed.phone,
+      isGroup: parsed.isGroup,
+      aliases: parsed.chatAliases,
+    });
+    const preliminaryExternalChatId = preliminaryChatIdentity.canonicalChatId ?? resolvedRemoteJid;
+    const preliminaryAliasCandidates = buildTicketAliasCandidates({
+      remoteJid: resolvedRemoteJid,
+      canonicalChatId: preliminaryExternalChatId,
+      contactId: preliminaryChatIdentity.contactId,
+      aliases: parsed.chatAliases,
+    });
+    const aliasedTicket = preMatchedOutboundMessage
+      ? null
+      : await findAliasedActiveTicket(app.prisma, {
+          whatsappInstanceId: instance.id,
+          aliases: preliminaryAliasCandidates,
+        });
+
+    if (
+      parsed.fromMe
+      && !preMatchedOutboundMessage
+      && !aliasedTicket
+      && !parsed.isGroup
+      && !parsed.phone
+      && isOpaqueDirectChatJid(parsed.remoteJid)
+    ) {
+      app.log.warn({
+        action: 'evolution_outbound_opaque_chat_ignored',
+        event: parsed.event,
+        instanceId: instance.id,
+        externalMessageId: parsed.externalMessageId,
+        remoteJid: parsed.remoteJid,
+      }, 'Evento outbound com identificador opaco ignorado para evitar criacao de ticket duplicado.');
+
+      await finalize(202, 'Evento outbound com identificador opaco ignorado.');
+      return {
+        statusCode: 202,
+        body: {
+          message: 'Evento outbound com identificador opaco ignorado.',
+          event: parsed.event,
+          externalMessageId: parsed.externalMessageId,
+        },
+      };
+    }
 
     const profilePictureResponse = parsed.isGroup || !parsed.remoteJid
       ? null
@@ -598,68 +738,109 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           preserveExistingName: parsed.fromMe && !parsed.verifiedBizName,
         });
     const customerAvatarUrl = fetchedCustomerAvatarUrl ?? customer?.avatarUrl ?? null;
-    const chatIdentity = buildTicketChatIdentity({
-      remoteJid: resolvedRemoteJid,
-      phone: parsed.phone,
-      isGroup: parsed.isGroup,
-      aliases: parsed.chatAliases,
-    });
-    const resolvedExternalChatId = chatIdentity.canonicalChatId ?? resolvedRemoteJid;
+    const chatIdentity = preliminaryChatIdentity;
+    const resolvedExternalChatId = preliminaryExternalChatId;
+    const aliasCandidates = preliminaryAliasCandidates;
+    const canPromoteResolvedChatId =
+      parsed.isGroup
+      || Boolean(chatIdentity.contactId)
+      || !isOpaqueDirectChatJid(resolvedExternalChatId);
 
-    const ticket = await withTicketIdentityLock(app.prisma, {
-      whatsappInstanceId: instance.id,
-      canonicalChatId: resolvedExternalChatId,
-    }, async (tx) => {
-      const existingTicket = await tx.ticket.findFirst({
-        where: buildActiveTicketIdentityWhere(instance.id, chatIdentity),
-        orderBy: {
-          updatedAt: 'desc',
-        },
-      });
-
-      if (!existingTicket) {
-        const createdTicket = await tx.ticket.create({
+    const ticket = preMatchedOutboundMessage
+      ? await app.prisma.ticket.update({
+          where: { id: preMatchedOutboundMessage.ticket.id },
           data: {
-            id: randomUUID(),
-            customerId: customer?.id,
-            whatsappInstanceId: instance.id,
-            currentQueueId: instance.defaultQueueId ?? null,
-            externalChatId: resolvedExternalChatId,
-            externalContactId: chatIdentity.contactId,
-            customerNameSnapshot: resolveCustomerDisplayName(parsedWithResolvedGroupName, customer?.name),
-            customerAvatarUrl,
-            status: 'pending',
-            unreadCount: parsed.fromMe ? 0 : 1,
-            isGroup: parsed.isGroup,
+            customerId: customer?.id ?? preMatchedOutboundMessage.ticket.customerId,
+            customerNameSnapshot: resolveCustomerDisplayName(
+              parsedWithResolvedGroupName,
+              customer?.name ?? preMatchedOutboundMessage.ticket.customerNameSnapshot,
+            ),
+            customerAvatarUrl: customerAvatarUrl ?? preMatchedOutboundMessage.ticket.customerAvatarUrl,
             lastMessagePreview: parsed.body,
+            unreadCount: 0,
+            updatedAt: new Date(),
           },
+        })
+      : aliasedTicket
+        ? await app.prisma.ticket.update({
+            where: { id: aliasedTicket.id },
+            data: {
+              customerId: customer?.id ?? aliasedTicket.customerId,
+              externalChatId: canPromoteResolvedChatId ? resolvedExternalChatId : aliasedTicket.externalChatId,
+              externalContactId: chatIdentity.contactId ?? aliasedTicket.externalContactId,
+              customerNameSnapshot: resolveCustomerDisplayName(
+                parsedWithResolvedGroupName,
+                customer?.name ?? aliasedTicket.customerNameSnapshot,
+              ),
+              customerAvatarUrl: customerAvatarUrl ?? aliasedTicket.customerAvatarUrl,
+              lastMessagePreview: parsed.body,
+              unreadCount: parsed.fromMe ? 0 : { increment: 1 },
+              status: parsed.fromMe ? aliasedTicket.status : aliasedTicket.currentAgentId ? aliasedTicket.status : 'pending',
+              updatedAt: new Date(),
+            },
+          })
+      : await withTicketIdentityLock(app.prisma, {
+          whatsappInstanceId: instance.id,
+          canonicalChatId: resolvedExternalChatId,
+        }, async (tx) => {
+          const existingTicket = await tx.ticket.findFirst({
+            where: buildActiveTicketIdentityWhere(instance.id, chatIdentity),
+            orderBy: {
+              updatedAt: 'desc',
+            },
+          });
+
+          if (!existingTicket) {
+            const createdTicket = await tx.ticket.create({
+              data: {
+                id: randomUUID(),
+                customerId: customer?.id,
+                whatsappInstanceId: instance.id,
+                currentQueueId: instance.defaultQueueId ?? null,
+                externalChatId: resolvedExternalChatId,
+                externalContactId: chatIdentity.contactId,
+                customerNameSnapshot: resolveCustomerDisplayName(parsedWithResolvedGroupName, customer?.name),
+                customerAvatarUrl,
+                status: 'pending',
+                unreadCount: parsed.fromMe ? 0 : 1,
+                isGroup: parsed.isGroup,
+                lastMessagePreview: parsed.body,
+              },
+            });
+
+            await tx.ticketEvent.create({
+              data: {
+                id: randomUUID(),
+                ticketId: createdTicket.id,
+                eventType: 'created',
+                metadata: { source: params.source, event: parsed.event },
+              },
+            });
+
+            return createdTicket;
+          }
+
+          return tx.ticket.update({
+            where: { id: existingTicket.id },
+            data: {
+              customerId: customer?.id ?? existingTicket.customerId,
+              externalChatId: canPromoteResolvedChatId ? (chatIdentity.canonicalChatId ?? existingTicket.externalChatId) : existingTicket.externalChatId,
+              externalContactId: chatIdentity.contactId ?? existingTicket.externalContactId,
+              customerNameSnapshot: resolveCustomerDisplayName(parsedWithResolvedGroupName, customer?.name ?? existingTicket.customerNameSnapshot),
+              customerAvatarUrl: customerAvatarUrl ?? existingTicket.customerAvatarUrl,
+              lastMessagePreview: parsed.body,
+              unreadCount: parsed.fromMe ? 0 : { increment: 1 },
+              status: parsed.fromMe ? existingTicket.status : existingTicket.currentAgentId ? existingTicket.status : 'pending',
+              updatedAt: new Date(),
+            },
+          });
         });
 
-        await tx.ticketEvent.create({
-          data: {
-            id: randomUUID(),
-            ticketId: createdTicket.id,
-            eventType: 'created',
-            metadata: { source: params.source, event: parsed.event },
-          },
-        });
-
-        return createdTicket;
-      }
-
-      return tx.ticket.update({
-        where: { id: existingTicket.id },
-        data: {
-          customerId: customer?.id ?? existingTicket.customerId,
-          externalChatId: chatIdentity.canonicalChatId ?? existingTicket.externalChatId,
-          externalContactId: chatIdentity.contactId ?? existingTicket.externalContactId,
-          customerNameSnapshot: resolveCustomerDisplayName(parsedWithResolvedGroupName, customer?.name ?? existingTicket.customerNameSnapshot),
-          customerAvatarUrl: customerAvatarUrl ?? existingTicket.customerAvatarUrl,
-          lastMessagePreview: parsed.body,
-          unreadCount: parsed.fromMe ? 0 : { increment: 1 },
-          status: parsed.fromMe ? existingTicket.status : existingTicket.currentAgentId ? existingTicket.status : 'pending',
-          updatedAt: new Date(),
-        },
+    await app.prisma.$transaction(async (tx) => {
+      await persistTicketAliases(tx, {
+        whatsappInstanceId: instance.id,
+        ticketId: ticket.id,
+        aliases: aliasCandidates,
       });
     });
 
