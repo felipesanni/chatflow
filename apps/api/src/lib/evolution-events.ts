@@ -50,6 +50,67 @@ function isEmptyPlaceholderUpdate(parsed: ReturnType<typeof parseEvolutionPayloa
     && parsed.body.trim().toLowerCase() === 'mensagem vazia';
 }
 
+function normalizeTicketIdentityPhone(value: string | null | undefined) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const digits = value.replace(/[^0-9]/g, '');
+  if (!digits) {
+    return null;
+  }
+
+  if (digits.length < 8 || digits.length > 15) {
+    return null;
+  }
+
+  if (digits.startsWith('0')) {
+    return null;
+  }
+
+  if (/^(\d)\1+$/.test(digits)) {
+    return null;
+  }
+
+  return digits;
+}
+
+function buildTicketChatIdentity(parsed: ReturnType<typeof parseEvolutionPayload>) {
+  const rawRemoteJid = typeof parsed.remoteJid === 'string' && parsed.remoteJid.trim().length > 0
+    ? parsed.remoteJid.trim()
+    : null;
+  const contactId = normalizeTicketIdentityPhone(parsed.phone);
+
+  if (parsed.isGroup) {
+    return {
+      canonicalChatId: rawRemoteJid,
+      contactId,
+      lookupChatIds: rawRemoteJid ? [rawRemoteJid] : [],
+    };
+  }
+
+  const [localPart = '', rawDomain = ''] = rawRemoteJid?.split('@') ?? [];
+  const baseLocalPart = localPart.split(':')[0]?.trim() ?? '';
+  const normalizedDomain = rawDomain.trim().toLowerCase();
+  const baseDigits = normalizeTicketIdentityPhone(baseLocalPart);
+  const canonicalChatId = contactId ?? baseDigits ?? rawRemoteJid;
+  const lookupChatIds = Array.from(new Set([
+    canonicalChatId,
+    rawRemoteJid,
+    baseDigits,
+    baseLocalPart || null,
+    baseDigits && normalizedDomain ? `${baseDigits}@${normalizedDomain}` : null,
+    baseDigits ? `${baseDigits}@s.whatsapp.net` : null,
+    baseDigits ? `${baseDigits}@c.us` : null,
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0)));
+
+  return {
+    canonicalChatId,
+    contactId,
+    lookupChatIds,
+  };
+}
+
 function normalizeStoredReactions(value: unknown) {
   if (!Array.isArray(value)) {
     return [] as Array<{
@@ -561,12 +622,24 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           preserveExistingName: parsed.fromMe && !parsed.verifiedBizName,
         });
     const customerAvatarUrl = fetchedCustomerAvatarUrl ?? customer?.avatarUrl ?? null;
+    const chatIdentity = buildTicketChatIdentity(parsed);
 
     let ticket = await app.prisma.ticket.findFirst({
       where: {
         whatsappInstanceId: instance.id,
-        externalChatId: parsed.remoteJid,
         status: { in: ['open', 'pending'] },
+        OR: [
+          ...(chatIdentity.lookupChatIds.length > 0
+            ? [{
+                externalChatId: {
+                  in: chatIdentity.lookupChatIds,
+                },
+              }]
+            : []),
+          ...(chatIdentity.contactId
+            ? [{ externalContactId: chatIdentity.contactId }]
+            : []),
+        ],
       },
       orderBy: {
         updatedAt: 'desc',
@@ -580,8 +653,8 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           customerId: customer?.id,
           whatsappInstanceId: instance.id,
           currentQueueId: instance.defaultQueueId ?? null,
-          externalChatId: parsed.remoteJid,
-          externalContactId: parsed.phone,
+          externalChatId: chatIdentity.canonicalChatId ?? parsed.remoteJid,
+          externalContactId: chatIdentity.contactId,
           customerNameSnapshot: resolveCustomerDisplayName(parsed, customer?.name),
           customerAvatarUrl,
           status: 'pending',
@@ -604,6 +677,8 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         where: { id: ticket.id },
         data: {
           customerId: customer?.id ?? ticket.customerId,
+          externalChatId: chatIdentity.canonicalChatId ?? ticket.externalChatId,
+          externalContactId: chatIdentity.contactId ?? ticket.externalContactId,
           customerNameSnapshot: resolveCustomerDisplayName(parsed, customer?.name ?? ticket.customerNameSnapshot),
           customerAvatarUrl: customerAvatarUrl ?? ticket.customerAvatarUrl,
           lastMessagePreview: parsed.body,
