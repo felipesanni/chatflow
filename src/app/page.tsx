@@ -5125,19 +5125,21 @@ export default function HomePage() {
 
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-1.5">
-                                  <Phone className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-                                  <p className={`truncate font-semibold text-slate-800 ${compact ? "text-[13px]" : "text-[14px]"}`}>{ticket.customerName}</p>
-                                  {selected ? <span className="rounded-full bg-[#1A1C32] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-white">Ativo</span> : null}
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <Phone className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                                    <p className={`truncate font-semibold text-slate-800 ${compact ? "text-[13px]" : "text-[14px]"}`}>
+                                      {ticket.customerName}
+                                    </p>
+                                    {selected ? <span className="rounded-full bg-[#1A1C32] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-white">Ativo</span> : null}
+                                  </div>
+                                  <p className={`mt-0.5 truncate font-medium leading-5 text-slate-600 ${compact ? "text-[12px]" : "text-[13px]"}`}>
+                                    {ticket.lastMessagePreview ? formatMessagePreview(ticket.lastMessagePreview) : "Sem mensagem registrada"}
+                                  </p>
+                                  <p className="mt-1 truncate text-[11px] text-slate-400">
+                                    {formatContactIdentity(ticket.externalContactId ?? ticket.externalChatId)}
+                                  </p>
                                 </div>
-                                <p className={`mt-0.5 truncate font-medium leading-5 text-slate-600 ${compact ? "text-[12px]" : "text-[13px]"}`}>
-                                  {ticket.lastMessagePreview ? formatMessagePreview(ticket.lastMessagePreview) : "Sem mensagem registrada"}
-                                </p>
-                                <p className="mt-1 truncate text-[11px] text-slate-400">
-                                  {formatContactIdentity(ticket.externalContactId ?? ticket.externalChatId)}
-                                </p>
-                              </div>
                               <span className="whitespace-nowrap text-[11px] font-medium text-slate-400">{formatHour(ticket.updatedAt)}</span>
                             </div>
 
