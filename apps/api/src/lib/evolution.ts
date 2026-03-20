@@ -113,6 +113,10 @@ function normalizePhone(jid: string | undefined) {
     return null;
   }
 
+  if (!digits.startsWith('55')) {
+    return null;
+  }
+
   if (digits.startsWith('0')) {
     return null;
   }
@@ -135,12 +139,23 @@ function normalizePhoneCandidate(value: unknown) {
     return fromJid;
   }
 
+  // `@lid` and other non-phone JIDs are opaque chat identifiers, not phone numbers.
+  // If a value still contains a JID marker after failing normalizePhone(), never
+  // downgrade it to a bare digit sequence or we create fake phones/tickets.
+  if (trimmed.includes('@')) {
+    return null;
+  }
+
   const digits = trimmed.replace(/[^0-9]/g, '');
   if (!digits) {
     return null;
   }
 
   if (digits.length < 8 || digits.length > 15) {
+    return null;
+  }
+
+  if (!digits.startsWith('55')) {
     return null;
   }
 
@@ -858,6 +873,31 @@ export function parseEvolutionPayload(
   const deletion = extractDeletionPayload(payload, message, resolvedContent.content, normalizedEvent);
   const payloadInstance = typeof payload.instance === 'string' ? payload.instance : null;
   const groupName = extractGroupName(payload, message, remoteJid);
+  const senderData = pickObject(data?.sender);
+  const contactData = pickObject(data?.contact);
+  const participantData = pickObject(data?.participant);
+  const pushName = pickFirstNonEmptyString([
+    message?.pushName,
+    data?.pushName,
+    data?.notify,
+    data?.senderPushName,
+    senderData?.pushName,
+    senderData?.name,
+    senderData?.notify,
+    contactData?.pushName,
+    contactData?.name,
+    contactData?.notify,
+    participantData?.pushName,
+    participantData?.name,
+    participantData?.notify,
+  ]);
+  const verifiedBizName = pickFirstNonEmptyString([
+    message?.verifiedBizName,
+    data?.verifiedBizName,
+    senderData?.verifiedBizName,
+    contactData?.verifiedBizName,
+    participantData?.verifiedBizName,
+  ]);
   const isEdited =
     resolvedContent.isEdited
     || normalizedEvent === 'MESSAGES_EDITED'
@@ -871,8 +911,8 @@ export function parseEvolutionPayload(
     fromMe,
     phone,
     chatAliases,
-    pushName: message?.pushName ?? null,
-    verifiedBizName: message?.verifiedBizName ?? null,
+    pushName,
+    verifiedBizName,
     groupName,
     body: parsedContent.body,
     contentType: parsedContent.contentType,
