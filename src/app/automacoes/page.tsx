@@ -1,7 +1,7 @@
 "use client";
 
-import HomePage from "../page";
+import { AppShell } from "../page";
 
 export default function AutomationsPage() {
-  return <HomePage initialWorkspace="automations" />;
+  return <AppShell initialWorkspace="automations" />;
 }

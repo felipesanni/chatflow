@@ -1,7 +1,7 @@
 "use client";
 
-import HomePage from "../page";
+import { AppShell } from "../page";
 
 export default function ContactsPage() {
-  return <HomePage initialWorkspace="contacts" />;
+  return <AppShell initialWorkspace="contacts" />;
 }

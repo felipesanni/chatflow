@@ -639,7 +639,7 @@ function traduzirStatusInstancia(status: string) {
   return status;
 }
 
-export default function HomePage({ initialWorkspace = "tickets" }: { initialWorkspace?: WorkspaceKey }) {
+export function AppShell({ initialWorkspace = "tickets" }: { initialWorkspace?: WorkspaceKey }) {
   const pathname = usePathname();
   const router = useRouter();
   const [mode, setMode] = React.useState<"login" | "bootstrap">("login");
@@ -5348,6 +5348,10 @@ export default function HomePage({ initialWorkspace = "tickets" }: { initialWork
       ) : null}
     </main>
   );
+}
+
+export default function HomePage() {
+  return <AppShell initialWorkspace="tickets" />;
 }
 
 function FeatureCard(props: { icon: React.ComponentType<{ className?: string }>; title: string; description: string }) {

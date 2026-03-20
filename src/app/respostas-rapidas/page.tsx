@@ -1,7 +1,7 @@
 "use client";
 
-import HomePage from "../page";
+import { AppShell } from "../page";
 
 export default function QuickRepliesPage() {
-  return <HomePage initialWorkspace="quickReplies" />;
+  return <AppShell initialWorkspace="quickReplies" />;
 }

@@ -1,7 +1,7 @@
 "use client";
 
-import HomePage from "../page";
+import { AppShell } from "../page";
 
 export default function ProfilePage() {
-  return <HomePage initialWorkspace="profile" />;
+  return <AppShell initialWorkspace="profile" />;
 }
