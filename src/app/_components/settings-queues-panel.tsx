@@ -11,7 +11,7 @@ type SettingsQueuesPanelProps = {
   onCreate?: () => void;
   table: React.ReactNode;
   editors: React.ReactNode;
-  WorkspaceSection: React.ComponentType<{ title: string; description?: string; children: React.ReactNode }>;
+  WorkspaceSection: React.ComponentType<{ title: string; description: string; children: React.ReactNode }>;
   ModuleToolbar: React.ComponentType<{
     title: string;
     count: number;

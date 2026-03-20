@@ -10,7 +10,7 @@ type ContactsWorkspaceSectionProps = {
   canManageContacts: boolean;
   onAddContact?: () => void;
   table: React.ReactNode;
-  WorkspaceSection: React.ComponentType<{ title: string; description?: string; children: React.ReactNode }>;
+  WorkspaceSection: React.ComponentType<{ title: string; description: string; children: React.ReactNode }>;
   ModuleToolbar: React.ComponentType<{
     title: string;
     count: number;

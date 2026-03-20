@@ -4,7 +4,7 @@ import * as React from "react";
 
 type SettingsBrandingPanelProps = {
   content: React.ReactNode;
-  WorkspaceSection: React.ComponentType<{ title: string; description?: string; children: React.ReactNode }>;
+  WorkspaceSection: React.ComponentType<{ title: string; description: string; children: React.ReactNode }>;
 };
 
 export function SettingsBrandingPanel({
