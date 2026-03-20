@@ -647,7 +647,7 @@ export default function HomePage() {
   const [searchQuery, setSearchQuery] = React.useState("");
   const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "grupos">("atendendo");
   const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
-  const [adminSection, setAdminSection] = React.useState<"instances" | "agents" | "queues">("instances");
+  const [adminSection, setAdminSection] = React.useState<"branding" | "instances" | "agents" | "queues">("instances");
   const [showRail, setShowRail] = React.useState(false);
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
   const [showOnlyUnread, setShowOnlyUnread] = React.useState(false);
@@ -3333,119 +3333,120 @@ export default function HomePage() {
     if (activeWorkspace === "settings") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Identidade visual" description="Personalize a marca principal exibida no topo do painel.">
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_320px]">
-              <div className="rounded-[28px] border border-slate-200 bg-[linear-gradient(135deg,#ffffff,#f5f8fb)] p-5 shadow-sm">
-                <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">Logo superior</div>
-                <div className="mt-3 rounded-[24px] bg-[#1A1C32] p-5 shadow-[0_20px_40px_rgba(26,28,50,0.22)]">
-                  <div className="flex items-center gap-4">
-                    {shouldRenderBrandImage ? (
-                      <div className="flex min-h-[64px] min-w-[200px] items-center px-2 py-2">
-                        <img src={brandLogoPreview ?? undefined} alt="Logo do painel" className="max-h-11 w-auto object-contain" />
-                      </div>
-                    ) : shouldRenderBrandText ? (
-                      <div className="flex min-h-[64px] min-w-[200px] items-center px-2 py-2">
-                        <div className="text-[30px] font-semibold leading-none tracking-tight text-white">{brandTextLabel}</div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-3">
-                        <span className="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10">
-                          <ShieldCheck className="h-5 w-5 text-white" />
-                        </span>
-                        <div>
-                          <div className="text-xl font-semibold tracking-tight text-white">CHATFLOW</div>
-                          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">Marca padrão</div>
-                        </div>
-                      </div>
-                    )}
-
-                    <div>
-                      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">Prévia</div>
-                      <div className="mt-1 text-sm font-semibold text-white">{workspaceTitle}</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="text-sm font-semibold text-[#1A1C32]">Marca do cabeçalho</div>
-                <p className="mt-2 text-sm text-slate-500">Escolha se quer manter a marca padrão, usar uma imagem transparente ou escrever um texto personalizado.</p>
-                <div className="mt-4 grid gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleBrandModeChange("default")}
-                    className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
-                      brandMode === "default"
-                        ? "border-[#1A1C32] bg-[#1A1C32] text-white"
-                        : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    Marca padrão
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleBrandModeChange("image")}
-                    className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
-                      brandMode === "image"
-                        ? "border-[#1A1C32] bg-[#1A1C32] text-white"
-                        : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    Usar imagem
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleBrandModeChange("text")}
-                    className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
-                      brandMode === "text"
-                        ? "border-[#1A1C32] bg-[#1A1C32] text-white"
-                        : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    Usar texto
-                  </button>
-                </div>
-
-                <div className="mt-4 flex flex-col gap-3">
-                  <div>
-                    <div className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Texto personalizado</div>
-                    <input
-                      type="text"
-                      value={brandText}
-                      onChange={(event) => handleBrandTextChange(event.target.value)}
-                      placeholder="Digite o texto do cabeçalho"
-                      className="h-11 w-full rounded-2xl border border-slate-200 px-4 text-sm text-slate-700 outline-none transition focus:border-[#1A1C32]"
-                    />
-                  </div>
-                  <label className="inline-flex h-11 cursor-pointer items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#232643]">
-                    <input type="file" accept="image/*" className="hidden" onChange={(event) => void handleBrandLogoChange(event)} />
-                    {brandLogoPreview ? "Trocar logo" : "Enviar logo"}
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleRemoveBrandLogo}
-                    disabled={!brandLogoPreview}
-                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Remover logo
-                  </button>
-                </div>
-                <div className="mt-4 space-y-2 text-xs text-slate-400">
-                  <div>Formato recomendado: PNG ou SVG convertido em imagem.</div>
-                  <div>Tamanho máximo: 2 MB.</div>
-                  <div>O texto personalizado aparece no lugar da imagem quando o modo "Usar texto" estiver ativo.</div>
-                </div>
-              </div>
-            </div>
-          </WorkspaceSection>
-
           <div className="flex flex-wrap gap-2">
+            <AdminTab label="Identidade visual" active={adminSection === "branding"} onClick={() => setAdminSection("branding")} />
             <AdminTab label="Instâncias" active={adminSection === "instances"} onClick={() => setAdminSection("instances")} />
             <AdminTab label="Agentes" active={adminSection === "agents"} onClick={() => setAdminSection("agents")} />
             <AdminTab label="Filas" active={adminSection === "queues"} onClick={() => setAdminSection("queues")} />
           </div>
 
-          {adminSection === "instances" ? (
+          {adminSection === "branding" ? (
+            <WorkspaceSection title="Identidade visual" description="Personalize a marca principal exibida no topo do painel.">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_320px]">
+                <div className="rounded-[28px] border border-slate-200 bg-[linear-gradient(135deg,#ffffff,#f5f8fb)] p-5 shadow-sm">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">Logo superior</div>
+                  <div className="mt-3 rounded-[24px] bg-[#1A1C32] p-5 shadow-[0_20px_40px_rgba(26,28,50,0.22)]">
+                    <div className="flex items-center gap-4">
+                      {shouldRenderBrandImage ? (
+                        <div className="flex min-h-[64px] min-w-[200px] items-center px-2 py-2">
+                          <img src={brandLogoPreview ?? undefined} alt="Logo do painel" className="max-h-11 w-auto object-contain" />
+                        </div>
+                      ) : shouldRenderBrandText ? (
+                        <div className="flex min-h-[64px] min-w-[200px] items-center px-2 py-2">
+                          <div className="text-[30px] font-semibold leading-none tracking-tight text-white">{brandTextLabel}</div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-3">
+                          <span className="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10">
+                            <ShieldCheck className="h-5 w-5 text-white" />
+                          </span>
+                          <div>
+                            <div className="text-xl font-semibold tracking-tight text-white">CHATFLOW</div>
+                            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">Marca padrão</div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">Prévia</div>
+                        <div className="mt-1 text-sm font-semibold text-white">{workspaceTitle}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="text-sm font-semibold text-[#1A1C32]">Marca do cabeçalho</div>
+                  <p className="mt-2 text-sm text-slate-500">Escolha se quer manter a marca padrão, usar uma imagem transparente ou escrever um texto personalizado.</p>
+                  <div className="mt-4 grid gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleBrandModeChange("default")}
+                      className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
+                        brandMode === "default"
+                          ? "border-[#1A1C32] bg-[#1A1C32] text-white"
+                          : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      Marca padrão
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleBrandModeChange("image")}
+                      className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
+                        brandMode === "image"
+                          ? "border-[#1A1C32] bg-[#1A1C32] text-white"
+                          : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      Usar imagem
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleBrandModeChange("text")}
+                      className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
+                        brandMode === "text"
+                          ? "border-[#1A1C32] bg-[#1A1C32] text-white"
+                          : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      Usar texto
+                    </button>
+                  </div>
+
+                  <div className="mt-4 flex flex-col gap-3">
+                    <div>
+                      <div className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Texto personalizado</div>
+                      <input
+                        type="text"
+                        value={brandText}
+                        onChange={(event) => handleBrandTextChange(event.target.value)}
+                        placeholder="Digite o texto do cabeçalho"
+                        className="h-11 w-full rounded-2xl border border-slate-200 px-4 text-sm text-slate-700 outline-none transition focus:border-[#1A1C32]"
+                      />
+                    </div>
+                    <label className="inline-flex h-11 cursor-pointer items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#232643]">
+                      <input type="file" accept="image/*" className="hidden" onChange={(event) => void handleBrandLogoChange(event)} />
+                      {brandLogoPreview ? "Trocar logo" : "Enviar logo"}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleRemoveBrandLogo}
+                      disabled={!brandLogoPreview}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Remover logo
+                    </button>
+                  </div>
+                  <div className="mt-4 space-y-2 text-xs text-slate-400">
+                    <div>Formato recomendado: PNG ou SVG convertido em imagem.</div>
+                    <div>Tamanho máximo: 2 MB.</div>
+                    <div>O texto personalizado aparece no lugar da imagem quando o modo "Usar texto" estiver ativo.</div>
+                  </div>
+                </div>
+              </div>
+            </WorkspaceSection>
+          ) : adminSection === "instances" ? (
             <WorkspaceSection title="Canais e instâncias" description="Gerencie as conexões com a Evolution em um único lugar dentro das configurações.">
               <ModuleToolbar
                 title="Conexões"
