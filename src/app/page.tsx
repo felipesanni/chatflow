@@ -18,7 +18,9 @@ import {
   FileText,
   Info,
   LayoutGrid,
+  Lock,
   LogIn,
+  Mail,
   Menu,
   MessageSquare,
   Mic,
@@ -676,6 +678,8 @@ export default function HomePage() {
 
   const [loginForm, setLoginForm] = React.useState({ email: "", password: "" });
   const [bootstrapForm, setBootstrapForm] = React.useState({ name: "", email: "", password: "" });
+  const [showLoginPassword, setShowLoginPassword] = React.useState(false);
+  const [showBootstrapPassword, setShowBootstrapPassword] = React.useState(false);
   const [instanceForm, setInstanceForm] = React.useState({
     name: "",
     evolutionInstanceName: "",
@@ -4824,110 +4828,146 @@ export default function HomePage() {
 
   if (!user) {
     return (
-      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,#f7fbff,transparent_32%),linear-gradient(180deg,#edf4f8_0%,#e8f0f5_100%)] px-4 py-6 sm:px-6 sm:py-8">
-        <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-6xl items-center justify-center">
-          <div className="grid w-full max-w-5xl overflow-hidden rounded-[32px] border border-white/70 bg-white/80 shadow-[0_32px_100px_rgba(15,23,42,0.12)] backdrop-blur-xl lg:grid-cols-[0.95fr_1.05fr]">
-            <section className="relative overflow-hidden bg-[#181b34] px-6 py-8 text-white sm:px-8 sm:py-10 lg:px-10 lg:py-12">
-              <div className="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.2),transparent_55%)]" />
-              <div className="absolute -right-24 bottom-[-80px] h-64 w-64 rounded-full bg-emerald-400/10 blur-3xl" />
-
-              <div className="relative flex h-full flex-col">
-                <div className="inline-flex items-center gap-3 text-lg font-semibold tracking-[-0.02em]">
-                  <span className="grid h-11 w-11 place-items-center rounded-2xl border border-white/15 bg-white/10 shadow-[0_10px_30px_rgba(15,23,42,0.25)]">
-                    <ShieldCheck className="h-5 w-5" />
-                  </span>
-                  <div>
-                    <div className="text-[11px] font-bold uppercase tracking-[0.24em] text-white/45">ChatFlow</div>
-                    <div className="text-xl font-semibold text-white">Painel de atendimento</div>
-                  </div>
-                </div>
-
-                <div className="relative mt-12 max-w-md">
-                  <div className="inline-flex rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.22em] text-emerald-200">
-                    Acesso interno
-                  </div>
-                  <h1 className="mt-6 text-4xl font-semibold leading-[1.02] tracking-[-0.05em] text-white sm:text-[52px]">
-                    Acesso rápido,
-                    <br />
-                    operação no foco.
-                  </h1>
-                  <p className="mt-5 max-w-sm text-sm leading-7 text-white/68 sm:text-[15px]">
-                    Entre no painel para assumir atendimentos, acompanhar tickets e manter a equipe em ritmo contínuo.
-                  </p>
-                </div>
-
-                <div className="relative mt-10 grid gap-3 sm:grid-cols-3 lg:mt-auto">
-                  <div className="rounded-[22px] border border-white/10 bg-white/6 px-4 py-4 backdrop-blur-sm">
-                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/45">Tickets</div>
-                    <div className="mt-2 text-sm font-semibold text-white">Fila centralizada</div>
-                  </div>
-                  <div className="rounded-[22px] border border-white/10 bg-white/6 px-4 py-4 backdrop-blur-sm">
-                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/45">Equipe</div>
-                    <div className="mt-2 text-sm font-semibold text-white">Distribuição clara</div>
-                  </div>
-                  <div className="rounded-[22px] border border-white/10 bg-white/6 px-4 py-4 backdrop-blur-sm">
-                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/45">Tempo real</div>
-                    <div className="mt-2 text-sm font-semibold text-white">Rotina mais fluida</div>
-                  </div>
-                </div>
+      <main className="min-h-screen bg-[#eef3f6]">
+        <div className="grid min-h-screen lg:grid-cols-[1.08fr_0.92fr]">
+          <section className="relative hidden overflow-hidden lg:block">
+            <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(245,247,249,0.18),rgba(15,23,42,0.08)),radial-gradient(circle_at_top_left,rgba(255,255,255,0.9),transparent_36%),linear-gradient(135deg,#d9e2e7_0%,#f4f7f8_36%,#d3d9de_100%)]" />
+            <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,0.12),transparent_28%),linear-gradient(180deg,transparent,rgba(255,255,255,0.18))]" />
+            <div className="absolute left-[8%] top-[14%] h-[42%] w-[44%] rounded-[40px] border border-white/40 bg-white/30 shadow-[0_30px_80px_rgba(15,23,42,0.08)] backdrop-blur-[2px]" />
+            <div className="absolute left-[20%] top-[28%] h-[24%] w-[28%] rounded-[18px] border border-slate-200/60 bg-white/70" />
+            <div className="absolute left-[16%] bottom-[16%] flex gap-3">
+              <div className="h-28 w-14 rounded-[18px] border border-slate-300/70 bg-slate-700/80 shadow-[0_18px_45px_rgba(15,23,42,0.2)]" />
+              <div className="h-28 w-14 rounded-[18px] border border-slate-300/70 bg-slate-700/80 shadow-[0_18px_45px_rgba(15,23,42,0.2)]" />
+              <div className="h-28 w-14 rounded-[18px] border border-slate-300/70 bg-slate-700/80 shadow-[0_18px_45px_rgba(15,23,42,0.2)]" />
+              <div className="h-28 w-14 rounded-[18px] border border-slate-300/70 bg-slate-700/80 shadow-[0_18px_45px_rgba(15,23,42,0.2)]" />
+            </div>
+            <div className="absolute right-[12%] top-[12%] max-w-sm rounded-[28px] border border-white/40 bg-white/52 p-6 text-slate-700 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur-md">
+              <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">Ambiente operacional</div>
+              <div className="mt-4 text-3xl font-semibold leading-[1.02] tracking-[-0.05em] text-slate-900">
+                Acesso institucional com foco total no atendimento.
               </div>
-            </section>
+              <p className="mt-4 text-sm leading-7 text-slate-600">
+                Uma entrada mais sóbria, limpa e alinhada à rotina da equipe, sem excesso de informação antes do login.
+              </p>
+            </div>
+          </section>
 
-            <section className="flex items-center bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(246,250,252,0.95))] px-5 py-6 sm:px-8 sm:py-8 lg:px-10 lg:py-12">
-              <div className="mx-auto w-full max-w-md">
-                <div className="rounded-[30px] border border-slate-200/80 bg-white/92 p-6 shadow-[0_24px_60px_rgba(15,23,42,0.08)] sm:p-8">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-slate-400">Acesso</div>
-                      <h2 className="mt-3 text-[34px] font-semibold leading-none tracking-[-0.05em] text-slate-950">
-                        {mode === "login" ? "Entrar" : "Primeiro acesso"}
-                      </h2>
-                      <p className="mt-3 text-sm leading-6 text-slate-500">
-                        {mode === "login"
-                          ? "Use seu e-mail corporativo e a senha cadastrada."
-                          : "Cadastre o primeiro administrador para liberar o painel."}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      aria-label={mode === "login" ? "Abrir primeiro acesso" : "Voltar para login"}
-                      onClick={() => setMode((current) => (current === "login" ? "bootstrap" : "login"))}
-                      className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-white"
-                    >
-                      {mode === "login" ? "Primeiro acesso" : "Voltar"}
-                    </button>
-                  </div>
-
-                  {mode === "login" ? (
-                    <form onSubmit={handleLogin} className="mt-8 space-y-4">
-                      <AuthField label="E-mail" value={loginForm.email} onChange={(value) => setLoginForm((current) => ({ ...current, email: value }))} placeholder="voce@empresa.com.br" />
-                      <AuthField label="Senha" type="password" value={loginForm.password} onChange={(value) => setLoginForm((current) => ({ ...current, password: value }))} placeholder="Digite sua senha" />
-                      <button type="submit" className="flex h-14 w-full items-center justify-center gap-2 rounded-[20px] bg-[#18c37c] px-4 text-base font-semibold text-slate-950 transition hover:bg-[#12b06f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2">
-                        <LogIn className="h-4 w-4" />
-                        Entrar no painel
-                      </button>
-                    </form>
-                  ) : (
-                    <form onSubmit={handleBootstrap} className="mt-8 space-y-4">
-                      <AuthField label="Nome" value={bootstrapForm.name} onChange={(value) => setBootstrapForm((current) => ({ ...current, name: value }))} placeholder="Administrador principal" />
-                      <AuthField label="E-mail" value={bootstrapForm.email} onChange={(value) => setBootstrapForm((current) => ({ ...current, email: value }))} placeholder="admin@empresa.com.br" />
-                      <AuthField label="Senha" type="password" value={bootstrapForm.password} onChange={(value) => setBootstrapForm((current) => ({ ...current, password: value }))} placeholder="Mínimo de 8 caracteres" />
-                      <button type="submit" className="flex h-14 w-full items-center justify-center gap-2 rounded-[20px] bg-[#18c37c] px-4 text-base font-semibold text-slate-950 transition hover:bg-[#12b06f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2">
-                        <ShieldCheck className="h-4 w-4" />
-                        Criar administrador
-                      </button>
-                    </form>
-                  )}
-
-                  {(authError || panelMessage) && (
-                    <div className="mt-5 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                      {authError ?? panelMessage}
-                    </div>
-                  )}
-                </div>
+          <section className="flex min-h-screen items-center justify-center px-5 py-10 sm:px-8">
+            <div className="w-full max-w-[460px] rounded-[30px] border border-slate-200/80 bg-white px-6 py-8 shadow-[0_30px_90px_rgba(15,23,42,0.1)] sm:px-8 sm:py-10">
+              <div className="flex flex-col items-center text-center">
+                {shouldRenderBrandImage ? (
+                  <img src={brandLogoPreview ?? undefined} alt="Logo do painel" className="max-h-16 w-auto object-contain" />
+                ) : shouldRenderBrandText ? (
+                  <div className="text-[34px] font-semibold tracking-[-0.05em] text-slate-900">{brandTextLabel}</div>
+                ) : (
+                  <>
+                    <span className="grid h-14 w-14 place-items-center rounded-[20px] bg-emerald-50 text-emerald-600">
+                      <ShieldCheck className="h-7 w-7" />
+                    </span>
+                    <div className="mt-4 text-[28px] font-semibold tracking-[-0.05em] text-slate-900">ChatFlow</div>
+                  </>
+                )}
+                <p className="mt-4 max-w-xs text-sm leading-6 text-slate-500">
+                  {mode === "login"
+                    ? "Entre com sua conta para acessar o painel de atendimento."
+                    : "Crie a conta administrativa inicial para liberar o acesso ao sistema."}
+                </p>
               </div>
-            </section>
-          </div>
+
+              {mode === "login" ? (
+                <form onSubmit={handleLogin} className="mt-8 space-y-5">
+                  <AuthField
+                    label="E-mail"
+                    value={loginForm.email}
+                    onChange={(value) => setLoginForm((current) => ({ ...current, email: value }))}
+                    placeholder="voce@empresa.com.br"
+                    leadingIcon={Mail}
+                    autoComplete="email"
+                  />
+                  <AuthField
+                    label="Senha"
+                    type={showLoginPassword ? "text" : "password"}
+                    value={loginForm.password}
+                    onChange={(value) => setLoginForm((current) => ({ ...current, password: value }))}
+                    placeholder="Digite sua senha"
+                    leadingIcon={Lock}
+                    autoComplete="current-password"
+                    trailing={
+                      <button
+                        type="button"
+                        onClick={() => setShowLoginPassword((current) => !current)}
+                        aria-label={showLoginPassword ? "Ocultar senha" : "Mostrar senha"}
+                        className="text-slate-400 transition hover:text-slate-600"
+                      >
+                        {showLoginPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                      </button>
+                    }
+                  />
+                  <button type="submit" className="flex h-14 w-full items-center justify-center gap-2 rounded-[18px] bg-[#18b663] px-4 text-lg font-semibold text-white shadow-[0_16px_30px_rgba(24,182,99,0.22)] transition hover:bg-[#14a85a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2">
+                    Entrar
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={handleBootstrap} className="mt-8 space-y-5">
+                  <AuthField
+                    label="Nome"
+                    value={bootstrapForm.name}
+                    onChange={(value) => setBootstrapForm((current) => ({ ...current, name: value }))}
+                    placeholder="Administrador principal"
+                    leadingIcon={User}
+                    autoComplete="name"
+                  />
+                  <AuthField
+                    label="E-mail"
+                    value={bootstrapForm.email}
+                    onChange={(value) => setBootstrapForm((current) => ({ ...current, email: value }))}
+                    placeholder="admin@empresa.com.br"
+                    leadingIcon={Mail}
+                    autoComplete="email"
+                  />
+                  <AuthField
+                    label="Senha"
+                    type={showBootstrapPassword ? "text" : "password"}
+                    value={bootstrapForm.password}
+                    onChange={(value) => setBootstrapForm((current) => ({ ...current, password: value }))}
+                    placeholder="Mínimo de 8 caracteres"
+                    leadingIcon={Lock}
+                    autoComplete="new-password"
+                    trailing={
+                      <button
+                        type="button"
+                        onClick={() => setShowBootstrapPassword((current) => !current)}
+                        aria-label={showBootstrapPassword ? "Ocultar senha" : "Mostrar senha"}
+                        className="text-slate-400 transition hover:text-slate-600"
+                      >
+                        {showBootstrapPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                      </button>
+                    }
+                  />
+                  <button type="submit" className="flex h-14 w-full items-center justify-center gap-2 rounded-[18px] bg-[#18b663] px-4 text-lg font-semibold text-white shadow-[0_16px_30px_rgba(24,182,99,0.22)] transition hover:bg-[#14a85a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2">
+                    Criar administrador
+                  </button>
+                </form>
+              )}
+
+              {(authError || panelMessage) && (
+                <div className="mt-5 rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  {authError ?? panelMessage}
+                </div>
+              )}
+
+              <div className="mt-6 text-center">
+                <button
+                  type="button"
+                  aria-label={mode === "login" ? "Abrir primeiro acesso" : "Voltar para login"}
+                  onClick={() => setMode((current) => (current === "login" ? "bootstrap" : "login"))}
+                  className="text-sm font-medium text-slate-500 transition hover:text-slate-800"
+                >
+                  {mode === "login" ? "Primeiro acesso" : "Voltar para login"}
+                </button>
+              </div>
+            </div>
+          </section>
         </div>
       </main>
     );
@@ -5318,17 +5358,33 @@ export default function HomePage() {
   );
 }
 
-function AuthField(props: { label: string; value: string; onChange: (value: string) => void; type?: string; placeholder?: string }) {
+function AuthField(props: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+  placeholder?: string;
+  autoComplete?: string;
+  leadingIcon?: React.ComponentType<{ className?: string }>;
+  trailing?: React.ReactNode;
+}) {
+  const LeadingIcon = props.leadingIcon;
+
   return (
     <label className="block text-sm font-medium text-slate-600">
-      {props.label}
-      <input
-        type={props.type ?? "text"}
-        value={props.value}
-        onChange={(event) => props.onChange(event.target.value)}
-        placeholder={props.placeholder}
-        className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:bg-white"
-      />
+      <span className="mb-2 block px-1 text-sm text-slate-500">{props.label}</span>
+      <div className="flex h-14 items-center gap-3 rounded-[18px] border border-slate-200 bg-white px-4 transition focus-within:border-slate-300 focus-within:shadow-[0_0_0_4px_rgba(148,163,184,0.12)]">
+        {LeadingIcon ? <LeadingIcon className="h-5 w-5 shrink-0 text-slate-400" /> : null}
+        <input
+          type={props.type ?? "text"}
+          value={props.value}
+          onChange={(event) => props.onChange(event.target.value)}
+          placeholder={props.placeholder}
+          autoComplete={props.autoComplete}
+          className="h-full w-full border-0 bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-300"
+        />
+        {props.trailing ? <div className="shrink-0">{props.trailing}</div> : null}
+      </div>
     </label>
   );
 }
