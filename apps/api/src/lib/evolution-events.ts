@@ -422,6 +422,9 @@ function resolveInstanceSnapshot(event: string, payload: Prisma.InputJsonValue |
 
   if (event === 'QRCODE_UPDATED') {
     status = 'pairing';
+  } else if (['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_EDITED', 'MESSAGES_DELETE', 'SEND_MESSAGE'].includes(event)) {
+    // If the instance is exchanging message events, the WhatsApp session is alive.
+    status = 'connected';
   } else if (['open', 'connected'].includes(normalizedState)) {
     status = 'connected';
   } else if (['close', 'closed', 'disconnected', 'disconnect'].includes(normalizedState)) {
