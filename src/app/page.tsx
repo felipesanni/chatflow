@@ -1512,28 +1512,13 @@ export default function HomePage() {
   }
 
   async function handleLogout() {
-    try {
-      await apiFetch("/auth/logout", { method: "POST" });
-    } catch (error) {
-      setPanelMessage(error instanceof Error ? error.message : "Falha ao encerrar a sessão.");
+    if (typeof window !== "undefined") {
+      window.location.assign("/logout");
       return;
     }
+
     setUser(null);
     setMode("login");
-    setLoadingAuth(false);
-    setMessages([]);
-    setTickets([]);
-    setInstances([]);
-    setAgents([]);
-    setQueues([]);
-    setCustomers([]);
-    setQuickReplies([]);
-    setSelectedTicketId(null);
-    setActiveWorkspace("tickets");
-    setUserMenuOpen(false);
-    setAuthError(null);
-    setPanelMessage("Sessão encerrada.");
-    await refreshAuth();
   }
 
   async function handleProfileAvatarChange(event: React.ChangeEvent<HTMLInputElement>) {
