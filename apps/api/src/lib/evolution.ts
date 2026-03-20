@@ -420,14 +420,18 @@ function findMessageKeyCandidate(value: unknown, depth = 0, seen = new WeakSet<o
 }
 
 function resolveMessageContent(message: EvolutionMessage | null, payload?: Record<string, unknown>): ResolvedEvolutionContent {
-  const contentCandidates = [
+  const directContentCandidates = [
     pickObject(message?.message),
     pickObject(message?.update?.message),
+  ].filter((candidate): candidate is Record<string, unknown> => Boolean(candidate));
+
+  const editCandidates = [
+    ...directContentCandidates,
     pickObject(payload?.data),
     pickObject(payload),
   ].filter((candidate): candidate is Record<string, unknown> => Boolean(candidate));
 
-  for (const content of contentCandidates) {
+  for (const content of editCandidates) {
     const editedProtocolMessage = findEditedProtocolMessage(content);
 
     if (editedProtocolMessage) {
@@ -437,7 +441,9 @@ function resolveMessageContent(message: EvolutionMessage | null, payload?: Recor
         targetKey: editedProtocolMessage.targetKey,
       };
     }
+  }
 
+  for (const content of directContentCandidates) {
     const unwrapped = unwrapMessageContainer(content);
     if (unwrapped) {
       return {
