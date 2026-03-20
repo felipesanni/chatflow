@@ -50,6 +50,10 @@ export function normalizeTicketIdentityPhone(value: string | null | undefined) {
     return null;
   }
 
+  if (!digits.startsWith('55')) {
+    return null;
+  }
+
   if (digits.startsWith('0')) {
     return null;
   }

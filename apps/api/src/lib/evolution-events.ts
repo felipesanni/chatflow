@@ -9,12 +9,23 @@ import {
   buildActiveTicketIdentityWhere,
   buildTicketAliasCandidates,
   buildTicketChatIdentity,
+  normalizeTicketIdentityPhone,
   withScopedAdvisoryLock,
   withTicketIdentityLock,
 } from './ticket-identity.js';
 
 const env = loadEnv();
 const GENERIC_GROUP_NAME = 'Grupo WhatsApp';
+const METADATA_ONLY_EVENTS = new Set([
+  'SEND_MESSAGE',
+  'CONTACTS_UPSERT',
+  'CONTACTS_UPDATE',
+  'CHATS_UPSERT',
+  'CHATS_UPDATE',
+  'GROUPS_UPSERT',
+  'GROUP_UPDATE',
+  'GROUP_PARTICIPANTS_UPDATE',
+]);
 
 function hasUsableGroupName(value: string | null | undefined) {
   if (typeof value !== 'string') {
@@ -101,6 +112,123 @@ async function persistTicketAliases(
       },
     });
   }
+}
+
+function pickObject(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function pickFirstNonEmptyString(values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+function collectStringCandidates(value: unknown, depth = 0, seen = new WeakSet<object>()): string[] {
+  if (depth > 6) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectStringCandidates(item, depth + 1, seen));
+  }
+
+  const record = pickObject(value);
+  if (!record) {
+    return typeof value === 'string' && value.trim().length > 0 ? [value.trim()] : [];
+  }
+
+  if (seen.has(record)) {
+    return [];
+  }
+
+  seen.add(record);
+  return Object.values(record).flatMap((child) => collectStringCandidates(child, depth + 1, seen));
+}
+
+function extractMetadataAliases(payload: Record<string, unknown>, parsed: ReturnType<typeof parseEvolutionPayload>) {
+  const data = pickObject(payload.data);
+  const rawCandidates = [
+    parsed.remoteJid,
+    ...(parsed.chatAliases ?? []),
+    data?.remoteJid,
+    data?.jid,
+    data?.id,
+    data?.chatId,
+    data?.groupId,
+    data?.conversation,
+    data?.participant,
+    data?.participantJid,
+    data?.participantLid,
+    data?.sender,
+    data?.senderJid,
+    data?.senderLid,
+    data?.owner,
+    data?.ownerJid,
+    data?.ownerLid,
+    data?.from,
+    data?.to,
+    pickObject(data?.key)?.remoteJid,
+    pickObject(data?.key)?.participant,
+    ...collectStringCandidates(data),
+  ];
+
+  return Array.from(new Set(
+    rawCandidates
+      .filter((value): value is string => typeof value === 'string')
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0 && (value.includes('@') || value.startsWith('55'))),
+  ));
+}
+
+function extractMetadataDisplayName(payload: Record<string, unknown>, parsed: ReturnType<typeof parseEvolutionPayload>) {
+  const data = pickObject(payload.data);
+
+  return pickFirstNonEmptyString([
+    parsed.groupName,
+    parsed.pushName,
+    parsed.verifiedBizName,
+    data?.subject,
+    data?.groupSubject,
+    data?.groupName,
+    data?.formattedTitle,
+    data?.title,
+    data?.name,
+    data?.notify,
+    pickObject(data?.groupMetadata)?.subject,
+    pickObject(data?.groupMetadata)?.name,
+    pickObject(data?.groupInfo)?.subject,
+    pickObject(data?.groupInfo)?.name,
+    pickObject(data?.contact)?.name,
+    pickObject(data?.contact)?.pushName,
+    pickObject(data?.contact)?.notify,
+    pickObject(data?.sender)?.name,
+    pickObject(data?.sender)?.pushName,
+    pickObject(data?.sender)?.notify,
+  ]);
+}
+
+function resolveMetadataPhone(aliases: string[], parsedPhone: string | null) {
+  if (parsedPhone) {
+    return parsedPhone;
+  }
+
+  for (const alias of aliases) {
+    const [localPart = ''] = alias.split('@');
+    const baseLocalPart = localPart.split(':')[0]?.trim() ?? '';
+    const normalized = normalizeTicketIdentityPhone(baseLocalPart);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
 }
 
 function pickHeaderSecret(value: unknown) {
@@ -406,6 +534,91 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
   try {
     const decryptedApiKey = decryptSecret(instance.apiKeyEncrypted, env.SESSION_SECRET);
 
+    if (METADATA_ONLY_EVENTS.has(parsed.event)) {
+      const metadataAliases = extractMetadataAliases(params.payload, parsed);
+      const metadataPhone = resolveMetadataPhone(metadataAliases, parsed.phone);
+      const metadataIsGroup = metadataAliases.some((alias) => alias.includes('@g.us'));
+      const metadataRemoteJid = parsed.remoteJid
+        ?? metadataAliases.find((alias) => alias.includes('@g.us'))
+        ?? metadataAliases.find((alias) => alias.endsWith('@s.whatsapp.net'))
+        ?? metadataAliases.find((alias) => alias.endsWith('@c.us'))
+        ?? metadataAliases.find((alias) => alias.includes('@'))
+        ?? null;
+      const metadataDisplayName = extractMetadataDisplayName(params.payload, parsed);
+
+      if (metadataRemoteJid || metadataPhone || metadataAliases.length > 0) {
+        const metadataIdentity = buildTicketChatIdentity({
+          remoteJid: metadataRemoteJid,
+          phone: metadataPhone,
+          isGroup: metadataIsGroup,
+          aliases: metadataAliases,
+        });
+        const metadataCanonicalChatId = metadataIdentity.canonicalChatId ?? metadataRemoteJid;
+        const canPromoteMetadataChatId =
+          metadataIsGroup
+          || Boolean(metadataIdentity.contactId)
+          || !isOpaqueDirectChatJid(metadataCanonicalChatId);
+        const aliasCandidates = buildTicketAliasCandidates({
+          remoteJid: metadataRemoteJid,
+          canonicalChatId: metadataCanonicalChatId,
+          contactId: metadataIdentity.contactId,
+          aliases: metadataAliases,
+        });
+
+        const aliasedTicket = await findAliasedActiveTicket(app.prisma, {
+          whatsappInstanceId: instance.id,
+          aliases: aliasCandidates,
+        });
+        const existingTicket = aliasedTicket ?? (metadataCanonicalChatId
+          ? await app.prisma.ticket.findFirst({
+              where: buildActiveTicketIdentityWhere(instance.id, metadataIdentity),
+              orderBy: {
+                updatedAt: 'desc',
+              },
+            })
+          : null);
+
+        if (existingTicket) {
+          await app.prisma.$transaction(async (tx) => {
+            await persistTicketAliases(tx, {
+              whatsappInstanceId: instance.id,
+              ticketId: existingTicket.id,
+              aliases: aliasCandidates,
+            });
+
+            if (metadataDisplayName && (!metadataIsGroup || hasUsableGroupName(metadataDisplayName))) {
+              await tx.ticket.update({
+                where: { id: existingTicket.id },
+                data: {
+                  customerNameSnapshot: metadataDisplayName,
+                  externalChatId: canPromoteMetadataChatId ? (metadataCanonicalChatId ?? existingTicket.externalChatId) : existingTicket.externalChatId,
+                  externalContactId: metadataIdentity.contactId ?? existingTicket.externalContactId,
+                  updatedAt: new Date(),
+                },
+              });
+            } else if (metadataIdentity.contactId && metadataIdentity.contactId !== existingTicket.externalContactId) {
+              await tx.ticket.update({
+                where: { id: existingTicket.id },
+                data: {
+                  externalContactId: metadataIdentity.contactId,
+                  updatedAt: new Date(),
+                },
+              });
+            }
+          });
+        }
+      }
+
+      await finalize(202);
+      return {
+        statusCode: 202,
+        body: {
+          message: 'Evento de metadados processado.',
+          event: parsed.event,
+        },
+      };
+    }
+
     if (isEmptyPlaceholderUpdate(parsed)) {
       app.log.info({
         action: 'evolution_empty_update_ignored',
@@ -680,26 +893,26 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         });
 
     if (
-      parsed.fromMe
-      && !preMatchedOutboundMessage
+      !preMatchedOutboundMessage
       && !aliasedTicket
       && !parsed.isGroup
       && !parsed.phone
       && isOpaqueDirectChatJid(parsed.remoteJid)
     ) {
       app.log.warn({
-        action: 'evolution_outbound_opaque_chat_ignored',
+        action: parsed.fromMe ? 'evolution_outbound_opaque_chat_ignored' : 'evolution_inbound_opaque_chat_ignored',
         event: parsed.event,
         instanceId: instance.id,
         externalMessageId: parsed.externalMessageId,
         remoteJid: parsed.remoteJid,
-      }, 'Evento outbound com identificador opaco ignorado para evitar criacao de ticket duplicado.');
+        direction: parsed.fromMe ? 'outbound' : 'inbound',
+      }, 'Evento com identificador opaco ignorado para evitar criacao ou roteamento incorreto de ticket.');
 
-      await finalize(202, 'Evento outbound com identificador opaco ignorado.');
+      await finalize(202, 'Evento com identificador opaco ignorado.');
       return {
         statusCode: 202,
         body: {
-          message: 'Evento outbound com identificador opaco ignorado.',
+          message: 'Evento com identificador opaco ignorado.',
           event: parsed.event,
           externalMessageId: parsed.externalMessageId,
         },

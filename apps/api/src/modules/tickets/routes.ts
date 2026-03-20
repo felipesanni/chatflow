@@ -77,7 +77,13 @@ const closeTicketBodySchema = z.preprocess((value) => {
 }));
 
 function normalizePhone(value: string) {
-  return value.replace(/\D+/g, '');
+  const digits = value.replace(/\D+/g, '');
+
+  if (digits.length === 10 || digits.length === 11) {
+    return `55${digits}`;
+  }
+
+  return digits;
 }
 
 function pickMergedStatus(statuses: TicketStatus[]) {
@@ -454,7 +460,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     const body = createTicketBodySchema.parse(request.body ?? {});
     const normalizedPhone = normalizePhone(body.phone);
 
-    if (!normalizedPhone) {
+    if (!normalizedPhone || !normalizedPhone.startsWith('55')) {
       return reply.badRequest('Informe um telefone valido.');
     }
 
