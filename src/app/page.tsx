@@ -639,7 +639,7 @@ function traduzirStatusInstancia(status: string) {
   return status;
 }
 
-export function AppShell({ initialWorkspace = "tickets" }: { initialWorkspace?: WorkspaceKey }) {
+export default function HomePage() {
   const pathname = usePathname();
   const router = useRouter();
   const [mode, setMode] = React.useState<"login" | "bootstrap">("login");
@@ -681,7 +681,7 @@ export function AppShell({ initialWorkspace = "tickets" }: { initialWorkspace?: 
   const [composerInternalNoteMode, setComposerInternalNoteMode] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
   const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "grupos">("atendendo");
-  const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings">(initialWorkspace);
+  const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
   const [customerModalOriginWorkspace, setCustomerModalOriginWorkspace] = React.useState<WorkspaceKey | null>(null);
   const [adminSection, setAdminSection] = React.useState<"branding" | "instances" | "agents" | "queues">("instances");
   const [showRail, setShowRail] = React.useState(false);
@@ -5348,10 +5348,6 @@ export function AppShell({ initialWorkspace = "tickets" }: { initialWorkspace?: 
       ) : null}
     </main>
   );
-}
-
-export default function HomePage() {
-  return <AppShell initialWorkspace="tickets" />;
 }
 
 function FeatureCard(props: { icon: React.ComponentType<{ className?: string }>; title: string; description: string }) {

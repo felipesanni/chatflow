@@ -1,7 +1,7 @@
 "use client";
 
-import { AppShell } from "../page";
+import HomePage from "../page";
 
 export default function ActivityPage() {
-  return <AppShell initialWorkspace="activity" />;
+  return <HomePage />;
 }

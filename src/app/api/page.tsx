@@ -1,7 +1,7 @@
 "use client";
 
-import { AppShell } from "../page";
+import HomePage from "../page";
 
 export default function ApiPage() {
-  return <AppShell initialWorkspace="api" />;
+  return <HomePage />;
 }

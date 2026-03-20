@@ -1,7 +1,7 @@
 "use client";
 
-import { AppShell } from "../page";
+import HomePage from "../page";
 
 export default function CalendarPage() {
-  return <AppShell initialWorkspace="calendar" />;
+  return <HomePage />;
 }
