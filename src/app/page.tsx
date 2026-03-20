@@ -1513,7 +1513,15 @@ export default function HomePage() {
 
   async function handleLogout() {
     if (typeof window !== "undefined") {
-      window.location.assign("/logout");
+      try {
+        await fetch("/logout", {
+          method: "POST",
+          credentials: "include",
+          cache: "no-store",
+        });
+      } finally {
+        window.location.replace("/");
+      }
       return;
     }
 

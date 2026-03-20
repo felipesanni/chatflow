@@ -15,16 +15,16 @@ function buildExpiredSessionCookie(isProduction: boolean) {
   };
 }
 
-function clearSessionAndRedirect(request: NextRequest) {
-  const response = NextResponse.redirect(new URL('/', request.url));
+function clearSessionResponse() {
+  const response = new NextResponse(null, { status: 204 });
   response.cookies.set(buildExpiredSessionCookie(process.env.NODE_ENV === 'production'));
   return response;
 }
 
-export async function GET(request: NextRequest) {
-  return clearSessionAndRedirect(request);
+export async function GET(_request: NextRequest) {
+  return clearSessionResponse();
 }
 
-export async function POST(request: NextRequest) {
-  return clearSessionAndRedirect(request);
+export async function POST(_request: NextRequest) {
+  return clearSessionResponse();
 }
