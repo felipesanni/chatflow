@@ -307,6 +307,43 @@ function looksLikeMessageKey(value: unknown) {
   );
 }
 
+function buildSyntheticMessageKey(value: unknown) {
+  const record = pickObject(value);
+  if (!record) {
+    return null;
+  }
+
+  const id = pickFirstNonEmptyString([
+    record.stanzaId,
+    record.messageId,
+    record.originalMessageId,
+    record.targetMessageId,
+  ]);
+  const remoteJid = pickFirstNonEmptyString([
+    record.remoteJid,
+    record.chatId,
+    record.jid,
+    record.conversation,
+  ]);
+  const participant = pickFirstNonEmptyString([
+    record.participant,
+    record.senderJid,
+    record.author,
+  ]);
+  const fromMe = typeof record.fromMe === 'boolean' ? record.fromMe : undefined;
+
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    ...(remoteJid ? { remoteJid } : {}),
+    ...(participant ? { participant } : {}),
+    ...(typeof fromMe === 'boolean' ? { fromMe } : {}),
+  } as Record<string, unknown>;
+}
+
 function findMessageKeyCandidate(value: unknown, depth = 0, seen = new WeakSet<object>()): Record<string, unknown> | null {
   if (depth > 8) {
     return null;
@@ -334,18 +371,20 @@ function findMessageKeyCandidate(value: unknown, depth = 0, seen = new WeakSet<o
 
   seen.add(record);
 
-  if (looksLikeMessageKey(record)) {
-    return record;
-  }
-
   const prioritizedCandidates = [
     record.key,
     record.messageKey,
+    record.contextInfo,
+    record.messageContextInfo,
     pickObject(record.message)?.key,
     pickObject(record.update)?.key,
     pickObject(record.protocolMessage)?.key,
     pickObject(record.reactionMessage)?.key,
     pickObject(record.editedMessage)?.key,
+    pickObject(record.extendedTextMessage)?.contextInfo,
+    pickObject(record.imageMessage)?.contextInfo,
+    pickObject(record.videoMessage)?.contextInfo,
+    pickObject(record.documentMessage)?.contextInfo,
     record.originalMessageKey,
     record.originalKey,
     record.targetKey,
@@ -366,6 +405,15 @@ function findMessageKeyCandidate(value: unknown, depth = 0, seen = new WeakSet<o
     if (nested) {
       return nested;
     }
+  }
+
+  const syntheticKey = buildSyntheticMessageKey(record);
+  if (syntheticKey) {
+    return syntheticKey;
+  }
+
+  if (looksLikeMessageKey(record)) {
+    return record;
   }
 
   return null;
