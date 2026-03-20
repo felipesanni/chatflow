@@ -15,7 +15,7 @@ type SettingsAgentsPanelProps = {
     title: string;
     count: number;
     searchValue: string;
-    searchPlaceholder?: string;
+    searchPlaceholder: string;
     onSearchChange: (value: string) => void;
     actionLabel?: string;
     onActionClick?: () => void;
