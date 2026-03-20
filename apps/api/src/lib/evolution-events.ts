@@ -547,6 +547,8 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
       };
     }
 
+    const resolvedRemoteJid = parsed.remoteJid;
+
     const profilePictureResponse = parsed.isGroup || !parsed.remoteJid
       ? null
       : await fetchEvolutionProfilePictureUrl({
@@ -568,15 +570,16 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         });
     const customerAvatarUrl = fetchedCustomerAvatarUrl ?? customer?.avatarUrl ?? null;
     const chatIdentity = buildTicketChatIdentity({
-      remoteJid: parsed.remoteJid,
+      remoteJid: resolvedRemoteJid,
       phone: parsed.phone,
       isGroup: parsed.isGroup,
       aliases: parsed.chatAliases,
     });
+    const resolvedExternalChatId = chatIdentity.canonicalChatId ?? resolvedRemoteJid;
 
     const ticket = await withTicketIdentityLock(app.prisma, {
       whatsappInstanceId: instance.id,
-      canonicalChatId: chatIdentity.canonicalChatId ?? parsed.remoteJid,
+      canonicalChatId: resolvedExternalChatId,
     }, async (tx) => {
       const existingTicket = await tx.ticket.findFirst({
         where: buildActiveTicketIdentityWhere(instance.id, chatIdentity),
@@ -592,7 +595,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
             customerId: customer?.id,
             whatsappInstanceId: instance.id,
             currentQueueId: instance.defaultQueueId ?? null,
-            externalChatId: chatIdentity.canonicalChatId ?? parsed.remoteJid,
+            externalChatId: resolvedExternalChatId,
             externalContactId: chatIdentity.contactId,
             customerNameSnapshot: resolveCustomerDisplayName(parsed, customer?.name),
             customerAvatarUrl,
