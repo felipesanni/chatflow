@@ -12,7 +12,6 @@ import {
   ChevronDown,
   Clock,
   Code2,
-  Database,
   Eye,
   EyeOff,
   FileAudio,
@@ -4825,78 +4824,110 @@ export default function HomePage() {
 
   if (!user) {
     return (
-      <main className="min-h-screen bg-[#ebf1f4] px-6 py-8">
-        <div className="mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.1)] lg:grid-cols-[1.1fr_0.9fr]">
-          <section className="bg-[#1A1C32] px-8 py-10 text-white lg:px-12 lg:py-12">
-            <div className="inline-flex items-center gap-3 text-xl font-semibold">
-              <span className="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10">
-                <ShieldCheck className="h-5 w-5" />
-              </span>
-              CHATFLOW
-            </div>
-            <div className="mt-12 max-w-xl space-y-5">
-              <p className="text-xs font-bold uppercase tracking-[0.28em] text-white/60">Painel interno</p>
-              <h1 className="text-5xl font-semibold leading-[1.02] tracking-[-0.04em]">
-                Atendimento com cara de operação real.
-              </h1>
-              <p className="text-base leading-8 text-white/72">
-                Backend próprio, PostgreSQL e Evolution com uma interface mais próxima do sistema original, mas sem voltar Firebase nem dependências antigas.
-              </p>
-            </div>
-            <div className="mt-12 grid gap-4 md:grid-cols-3">
-              <FeatureCard icon={Database} title="Banco novo" description="Tickets, mensagens e filas agora vivem no PostgreSQL." />
-              <FeatureCard icon={Zap} title="Evolution" description="Webhook e envio centralizados pela API própria." />
-              <FeatureCard icon={Workflow} title="Operação" description="Layout administrativo inspirado no sistema anterior." />
-            </div>
-          </section>
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,#f7fbff,transparent_32%),linear-gradient(180deg,#edf4f8_0%,#e8f0f5_100%)] px-4 py-6 sm:px-6 sm:py-8">
+        <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-6xl items-center justify-center">
+          <div className="grid w-full max-w-5xl overflow-hidden rounded-[32px] border border-white/70 bg-white/80 shadow-[0_32px_100px_rgba(15,23,42,0.12)] backdrop-blur-xl lg:grid-cols-[0.95fr_1.05fr]">
+            <section className="relative overflow-hidden bg-[#181b34] px-6 py-8 text-white sm:px-8 sm:py-10 lg:px-10 lg:py-12">
+              <div className="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.2),transparent_55%)]" />
+              <div className="absolute -right-24 bottom-[-80px] h-64 w-64 rounded-full bg-emerald-400/10 blur-3xl" />
 
-          <section className="flex items-center bg-[#f7fafc] p-6 lg:p-10">
-            <div className="w-full rounded-[28px] border border-slate-200 bg-white p-7 shadow-sm lg:p-8">
-              <div className="mb-8 flex items-start justify-between gap-4">
-                <div>
-                  <div className="text-xs font-bold uppercase tracking-[0.22em] text-slate-400">Acesso</div>
-                  <h2 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-slate-900">
-                    {mode === "login" ? "Entrar no painel" : "Criar administrador inicial"}
-                  </h2>
+              <div className="relative flex h-full flex-col">
+                <div className="inline-flex items-center gap-3 text-lg font-semibold tracking-[-0.02em]">
+                  <span className="grid h-11 w-11 place-items-center rounded-2xl border border-white/15 bg-white/10 shadow-[0_10px_30px_rgba(15,23,42,0.25)]">
+                    <ShieldCheck className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.24em] text-white/45">ChatFlow</div>
+                    <div className="text-xl font-semibold text-white">Painel de atendimento</div>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  aria-label={mode === "login" ? "Abrir primeiro acesso" : "Voltar para login"}
-                  onClick={() => setMode((current) => (current === "login" ? "bootstrap" : "login"))}
-                  className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-white"
-                >
-                  {mode === "login" ? "Primeiro acesso" : "Voltar"}
-                </button>
+
+                <div className="relative mt-12 max-w-md">
+                  <div className="inline-flex rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.22em] text-emerald-200">
+                    Acesso interno
+                  </div>
+                  <h1 className="mt-6 text-4xl font-semibold leading-[1.02] tracking-[-0.05em] text-white sm:text-[52px]">
+                    Acesso rápido,
+                    <br />
+                    operação no foco.
+                  </h1>
+                  <p className="mt-5 max-w-sm text-sm leading-7 text-white/68 sm:text-[15px]">
+                    Entre no painel para assumir atendimentos, acompanhar tickets e manter a equipe em ritmo contínuo.
+                  </p>
+                </div>
+
+                <div className="relative mt-10 grid gap-3 sm:grid-cols-3 lg:mt-auto">
+                  <div className="rounded-[22px] border border-white/10 bg-white/6 px-4 py-4 backdrop-blur-sm">
+                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/45">Tickets</div>
+                    <div className="mt-2 text-sm font-semibold text-white">Fila centralizada</div>
+                  </div>
+                  <div className="rounded-[22px] border border-white/10 bg-white/6 px-4 py-4 backdrop-blur-sm">
+                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/45">Equipe</div>
+                    <div className="mt-2 text-sm font-semibold text-white">Distribuição clara</div>
+                  </div>
+                  <div className="rounded-[22px] border border-white/10 bg-white/6 px-4 py-4 backdrop-blur-sm">
+                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/45">Tempo real</div>
+                    <div className="mt-2 text-sm font-semibold text-white">Rotina mais fluida</div>
+                  </div>
+                </div>
               </div>
+            </section>
 
-              {mode === "login" ? (
-                <form onSubmit={handleLogin} className="space-y-4">
-                  <AuthField label="E-mail" value={loginForm.email} onChange={(value) => setLoginForm((current) => ({ ...current, email: value }))} placeholder="admin@chatflow.local" />
-                  <AuthField label="Senha" type="password" value={loginForm.password} onChange={(value) => setLoginForm((current) => ({ ...current, password: value }))} placeholder="Sua senha" />
-                  <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#19c37d] px-4 py-3 text-base font-semibold text-slate-950 transition hover:bg-[#14b26f]">
-                    <LogIn className="h-4 w-4" />
-                    Entrar
-                  </button>
-                </form>
-              ) : (
-                <form onSubmit={handleBootstrap} className="space-y-4">
-                  <AuthField label="Nome" value={bootstrapForm.name} onChange={(value) => setBootstrapForm((current) => ({ ...current, name: value }))} placeholder="Administrador ChatFlow" />
-                  <AuthField label="E-mail" value={bootstrapForm.email} onChange={(value) => setBootstrapForm((current) => ({ ...current, email: value }))} placeholder="admin@chatflow.local" />
-                  <AuthField label="Senha" type="password" value={bootstrapForm.password} onChange={(value) => setBootstrapForm((current) => ({ ...current, password: value }))} placeholder="Minimo de 8 caracteres" />
-                  <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#19c37d] px-4 py-3 text-base font-semibold text-slate-950 transition hover:bg-[#14b26f]">
-                    <ShieldCheck className="h-4 w-4" />
-                    Criar administrador
-                  </button>
-                </form>
-              )}
+            <section className="flex items-center bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(246,250,252,0.95))] px-5 py-6 sm:px-8 sm:py-8 lg:px-10 lg:py-12">
+              <div className="mx-auto w-full max-w-md">
+                <div className="rounded-[30px] border border-slate-200/80 bg-white/92 p-6 shadow-[0_24px_60px_rgba(15,23,42,0.08)] sm:p-8">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-slate-400">Acesso</div>
+                      <h2 className="mt-3 text-[34px] font-semibold leading-none tracking-[-0.05em] text-slate-950">
+                        {mode === "login" ? "Entrar" : "Primeiro acesso"}
+                      </h2>
+                      <p className="mt-3 text-sm leading-6 text-slate-500">
+                        {mode === "login"
+                          ? "Use seu e-mail corporativo e a senha cadastrada."
+                          : "Cadastre o primeiro administrador para liberar o painel."}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={mode === "login" ? "Abrir primeiro acesso" : "Voltar para login"}
+                      onClick={() => setMode((current) => (current === "login" ? "bootstrap" : "login"))}
+                      className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-white"
+                    >
+                      {mode === "login" ? "Primeiro acesso" : "Voltar"}
+                    </button>
+                  </div>
 
-              {(authError || panelMessage) && (
-                <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                  {authError ?? panelMessage}
+                  {mode === "login" ? (
+                    <form onSubmit={handleLogin} className="mt-8 space-y-4">
+                      <AuthField label="E-mail" value={loginForm.email} onChange={(value) => setLoginForm((current) => ({ ...current, email: value }))} placeholder="voce@empresa.com.br" />
+                      <AuthField label="Senha" type="password" value={loginForm.password} onChange={(value) => setLoginForm((current) => ({ ...current, password: value }))} placeholder="Digite sua senha" />
+                      <button type="submit" className="flex h-14 w-full items-center justify-center gap-2 rounded-[20px] bg-[#18c37c] px-4 text-base font-semibold text-slate-950 transition hover:bg-[#12b06f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2">
+                        <LogIn className="h-4 w-4" />
+                        Entrar no painel
+                      </button>
+                    </form>
+                  ) : (
+                    <form onSubmit={handleBootstrap} className="mt-8 space-y-4">
+                      <AuthField label="Nome" value={bootstrapForm.name} onChange={(value) => setBootstrapForm((current) => ({ ...current, name: value }))} placeholder="Administrador principal" />
+                      <AuthField label="E-mail" value={bootstrapForm.email} onChange={(value) => setBootstrapForm((current) => ({ ...current, email: value }))} placeholder="admin@empresa.com.br" />
+                      <AuthField label="Senha" type="password" value={bootstrapForm.password} onChange={(value) => setBootstrapForm((current) => ({ ...current, password: value }))} placeholder="Mínimo de 8 caracteres" />
+                      <button type="submit" className="flex h-14 w-full items-center justify-center gap-2 rounded-[20px] bg-[#18c37c] px-4 text-base font-semibold text-slate-950 transition hover:bg-[#12b06f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2">
+                        <ShieldCheck className="h-4 w-4" />
+                        Criar administrador
+                      </button>
+                    </form>
+                  )}
+
+                  {(authError || panelMessage) && (
+                    <div className="mt-5 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                      {authError ?? panelMessage}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          </section>
+              </div>
+            </section>
+          </div>
         </div>
       </main>
     );
@@ -5284,17 +5315,6 @@ export default function HomePage() {
         </div>
       ) : null}
     </main>
-  );
-}
-
-function FeatureCard(props: { icon: React.ComponentType<{ className?: string }>; title: string; description: string }) {
-  const Icon = props.icon;
-  return (
-    <article className="rounded-[22px] border border-white/12 bg-white/10 p-5 backdrop-blur-sm">
-      <Icon className="h-5 w-5 text-emerald-200" />
-      <h3 className="mt-4 text-lg font-semibold text-white">{props.title}</h3>
-      <p className="mt-2 text-sm leading-6 text-white/72">{props.description}</p>
-    </article>
   );
 }
 
