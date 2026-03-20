@@ -40,6 +40,16 @@ function hasUsableEditedBody(value: string | null | undefined) {
   return normalized.toLowerCase() !== 'mensagem vazia';
 }
 
+function isEmptyPlaceholderUpdate(parsed: ReturnType<typeof parseEvolutionPayload>) {
+  return parsed.event === 'MESSAGES_UPDATE'
+    && !parsed.isEdited
+    && !parsed.reaction
+    && !parsed.deletion
+    && parsed.attachments.length === 0
+    && parsed.contentType === 'other'
+    && parsed.body.trim().toLowerCase() === 'mensagem vazia';
+}
+
 function normalizeStoredReactions(value: unknown) {
   if (!Array.isArray(value)) {
     return [] as Array<{
@@ -293,6 +303,26 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
 
   try {
     const decryptedApiKey = decryptSecret(instance.apiKeyEncrypted, env.SESSION_SECRET);
+
+    if (isEmptyPlaceholderUpdate(parsed)) {
+      app.log.info({
+        action: 'evolution_empty_update_ignored',
+        event: parsed.event,
+        instanceId: instance.id,
+        externalMessageId: parsed.externalMessageId,
+        remoteJid: parsed.remoteJid,
+      }, 'Evento de atualizacao sem conteudo ignorado para evitar mensagem vazia.');
+
+      await finalize(202, 'Evento de atualizacao sem conteudo ignorado.');
+      return {
+        statusCode: 202,
+        body: {
+          message: 'Evento de atualizacao sem conteudo ignorado.',
+          event: parsed.event,
+          externalMessageId: parsed.externalMessageId,
+        },
+      };
+    }
 
     if (parsed.isEdited) {
       const existingMessage = await app.prisma.ticketMessage.findFirst({
