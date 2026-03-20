@@ -1,8 +1,30 @@
 ﻿"use client";
 
 import * as React from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { io, type Socket } from "socket.io-client";
 import { PhotoProvider, PhotoView } from "react-photo-view";
+import { ContactsWorkspaceView } from "./_components/contacts-workspace-view";
+import { ContactsWorkspaceSection } from "./_components/contacts-workspace-section";
+import { ContactsWorkspaceTable } from "./_components/contacts-workspace-table";
+import { ContactsWorkspaceRows } from "./_components/contacts-workspace-rows";
+import { ApiWorkspacePanel } from "./_components/api-workspace-panel";
+import { ProfileWorkspacePanel } from "./_components/profile-workspace-panel";
+import { ActivityWorkspacePanel } from "./_components/activity-workspace-panel";
+import { CalendarWorkspacePanel } from "./_components/calendar-workspace-panel";
+import { AutomationsWorkspacePanel } from "./_components/automations-workspace-panel";
+import { SettingsWorkspaceView } from "./_components/settings-workspace-view";
+import { SettingsWorkspaceSection } from "./_components/settings-workspace-section";
+import { SettingsAdminTabs } from "./_components/settings-admin-tabs";
+import { SettingsBrandingSection } from "./_components/settings-branding-section";
+import { SettingsBrandingPanel } from "./_components/settings-branding-panel";
+import { SettingsInstancesSection } from "./_components/settings-instances-section";
+import { SettingsAgentsSection } from "./_components/settings-agents-section";
+import { SettingsQueuesSection } from "./_components/settings-queues-section";
+import { SettingsInstancesPanel } from "./_components/settings-instances-panel";
+import { SettingsAgentsPanel } from "./_components/settings-agents-panel";
+import { SettingsQueuesPanel } from "./_components/settings-queues-panel";
+import { SimpleWorkspaceView } from "./_components/simple-workspace-view";
 import {
   Activity,
   Archive,
@@ -242,6 +264,17 @@ const permissionDefinitions = [
 type PermissionKey = (typeof permissionDefinitions)[number]["key"];
 type PermissionMap = Record<PermissionKey, boolean>;
 type WorkspaceKey = "dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings";
+
+const workspaceRoutes: Partial<Record<WorkspaceKey, string>> = {
+  contacts: "/contatos",
+  settings: "/configuracoes",
+  quickReplies: "/respostas-rapidas",
+  api: "/api",
+  profile: "/perfil",
+  activity: "/atividade",
+  calendar: "/agenda",
+  automations: "/automacoes",
+};
 
 const permissionKeys = permissionDefinitions.map((item) => item.key) as PermissionKey[];
 const workspacePermissions: Record<WorkspaceKey, PermissionKey> = {
@@ -606,7 +639,9 @@ function traduzirStatusInstancia(status: string) {
   return status;
 }
 
-export default function HomePage() {
+export default function HomePage({ initialWorkspace = "tickets" }: { initialWorkspace?: WorkspaceKey }) {
+  const pathname = usePathname();
+  const router = useRouter();
   const [mode, setMode] = React.useState<"login" | "bootstrap">("login");
   const [user, setUser] = React.useState<AuthUser | null>(null);
   const [loadingAuth, setLoadingAuth] = React.useState(true);
@@ -646,7 +681,8 @@ export default function HomePage() {
   const [composerInternalNoteMode, setComposerInternalNoteMode] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
   const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "grupos">("atendendo");
-  const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
+  const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings">(initialWorkspace);
+  const [customerModalOriginWorkspace, setCustomerModalOriginWorkspace] = React.useState<WorkspaceKey | null>(null);
   const [adminSection, setAdminSection] = React.useState<"branding" | "instances" | "agents" | "queues">("instances");
   const [showRail, setShowRail] = React.useState(false);
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
@@ -1121,6 +1157,14 @@ export default function HomePage() {
       }
     }
   }, [activeWorkspace, currentUser.id, currentUser.permissions]);
+
+  React.useEffect(() => {
+    const routeEntry = Object.entries(workspaceRoutes).find(([, route]) => route === pathname);
+    const routeWorkspace = routeEntry?.[0] as WorkspaceKey | undefined;
+    if (routeWorkspace && activeWorkspace !== routeWorkspace) {
+      setActiveWorkspace(routeWorkspace);
+    }
+  }, [activeWorkspace, pathname]);
 
   React.useEffect(() => {
     setShowTicketDetails(false);
@@ -2300,6 +2344,14 @@ export default function HomePage() {
     });
   }
 
+  function navigateToWorkspaceModule(workspace: WorkspaceKey) {
+    setActiveWorkspace(workspace);
+    const targetRoute = workspaceRoutes[workspace];
+    if (targetRoute && pathname !== targetRoute) {
+      router.push(targetRoute);
+    }
+  }
+
   function startEditInstance(instance: InstanceItem) {
     setEditingInstanceId(instance.id);
     setInstanceForm({
@@ -2310,7 +2362,7 @@ export default function HomePage() {
       webhookSecret: "",
       defaultQueueId: instance.defaultQueueId ?? "",
     });
-    setActiveWorkspace("settings");
+    navigateToWorkspaceModule("settings");
     setAdminSection("instances");
     setManagementModal("instance");
   }
@@ -2326,7 +2378,7 @@ export default function HomePage() {
       queueIds: agent.queues.map((queue) => queue.id),
       permissions: normalizePermissions(agent.role, agent.permissions),
     });
-    setActiveWorkspace("settings");
+    navigateToWorkspaceModule("settings");
     setAdminSection("agents");
     setManagementModalTab("general");
     setManagementModal("agent");
@@ -2338,7 +2390,7 @@ export default function HomePage() {
       name: queue.name,
       color: queue.color ?? "#1A1C32",
     });
-    setActiveWorkspace("settings");
+    navigateToWorkspaceModule("settings");
     setAdminSection("queues");
     setManagementModal("queue");
   }
@@ -2350,7 +2402,7 @@ export default function HomePage() {
       content: item.content,
       isActive: item.isActive,
     });
-    setActiveWorkspace("quickReplies");
+    navigateToWorkspaceModule("quickReplies");
     setManagementModal("quickReply");
   }
 
@@ -2363,8 +2415,11 @@ export default function HomePage() {
       companyName: customer.companyName ?? "",
       notes: customer.notes ?? "",
     });
-    if (!options?.preserveWorkspace) {
-      setActiveWorkspace("contacts");
+    if (options?.preserveWorkspace) {
+      setCustomerModalOriginWorkspace(activeWorkspace);
+    } else {
+      setCustomerModalOriginWorkspace(null);
+      navigateToWorkspaceModule("contacts");
     }
     setManagementModal("customer");
   }
@@ -2373,7 +2428,7 @@ export default function HomePage() {
     resetInstanceForm();
     setManagementModalTab("general");
     setManagementModal("instance");
-    setActiveWorkspace("settings");
+    navigateToWorkspaceModule("settings");
     setAdminSection("instances");
   }
 
@@ -2381,7 +2436,7 @@ export default function HomePage() {
     resetAgentForm();
     setManagementModalTab("general");
     setManagementModal("agent");
-    setActiveWorkspace("settings");
+    navigateToWorkspaceModule("settings");
     setAdminSection("agents");
   }
 
@@ -2389,7 +2444,7 @@ export default function HomePage() {
     resetQueueForm();
     setManagementModalTab("general");
     setManagementModal("queue");
-    setActiveWorkspace("settings");
+    navigateToWorkspaceModule("settings");
     setAdminSection("queues");
   }
 
@@ -2397,14 +2452,15 @@ export default function HomePage() {
     resetQuickReplyForm();
     setManagementModalTab("general");
     setManagementModal("quickReply");
-    setActiveWorkspace("quickReplies");
+    navigateToWorkspaceModule("quickReplies");
   }
 
   function openCreateCustomerModal() {
     resetCustomerForm();
     setManagementModalTab("general");
+    setCustomerModalOriginWorkspace(null);
     setManagementModal("customer");
-    setActiveWorkspace("contacts");
+    navigateToWorkspaceModule("contacts");
   }
 
   function openCreateConversationModal() {
@@ -2423,6 +2479,10 @@ export default function HomePage() {
   }
 
   function closeManagementModal() {
+    if (customerModalOriginWorkspace) {
+      setActiveWorkspace(customerModalOriginWorkspace);
+      setCustomerModalOriginWorkspace(null);
+    }
     setManagementModal(null);
     setManagementModalTab("general");
     setEditingInstanceId(null);
@@ -3047,556 +3107,552 @@ export default function HomePage() {
       ].filter((row) => row.join(" ").toLowerCase().includes(managementSearch || row.join(" ").toLowerCase()));
 
       return (
-        <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="API própria" description="Consulta rápida dos endpoints operacionais e parâmetros principais.">
-            <ModuleToolbar
-              title="Referência da API"
-              count={apiRows.length}
-              searchValue={searchQuery}
-              searchPlaceholder="Pesquisar rota, método ou uso"
-              onSearchChange={setSearchQuery}
-            />
+        <ApiWorkspacePanel
+          SimpleWorkspaceView={SimpleWorkspaceView}
+          section={
+            <WorkspaceSection title="API própria" description="Consulta rápida dos endpoints operacionais e parâmetros principais.">
+              <ModuleToolbar
+                title="Referência da API"
+                count={apiRows.length}
+                searchValue={searchQuery}
+                searchPlaceholder="Pesquisar rota, método ou uso"
+                onSearchChange={setSearchQuery}
+              />
 
-            <DataTable columns={["Método", "Rota", "Uso", "Observação"]} emptyMessage="Nenhum endpoint disponível.">
-              {apiRows.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-5 py-8 text-sm text-slate-500">
-                    Nenhum endpoint disponível.
-                  </td>
-                </tr>
-              ) : (
-                apiRows.map(([method, route, usage, note]) => (
-                  <DataRow key={route}>
-                    <DataCell>
-                      <StatusChip tone={method === "GET" ? "success" : "default"}>{method}</StatusChip>
-                    </DataCell>
-                    <DataCell subtle>{route}</DataCell>
-                    <DataCell>{usage}</DataCell>
-                    <DataCell subtle>{note}</DataCell>
-                  </DataRow>
-                ))
-              )}
-            </DataTable>
+              <DataTable columns={["Método", "Rota", "Uso", "Observação"]} emptyMessage="Nenhum endpoint disponível.">
+                {apiRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-5 py-8 text-sm text-slate-500">
+                      Nenhum endpoint disponível.
+                    </td>
+                  </tr>
+                ) : (
+                  apiRows.map(([method, route, usage, note]) => (
+                    <DataRow key={route}>
+                      <DataCell>
+                        <StatusChip tone={method === "GET" ? "success" : "default"}>{method}</StatusChip>
+                      </DataCell>
+                      <DataCell subtle>{route}</DataCell>
+                      <DataCell>{usage}</DataCell>
+                      <DataCell subtle>{note}</DataCell>
+                    </DataRow>
+                  ))
+                )}
+              </DataTable>
 
-            <DataTable columns={["Item", "Valor"]} emptyMessage="Sem dados de ambiente.">
-              <DataRow>
-                <DataCell>Base pública da API</DataCell>
-                <DataCell subtle>{publicUrls.apiBaseUrl}</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Webhook Evolution</DataCell>
-                <DataCell subtle>{publicUrls.webhookUrl}</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Frontend publicado</DataCell>
-                <DataCell subtle>{publicUrls.webBaseUrl}</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Tempo real</DataCell>
-                <DataCell subtle>{SOCKET_URL ?? "NEXT_PUBLIC_SOCKET_URL não configurada"}</DataCell>
-              </DataRow>
-            </DataTable>
-          </WorkspaceSection>
-        </div>
+              <DataTable columns={["Item", "Valor"]} emptyMessage="Sem dados de ambiente.">
+                <DataRow>
+                  <DataCell>Base pública da API</DataCell>
+                  <DataCell subtle>{publicUrls.apiBaseUrl}</DataCell>
+                </DataRow>
+                <DataRow>
+                  <DataCell>Webhook Evolution</DataCell>
+                  <DataCell subtle>{publicUrls.webhookUrl}</DataCell>
+                </DataRow>
+                <DataRow>
+                  <DataCell>Frontend publicado</DataCell>
+                  <DataCell subtle>{publicUrls.webBaseUrl}</DataCell>
+                </DataRow>
+                <DataRow>
+                  <DataCell>Tempo real</DataCell>
+                  <DataCell subtle>{SOCKET_URL ?? "NEXT_PUBLIC_SOCKET_URL não configurada"}</DataCell>
+                </DataRow>
+              </DataTable>
+            </WorkspaceSection>
+          }
+        />
       );
     }
 
     if (activeWorkspace === "contacts") {
       return (
-        <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Contatos" description="Visualizacao em lista dos contatos atendidos pela operacao.">
-            <ModuleToolbar
-              title="Contatos"
+        <ContactsWorkspaceView
+          section={
+            <ContactsWorkspaceSection
               count={filteredCustomers.length}
               searchValue={searchQuery}
-              searchPlaceholder="Pesquisar contato, telefone ou empresa"
               onSearchChange={setSearchQuery}
-              actionLabel={canManageContacts ? "Adicionar contato" : undefined}
-              onActionClick={canManageContacts ? openCreateCustomerModal : undefined}
-              actionIcon={Plus}
-            />
-
-            <DataTable
-              columns={
-                canManageContacts
-                  ? ["Nome", "Telefone", "E-mail", "Empresa", "Ultimo ticket", "Atualizado em", "Ações"]
-                  : ["Nome", "Telefone", "E-mail", "Empresa", "Ultimo ticket", "Atualizado em"]
+              canManageContacts={canManageContacts}
+              onAddContact={openCreateCustomerModal}
+              WorkspaceSection={WorkspaceSection}
+              ModuleToolbar={ModuleToolbar}
+              table={
+                <ContactsWorkspaceTable
+                  canManageContacts={canManageContacts}
+                  empty={filteredCustomers.length === 0}
+                  DataTable={DataTable}
+                  rows={
+                    <ContactsWorkspaceRows
+                      customers={filteredCustomers.map((customer) => ({
+                        id: customer.id,
+                        name: customer.name,
+                        phone: customer.phone,
+                        email: customer.email,
+                        companyName: customer.companyName,
+                        updatedAtLabel: formatDateTime(customer.updatedAt),
+                        lastTicket: customer.lastTicket
+                          ? {
+                              statusLabel: traduzirStatusTicket(customer.lastTicket.status),
+                              queueName: customer.lastTicket.queueName,
+                            }
+                          : null,
+                      }))}
+                      canManageContacts={canManageContacts}
+                      onEditCustomer={(customerId) => {
+                        const customer = filteredCustomers.find((item) => item.id === customerId);
+                        if (customer) {
+                          startEditCustomer(customer);
+                        }
+                      }}
+                      onDeleteCustomer={(customerId) => handleDeleteCustomer(customerId)}
+                      DataRow={DataRow}
+                      DataCell={DataCell}
+                    />
+                  }
+                />
               }
-              emptyMessage="Nenhum contato encontrado."
-            >
-              {filteredCustomers.length === 0 ? (
-                <tr>
-                  <td colSpan={canManageContacts ? 7 : 6} className="px-5 py-8 text-sm text-slate-500">
-                    Nenhum contato encontrado.
-                  </td>
-                </tr>
-              ) : (
-                filteredCustomers.map((customer) => (
-                  <DataRow key={customer.id}>
-                    <DataCell>
-                      {canManageContacts ? (
-                        <button
-                          type="button"
-                          onClick={() => startEditCustomer(customer)}
-                          className="text-left font-medium text-slate-900 transition hover:text-[#1A1C32]"
-                        >
-                          {customer.name}
-                        </button>
-                      ) : (
-                        customer.name
-                      )}
-                    </DataCell>
-                    <DataCell subtle>{customer.phone ?? "Sem telefone"}</DataCell>
-                    <DataCell subtle>{customer.email ?? "Sem e-mail"}</DataCell>
-                    <DataCell subtle>{customer.companyName ?? "Sem empresa"}</DataCell>
-                    <DataCell subtle>
-                      {customer.lastTicket ? (
-                        <div className="space-y-1">
-                          <div>{traduzirStatusTicket(customer.lastTicket.status)}</div>
-                          <div className="text-xs text-slate-400">{customer.lastTicket.queueName ?? "Sem fila"}</div>
-                        </div>
-                      ) : (
-                        "Sem historico"
-                      )}
-                    </DataCell>
-                    <DataCell subtle>{formatDateTime(customer.updatedAt)}</DataCell>
-                    {canManageContacts ? (
-                      <DataCell>
-                        <div className="flex items-center gap-3">
-                          <button type="button" onClick={() => startEditCustomer(customer)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
-                            <Pencil className="h-4 w-4" />
-                            Editar
-                          </button>
-                          <button type="button" onClick={() => void handleDeleteCustomer(customer.id)} className="inline-flex items-center gap-2 text-sm font-medium text-rose-600 transition hover:text-rose-700">
-                            <Trash2 className="h-4 w-4" />
-                            Excluir
-                          </button>
-                        </div>
-                      </DataCell>
-                    ) : null}
-                  </DataRow>
-                ))
-              )}
-            </DataTable>
-          </WorkspaceSection>
-        </div>
+            />
+          }
+        />
       );
     }
 
     if (activeWorkspace === "profile") {
       return (
-        <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Meu perfil" description="Informações da sessão atual e atalhos pessoais.">
-            <div className="grid gap-4">
-              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="flex flex-col gap-4 md:flex-row md:items-center">
-                  {profileAvatarPreview ? (
-                    <img src={profileAvatarPreview} alt={`Avatar de ${currentUser.name}`} className="h-24 w-24 rounded-full border border-slate-200 object-cover shadow-sm" />
-                  ) : (
-                    <div className="grid h-24 w-24 place-items-center rounded-full bg-[#1A1C32] text-3xl font-bold text-white">{initials(currentUser.name) || "CF"}</div>
-                  )}
-                  <div className="flex-1">
-                    <div className="text-xl font-semibold text-slate-900">{currentUser.name}</div>
-                    <div className="mt-1 text-sm text-slate-500">{currentUser.email}</div>
-                    <div className="mt-4 inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase text-slate-600">{traduzirPerfil(currentUser.role)}</div>
-                  </div>
-                </div>
-                <div className="mt-6 grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
-                  <label className="grid gap-2 text-sm font-medium text-slate-700">
-                    Nome do usuário
-                    <input
-                      value={profileName}
-                      onChange={(event) => setProfileName(event.target.value)}
-                      className="h-12 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-[#1A1C32]"
-                      placeholder="Seu nome de exibição"
-                    />
-                  </label>
-                  <div className="flex flex-wrap items-end gap-3">
-                    <label className="inline-flex h-12 cursor-pointer items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
-                      Enviar avatar
-                      <input type="file" accept="image/*" className="hidden" onChange={(event) => void handleProfileAvatarChange(event)} />
-                    </label>
+        <ProfileWorkspacePanel
+          SimpleWorkspaceView={SimpleWorkspaceView}
+          section={
+            <WorkspaceSection title="Meu perfil" description="Informações da sessão atual e atalhos pessoais.">
+              <div className="grid gap-4">
+                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-center">
                     {profileAvatarPreview ? (
-                      <button type="button" onClick={() => setProfileAvatarPreview(null)} className="inline-flex h-12 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
-                        Remover avatar
+                      <img src={profileAvatarPreview} alt={`Avatar de ${currentUser.name}`} className="h-24 w-24 rounded-full border border-slate-200 object-cover shadow-sm" />
+                    ) : (
+                      <div className="grid h-24 w-24 place-items-center rounded-full bg-[#1A1C32] text-3xl font-bold text-white">{initials(currentUser.name) || "CF"}</div>
+                    )}
+                    <div className="flex-1">
+                      <div className="text-xl font-semibold text-slate-900">{currentUser.name}</div>
+                      <div className="mt-1 text-sm text-slate-500">{currentUser.email}</div>
+                      <div className="mt-4 inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase text-slate-600">{traduzirPerfil(currentUser.role)}</div>
+                    </div>
+                  </div>
+                  <div className="mt-6 grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                    <label className="grid gap-2 text-sm font-medium text-slate-700">
+                      Nome do usuário
+                      <input
+                        value={profileName}
+                        onChange={(event) => setProfileName(event.target.value)}
+                        className="h-12 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-[#1A1C32]"
+                        placeholder="Seu nome de exibição"
+                      />
+                    </label>
+                    <div className="flex flex-wrap items-end gap-3">
+                      <label className="inline-flex h-12 cursor-pointer items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                        Enviar avatar
+                        <input type="file" accept="image/*" className="hidden" onChange={(event) => void handleProfileAvatarChange(event)} />
+                      </label>
+                      {profileAvatarPreview ? (
+                        <button type="button" onClick={() => setProfileAvatarPreview(null)} className="inline-flex h-12 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                          Remover avatar
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveProfile()}
+                        disabled={profileSaving || !profileName.trim()}
+                        className="inline-flex h-12 items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#23274a] disabled:cursor-not-allowed disabled:bg-slate-300"
+                      >
+                        {profileSaving ? "Salvando..." : "Salvar perfil"}
                       </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveProfile()}
-                      disabled={profileSaving || !profileName.trim()}
-                      className="inline-flex h-12 items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#23274a] disabled:cursor-not-allowed disabled:bg-slate-300"
-                    >
-                      {profileSaving ? "Salvando..." : "Salvar perfil"}
-                    </button>
+                    </div>
                   </div>
                 </div>
+                <div className="grid gap-3">
+                  <InfoRow title="Sessão" subtitle="Autenticação ativa" meta="cookie httpOnly + backend próprio" />
+                  <InfoRow title="Tempo real" subtitle={SOCKET_URL ? "Tempo real configurado" : "Tempo real não configurado"} meta={SOCKET_URL ?? "atualização por consulta periódica"} />
+                  <button type="button" onClick={() => setActiveWorkspace("tickets")} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Voltar à caixa de entrada</div><div className="mt-1 text-sm text-slate-500">Abrir conversas e continuar o atendimento.</div></button>
+                  <button type="button" onClick={() => void handleLogout()} className="rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-left shadow-sm transition hover:bg-red-100"><div className="font-semibold text-red-700">Encerrar sessão</div><div className="mt-1 text-sm text-red-500">Sair do painel com segurança.</div></button>
+                </div>
               </div>
-              <div className="grid gap-3">
-                <InfoRow title="Sessão" subtitle="Autenticação ativa" meta="cookie httpOnly + backend próprio" />
-                <InfoRow title="Tempo real" subtitle={SOCKET_URL ? "Tempo real configurado" : "Tempo real não configurado"} meta={SOCKET_URL ?? "atualização por consulta periódica"} />
-                <button type="button" onClick={() => setActiveWorkspace("tickets")} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:bg-slate-50"><div className="font-semibold text-slate-900">Voltar à caixa de entrada</div><div className="mt-1 text-sm text-slate-500">Abrir conversas e continuar o atendimento.</div></button>
-                <button type="button" onClick={() => void handleLogout()} className="rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-left shadow-sm transition hover:bg-red-100"><div className="font-semibold text-red-700">Encerrar sessão</div><div className="mt-1 text-sm text-red-500">Sair do painel com segurança.</div></button>
-              </div>
-            </div>
-          </WorkspaceSection>
-        </div>
+            </WorkspaceSection>
+          }
+        />
       );
     }
 
     if (activeWorkspace === "activity") {
       return (
-        <div className="flex h-full flex-col gap-4 p-6">
-          <div className="grid gap-4">
-            <WorkspaceStatCard title="Tickets visíveis" value={String(visibleTickets.length)} accent="slate" description="Resultado da busca e dos filtros atuais." />
-            <WorkspaceStatCard title="Não lidos" value={String(tickets.filter((ticket) => ticket.unreadCount > 0).length)} accent="emerald" description="Conversas pedindo resposta rápida." />
-            <WorkspaceStatCard title="Com agente" value={String(tickets.filter((ticket) => ticket.currentAgent).length)} accent="blue" description="Atendimentos já distribuídos." />
-            <WorkspaceStatCard title="Sem fila" value={String(tickets.filter((ticket) => !ticket.currentQueue).length)} accent="amber" description="Conversas ainda sem classificação." />
-          </div>
-          <WorkspaceSection title="Leitura operacional" description="Últimos movimentos do atendimento.">
-            <DataTable columns={["Cliente", "Status", "Responsável", "Atualização"]} emptyMessage="Nenhum movimento recente.">
-              {tickets.slice(0, 8).map((ticket) => (
-                <DataRow key={ticket.id}>
-                  <DataCell>{ticket.customerName}</DataCell>
-                  <DataCell>
-                    <StatusChip tone={ticket.status === "open" ? "success" : ticket.status === "pending" ? "warning" : "default"}>
-                      {traduzirStatusTicket(ticket.status)}
-                    </StatusChip>
-                  </DataCell>
-                  <DataCell subtle>{ticket.currentAgent?.name ?? "Sem agente"}</DataCell>
-                  <DataCell subtle>{formatDateTime(ticket.updatedAt)}</DataCell>
-                </DataRow>
-              ))}
-            </DataTable>
-          </WorkspaceSection>
-        </div>
+        <ActivityWorkspacePanel
+          SimpleWorkspaceView={SimpleWorkspaceView}
+          section={
+            <>
+              <div className="grid gap-4">
+                <WorkspaceStatCard title="Tickets visíveis" value={String(visibleTickets.length)} accent="slate" description="Resultado da busca e dos filtros atuais." />
+                <WorkspaceStatCard title="Não lidos" value={String(tickets.filter((ticket) => ticket.unreadCount > 0).length)} accent="emerald" description="Conversas pedindo resposta rápida." />
+                <WorkspaceStatCard title="Com agente" value={String(tickets.filter((ticket) => ticket.currentAgent).length)} accent="blue" description="Atendimentos já distribuídos." />
+                <WorkspaceStatCard title="Sem fila" value={String(tickets.filter((ticket) => !ticket.currentQueue).length)} accent="amber" description="Conversas ainda sem classificação." />
+              </div>
+              <WorkspaceSection title="Leitura operacional" description="Últimos movimentos do atendimento.">
+                <DataTable columns={["Cliente", "Status", "Responsável", "Atualização"]} emptyMessage="Nenhum movimento recente.">
+                  {tickets.slice(0, 8).map((ticket) => (
+                    <DataRow key={ticket.id}>
+                      <DataCell>{ticket.customerName}</DataCell>
+                      <DataCell>
+                        <StatusChip tone={ticket.status === "open" ? "success" : ticket.status === "pending" ? "warning" : "default"}>
+                          {traduzirStatusTicket(ticket.status)}
+                        </StatusChip>
+                      </DataCell>
+                      <DataCell subtle>{ticket.currentAgent?.name ?? "Sem agente"}</DataCell>
+                      <DataCell subtle>{formatDateTime(ticket.updatedAt)}</DataCell>
+                    </DataRow>
+                  ))}
+                </DataTable>
+              </WorkspaceSection>
+            </>
+          }
+        />
       );
     }
 
     if (activeWorkspace === "calendar") {
       return (
-        <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Agendamentos" description="Lista operacional de acompanhamentos e proximas acoes do dia.">
-            <ModuleToolbar
-              title="Agendamentos"
-              count={agendaItems.length}
-              searchValue={searchQuery}
-              searchPlaceholder="Pesquisar contato, fila ou responsavel"
-              onSearchChange={setSearchQuery}
-            />
-            <DataTable columns={["Contato", "Fila", "Responsavel", "Status", "Proxima acao", "Atualizado em"]} emptyMessage="Nenhum agendamento operacional encontrado.">
-              {agendaItems.map((item) => (
-                <DataRow key={item.id}>
-                  <DataCell>{item.contato}</DataCell>
-                  <DataCell subtle>{item.fila}</DataCell>
-                  <DataCell subtle>{item.responsavel}</DataCell>
-                  <DataCell>
-                    <StatusChip tone={item.status === "Atendendo" ? "success" : "warning"}>{item.status}</StatusChip>
-                  </DataCell>
-                  <DataCell subtle>{item.proximaAcao}</DataCell>
-                  <DataCell subtle>{formatDateTime(item.atualizadoEm)}</DataCell>
-                </DataRow>
-              ))}
-            </DataTable>
-          </WorkspaceSection>
-        </div>
+        <CalendarWorkspacePanel
+          SimpleWorkspaceView={SimpleWorkspaceView}
+          section={
+            <WorkspaceSection title="Agendamentos" description="Lista operacional de acompanhamentos e proximas acoes do dia.">
+              <ModuleToolbar
+                title="Agendamentos"
+                count={agendaItems.length}
+                searchValue={searchQuery}
+                searchPlaceholder="Pesquisar contato, fila ou responsavel"
+                onSearchChange={setSearchQuery}
+              />
+              <DataTable columns={["Contato", "Fila", "Responsavel", "Status", "Proxima acao", "Atualizado em"]} emptyMessage="Nenhum agendamento operacional encontrado.">
+                {agendaItems.map((item) => (
+                  <DataRow key={item.id}>
+                    <DataCell>{item.contato}</DataCell>
+                    <DataCell subtle>{item.fila}</DataCell>
+                    <DataCell subtle>{item.responsavel}</DataCell>
+                    <DataCell>
+                      <StatusChip tone={item.status === "Atendendo" ? "success" : "warning"}>{item.status}</StatusChip>
+                    </DataCell>
+                    <DataCell subtle>{item.proximaAcao}</DataCell>
+                    <DataCell subtle>{formatDateTime(item.atualizadoEm)}</DataCell>
+                  </DataRow>
+                ))}
+              </DataTable>
+            </WorkspaceSection>
+          }
+        />
       );
     }
 
     if (activeWorkspace === "automations") {
       return (
-        <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Fluxo da integração" description="Como a operação conversa com a API e com a Evolution.">
-            <DataTable columns={["Etapa", "Canal", "Detalhe"]} emptyMessage="Nenhum fluxo configurado.">
-              <DataRow>
-                <DataCell>Entrada</DataCell>
-                <DataCell subtle>Webhook da Evolution</DataCell>
-                <DataCell subtle>POST /api/webhooks/evolution</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Saída</DataCell>
-                <DataCell subtle>Envio via API própria</DataCell>
-                <DataCell subtle>POST /api/tickets/:ticketId/messages</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Tempo real</DataCell>
-                <DataCell subtle>Socket.IO</DataCell>
-                <DataCell subtle>{SOCKET_URL ?? "Configure a variável NEXT_PUBLIC_SOCKET_URL"}</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Proxy</DataCell>
-                <DataCell subtle>Frontend</DataCell>
-                <DataCell subtle>/api-proxy mantendo segredos no backend</DataCell>
-              </DataRow>
-            </DataTable>
-          </WorkspaceSection>
-        </div>
+        <AutomationsWorkspacePanel
+          SimpleWorkspaceView={SimpleWorkspaceView}
+          section={
+            <WorkspaceSection title="Fluxo da integração" description="Como a operação conversa com a API e com a Evolution.">
+              <DataTable columns={["Etapa", "Canal", "Detalhe"]} emptyMessage="Nenhum fluxo configurado.">
+                <DataRow>
+                  <DataCell>Entrada</DataCell>
+                  <DataCell subtle>Webhook da Evolution</DataCell>
+                  <DataCell subtle>POST /api/webhooks/evolution</DataCell>
+                </DataRow>
+                <DataRow>
+                  <DataCell>Saída</DataCell>
+                  <DataCell subtle>Envio via API própria</DataCell>
+                  <DataCell subtle>POST /api/tickets/:ticketId/messages</DataCell>
+                </DataRow>
+                <DataRow>
+                  <DataCell>Tempo real</DataCell>
+                  <DataCell subtle>Socket.IO</DataCell>
+                  <DataCell subtle>{SOCKET_URL ?? "Configure a variável NEXT_PUBLIC_SOCKET_URL"}</DataCell>
+                </DataRow>
+                <DataRow>
+                  <DataCell>Proxy</DataCell>
+                  <DataCell subtle>Frontend</DataCell>
+                  <DataCell subtle>/api-proxy mantendo segredos no backend</DataCell>
+                </DataRow>
+              </DataTable>
+            </WorkspaceSection>
+          }
+        />
       );
     }
 
     if (activeWorkspace === "settings") {
       return (
-        <div className="flex h-full flex-col gap-4 p-6">
-          <div className="flex flex-wrap gap-2">
-            <AdminTab label="Identidade visual" active={adminSection === "branding"} onClick={() => setAdminSection("branding")} />
-            <AdminTab label="Instâncias" active={adminSection === "instances"} onClick={() => setAdminSection("instances")} />
-            <AdminTab label="Agentes" active={adminSection === "agents"} onClick={() => setAdminSection("agents")} />
-            <AdminTab label="Filas" active={adminSection === "queues"} onClick={() => setAdminSection("queues")} />
-          </div>
-
-          {adminSection === "branding" ? (
-            <WorkspaceSection title="Identidade visual" description="Personalize a marca principal exibida no topo do painel.">
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_320px]">
-                <div className="rounded-[28px] border border-slate-200 bg-[linear-gradient(135deg,#ffffff,#f5f8fb)] p-5 shadow-sm">
-                  <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">Logo superior</div>
-                  <div className="mt-3 rounded-[24px] bg-[#1A1C32] p-5 shadow-[0_20px_40px_rgba(26,28,50,0.22)]">
-                    <div className="flex items-center gap-4">
-                      {shouldRenderBrandImage ? (
-                        <div className="flex min-h-[64px] min-w-[200px] items-center px-2 py-2">
-                          <img src={brandLogoPreview ?? undefined} alt="Logo do painel" className="max-h-11 w-auto object-contain" />
-                        </div>
-                      ) : shouldRenderBrandText ? (
-                        <div className="flex min-h-[64px] min-w-[200px] items-center px-2 py-2">
-                          <div className="text-[30px] font-semibold leading-none tracking-tight text-white">{brandTextLabel}</div>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-3">
-                          <span className="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10">
-                            <ShieldCheck className="h-5 w-5 text-white" />
-                          </span>
-                          <div>
-                            <div className="text-xl font-semibold tracking-tight text-white">CHATFLOW</div>
-                            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">Marca padrão</div>
+        <SettingsWorkspaceSection
+          SettingsWorkspaceView={SettingsWorkspaceView}
+          tabs={
+            <SettingsAdminTabs
+              adminSection={adminSection}
+              onChange={setAdminSection}
+              AdminTab={AdminTab}
+            />
+          }
+          content={adminSection === "branding" ? (
+            <SettingsBrandingSection>
+            <SettingsBrandingPanel
+              WorkspaceSection={WorkspaceSection}
+              content={
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_320px]">
+                  <div className="rounded-[28px] border border-slate-200 bg-[linear-gradient(135deg,#ffffff,#f5f8fb)] p-5 shadow-sm">
+                    <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">Logo superior</div>
+                    <div className="mt-3 rounded-[24px] bg-[#1A1C32] p-5 shadow-[0_20px_40px_rgba(26,28,50,0.22)]">
+                      <div className="flex items-center gap-4">
+                        {shouldRenderBrandImage ? (
+                          <div className="flex min-h-[64px] min-w-[200px] items-center px-2 py-2">
+                            <img src={brandLogoPreview ?? undefined} alt="Logo do painel" className="max-h-11 w-auto object-contain" />
                           </div>
-                        </div>
-                      )}
+                        ) : shouldRenderBrandText ? (
+                          <div className="flex min-h-[64px] min-w-[200px] items-center px-2 py-2">
+                            <div className="text-[30px] font-semibold leading-none tracking-tight text-white">{brandTextLabel}</div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-3">
+                            <span className="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10">
+                              <ShieldCheck className="h-5 w-5 text-white" />
+                            </span>
+                            <div>
+                              <div className="text-xl font-semibold tracking-tight text-white">CHATFLOW</div>
+                              <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">Marca padrão</div>
+                            </div>
+                          </div>
+                        )}
 
-                      <div>
-                        <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">Prévia</div>
-                        <div className="mt-1 text-sm font-semibold text-white">{workspaceTitle}</div>
+                        <div>
+                          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">Prévia</div>
+                          <div className="mt-1 text-sm font-semibold text-white">{workspaceTitle}</div>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="text-sm font-semibold text-[#1A1C32]">Marca do cabeçalho</div>
-                  <p className="mt-2 text-sm text-slate-500">Escolha se quer manter a marca padrão, usar uma imagem transparente ou escrever um texto personalizado.</p>
-                  <div className="mt-4 grid gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleBrandModeChange("default")}
-                      className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
-                        brandMode === "default"
-                          ? "border-[#1A1C32] bg-[#1A1C32] text-white"
-                          : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                      }`}
-                    >
-                      Marca padrão
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleBrandModeChange("image")}
-                      className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
-                        brandMode === "image"
-                          ? "border-[#1A1C32] bg-[#1A1C32] text-white"
-                          : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                      }`}
-                    >
-                      Usar imagem
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleBrandModeChange("text")}
-                      className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
-                        brandMode === "text"
-                          ? "border-[#1A1C32] bg-[#1A1C32] text-white"
-                          : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                      }`}
-                    >
-                      Usar texto
-                    </button>
-                  </div>
-
-                  <div className="mt-4 flex flex-col gap-3">
-                    <div>
-                      <div className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Texto personalizado</div>
-                      <input
-                        type="text"
-                        value={brandText}
-                        onChange={(event) => handleBrandTextChange(event.target.value)}
-                        placeholder="Digite o texto do cabeçalho"
-                        className="h-11 w-full rounded-2xl border border-slate-200 px-4 text-sm text-slate-700 outline-none transition focus:border-[#1A1C32]"
-                      />
+                  <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="text-sm font-semibold text-[#1A1C32]">Marca do cabeçalho</div>
+                    <p className="mt-2 text-sm text-slate-500">Escolha se quer manter a marca padrão, usar uma imagem transparente ou escrever um texto personalizado.</p>
+                    <div className="mt-4 grid gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleBrandModeChange("default")}
+                        className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
+                          brandMode === "default"
+                            ? "border-[#1A1C32] bg-[#1A1C32] text-white"
+                            : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        Marca padrão
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleBrandModeChange("image")}
+                        className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
+                          brandMode === "image"
+                            ? "border-[#1A1C32] bg-[#1A1C32] text-white"
+                            : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        Usar imagem
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleBrandModeChange("text")}
+                        className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
+                          brandMode === "text"
+                            ? "border-[#1A1C32] bg-[#1A1C32] text-white"
+                            : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        Usar texto
+                      </button>
                     </div>
-                    <label className="inline-flex h-11 cursor-pointer items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#232643]">
-                      <input type="file" accept="image/*" className="hidden" onChange={(event) => void handleBrandLogoChange(event)} />
-                      {brandLogoPreview ? "Trocar logo" : "Enviar logo"}
-                    </label>
-                    <button
-                      type="button"
-                      onClick={handleRemoveBrandLogo}
-                      disabled={!brandLogoPreview}
-                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Remover logo
-                    </button>
-                  </div>
-                  <div className="mt-4 space-y-2 text-xs text-slate-400">
-                    <div>Formato recomendado: PNG ou SVG convertido em imagem.</div>
-                    <div>Tamanho máximo: 2 MB.</div>
-                    <div>O texto personalizado aparece no lugar da imagem quando o modo "Usar texto" estiver ativo.</div>
+
+                    <div className="mt-4 flex flex-col gap-3">
+                      <div>
+                        <div className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Texto personalizado</div>
+                        <input
+                          type="text"
+                          value={brandText}
+                          onChange={(event) => handleBrandTextChange(event.target.value)}
+                          placeholder="Digite o texto do cabeçalho"
+                          className="h-11 w-full rounded-2xl border border-slate-200 px-4 text-sm text-slate-700 outline-none transition focus:border-[#1A1C32]"
+                        />
+                      </div>
+                      <label className="inline-flex h-11 cursor-pointer items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#232643]">
+                        <input type="file" accept="image/*" className="hidden" onChange={(event) => void handleBrandLogoChange(event)} />
+                        {brandLogoPreview ? "Trocar logo" : "Enviar logo"}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleRemoveBrandLogo}
+                        disabled={!brandLogoPreview}
+                        className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Remover logo
+                      </button>
+                    </div>
+                    <div className="mt-4 space-y-2 text-xs text-slate-400">
+                      <div>Formato recomendado: PNG ou SVG convertido em imagem.</div>
+                      <div>Tamanho máximo: 2 MB.</div>
+                      <div>O texto personalizado aparece no lugar da imagem quando o modo "Usar texto" estiver ativo.</div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </WorkspaceSection>
+              }
+            />
+            </SettingsBrandingSection>
           ) : adminSection === "instances" ? (
-            <WorkspaceSection title="Canais e instâncias" description="Gerencie as conexões com a Evolution em um único lugar dentro das configurações.">
-              <ModuleToolbar
-                title="Conexões"
-                count={filteredInstances.length}
-                searchValue={searchQuery}
-                searchPlaceholder="Pesquisar instância, telefone ou status"
-                onSearchChange={setSearchQuery}
-                actionLabel={canManageInstances ? "Nova conexão" : undefined}
-                onActionClick={canManageInstances ? openCreateInstanceModal : undefined}
-                actionIcon={Plus}
-              />
-
-              <DataTable columns={["Nome", "Evolution", "Status", "Telefone", "URL base", "Criado em", "Ações"]} emptyMessage="Nenhuma instância cadastrada.">
-                {filteredInstances.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="px-5 py-8 text-sm text-slate-500">
-                      Nenhuma instância cadastrada.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredInstances.map((instance) => (
-                    <DataRow key={instance.id}>
-                      <DataCell>{instance.name}</DataCell>
-                      <DataCell subtle>{instance.evolutionInstanceName}</DataCell>
-                      <DataCell>
-                        <StatusChip tone={instance.status === "connected" ? "success" : instance.status === "error" ? "danger" : "warning"}>
-                          {traduzirStatusInstancia(instance.status)}
-                        </StatusChip>
-                      </DataCell>
-                      <DataCell subtle>{instance.phoneNumber ?? "Sem número"}</DataCell>
-                      <DataCell subtle>{instance.baseUrl}</DataCell>
-                      <DataCell subtle>{formatDateTime(instance.createdAt)}</DataCell>
-                      <DataCell>
-                        {canManageInstances ? (
-                          <button type="button" onClick={() => startEditInstance(instance)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
-                            <Pencil className="h-4 w-4" />
-                            Editar
-                          </button>
-                        ) : null}
-                      </DataCell>
-                    </DataRow>
-                  ))
-                )}
-              </DataTable>
-
-              <div className="grid gap-3">
-                <InfoRow title="Webhook sugerido" subtitle="Endpoint público para eventos da Evolution" meta={publicUrls.webhookUrl} />
-                <InfoRow title="Frontend publicado" subtitle="URL operacional do painel" meta={publicUrls.webBaseUrl} />
-              </div>
-            </WorkspaceSection>
+            <SettingsInstancesSection>
+            <SettingsInstancesPanel
+              count={filteredInstances.length}
+              searchValue={searchQuery}
+              onSearchChange={setSearchQuery}
+              canManageInstances={canManageInstances}
+              onCreate={openCreateInstanceModal}
+              WorkspaceSection={WorkspaceSection}
+              ModuleToolbar={ModuleToolbar}
+              table={
+                <DataTable columns={["Nome", "Evolution", "Status", "Telefone", "URL base", "Criado em", "Ações"]} emptyMessage="Nenhuma instância cadastrada.">
+                  {filteredInstances.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-5 py-8 text-sm text-slate-500">
+                        Nenhuma instância cadastrada.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredInstances.map((instance) => (
+                      <DataRow key={instance.id}>
+                        <DataCell>{instance.name}</DataCell>
+                        <DataCell subtle>{instance.evolutionInstanceName}</DataCell>
+                        <DataCell>
+                          <StatusChip tone={instance.status === "connected" ? "success" : instance.status === "error" ? "danger" : "warning"}>
+                            {traduzirStatusInstancia(instance.status)}
+                          </StatusChip>
+                        </DataCell>
+                        <DataCell subtle>{instance.phoneNumber ?? "Sem número"}</DataCell>
+                        <DataCell subtle>{instance.baseUrl}</DataCell>
+                        <DataCell subtle>{formatDateTime(instance.createdAt)}</DataCell>
+                        <DataCell>
+                          {canManageInstances ? (
+                            <button type="button" onClick={() => startEditInstance(instance)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                              <Pencil className="h-4 w-4" />
+                              Editar
+                            </button>
+                          ) : null}
+                        </DataCell>
+                      </DataRow>
+                    ))
+                  )}
+                </DataTable>
+              }
+              info={
+                <div className="grid gap-3">
+                  <InfoRow title="Webhook sugerido" subtitle="Endpoint público para eventos da Evolution" meta={publicUrls.webhookUrl} />
+                  <InfoRow title="Frontend publicado" subtitle="URL operacional do painel" meta={publicUrls.webBaseUrl} />
+                </div>
+              }
+            />
+            </SettingsInstancesSection>
           ) : adminSection === "agents" ? (
-            <WorkspaceSection title="Equipe" description="Criação, leitura e distribuição dos agentes do sistema.">
-              <ModuleToolbar
-                title="Usuários"
-                count={filteredAgents.length}
-                searchValue={searchQuery}
-                searchPlaceholder="Pesquisar nome, e-mail ou fila"
-                onSearchChange={setSearchQuery}
-                actionLabel={canManageAgents ? "Adicionar usuário" : undefined}
-                onActionClick={canManageAgents ? openCreateAgentModal : undefined}
-                actionIcon={UserPlus}
-              />
-
-              <DataTable columns={["Nome", "E-mail", "Perfil", "Presença", "Filas", "Ações"]} emptyMessage="Nenhum agente cadastrado.">
-                {filteredAgents.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-5 py-8 text-sm text-slate-500">
-                      Nenhum agente cadastrado.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredAgents.map((agent) => (
-                    <DataRow key={agent.id}>
-                      <DataCell>{agent.name}</DataCell>
-                      <DataCell subtle>{agent.email}</DataCell>
-                      <DataCell>
-                        <StatusChip tone={agent.role === "admin" ? "default" : "success"}>{traduzirPerfil(agent.role)}</StatusChip>
-                      </DataCell>
-                      <DataCell subtle>{agent.presence}</DataCell>
-                      <DataCell subtle>{agent.queues.map((queue) => queue.name).join(", ") || "Sem filas"}</DataCell>
-                      <DataCell>
-                        {canManageAgents ? (
-                          <button type="button" onClick={() => startEditAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
-                            <Pencil className="h-4 w-4" />
-                            Editar
-                          </button>
-                        ) : null}
-                      </DataCell>
-                    </DataRow>
-                  ))
-                )}
-              </DataTable>
-            </WorkspaceSection>
+            <SettingsAgentsSection>
+            <SettingsAgentsPanel
+              count={filteredAgents.length}
+              searchValue={searchQuery}
+              onSearchChange={setSearchQuery}
+              canManageAgents={canManageAgents}
+              onCreate={openCreateAgentModal}
+              WorkspaceSection={WorkspaceSection}
+              ModuleToolbar={ModuleToolbar}
+              table={
+                <DataTable columns={["Nome", "E-mail", "Perfil", "Presença", "Filas", "Ações"]} emptyMessage="Nenhum agente cadastrado.">
+                  {filteredAgents.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-5 py-8 text-sm text-slate-500">
+                        Nenhum agente cadastrado.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredAgents.map((agent) => (
+                      <DataRow key={agent.id}>
+                        <DataCell>{agent.name}</DataCell>
+                        <DataCell subtle>{agent.email}</DataCell>
+                        <DataCell>
+                          <StatusChip tone={agent.role === "admin" ? "default" : "success"}>{traduzirPerfil(agent.role)}</StatusChip>
+                        </DataCell>
+                        <DataCell subtle>{agent.presence}</DataCell>
+                        <DataCell subtle>{agent.queues.map((queue) => queue.name).join(", ") || "Sem filas"}</DataCell>
+                        <DataCell>
+                          {canManageAgents ? (
+                            <button type="button" onClick={() => startEditAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                              <Pencil className="h-4 w-4" />
+                              Editar
+                            </button>
+                          ) : null}
+                        </DataCell>
+                      </DataRow>
+                    ))
+                  )}
+                </DataTable>
+              }
+            />
+            </SettingsAgentsSection>
           ) : (
-            <WorkspaceSection title="Filas e membros" description="Distribuição de agentes e leitura do volume atual.">
-              <ModuleToolbar
-                title="Filas"
-                count={filteredQueues.length}
-                searchValue={searchQuery}
-                searchPlaceholder="Pesquisar fila ou membro"
-                onSearchChange={setSearchQuery}
-                actionLabel={canManageQueues ? "Adicionar fila" : undefined}
-                onActionClick={canManageQueues ? openCreateQueueModal : undefined}
-                actionIcon={Workflow}
-              />
-
-              <DataTable columns={["Fila", "Cor", "Agentes", "Tickets abertos", "Ações"]} emptyMessage="Nenhuma fila cadastrada.">
-                {filteredQueues.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-5 py-8 text-sm text-slate-500">
-                      Nenhuma fila cadastrada.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredQueues.map((queue) => (
-                    <DataRow key={queue.id}>
-                      <DataCell>{queue.name}</DataCell>
-                      <DataCell>
-                        <div className="flex items-center gap-2">
-                          <span className="h-4 w-10 rounded-sm border border-slate-200" style={{ backgroundColor: queue.color ?? "#1A1C32" }} />
-                          <span className="text-sm text-slate-500">{queue.color ?? "#1A1C32"}</span>
-                        </div>
-                      </DataCell>
-                      <DataCell subtle>{queue.agents.map((agent) => agent.name).join(", ") || "Sem membros"}</DataCell>
-                      <DataCell subtle>{queue.openTicketCount}</DataCell>
-                      <DataCell>
-                        {canManageQueues ? (
-                          <button type="button" onClick={() => startEditQueue(queue)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
-                            <Pencil className="h-4 w-4" />
-                            Editar
-                          </button>
-                        ) : null}
-                      </DataCell>
-                    </DataRow>
-                  ))
-                )}
-              </DataTable>
-
-              <div className="grid gap-3">
-                {filteredQueues.map((queue) => (
-                  <QueueEditor key={queue.id} queue={queue} agents={agents} loading={assignmentLoading === queue.id} canEdit={canAssignQueues} onSave={handleAssignQueueAgents} onChange={setQueues} />
-                ))}
-              </div>
-            </WorkspaceSection>
+            <SettingsQueuesSection>
+            <SettingsQueuesPanel
+              count={filteredQueues.length}
+              searchValue={searchQuery}
+              onSearchChange={setSearchQuery}
+              canManageQueues={canManageQueues}
+              onCreate={openCreateQueueModal}
+              WorkspaceSection={WorkspaceSection}
+              ModuleToolbar={ModuleToolbar}
+              table={
+                <DataTable columns={["Fila", "Cor", "Agentes", "Tickets abertos", "Ações"]} emptyMessage="Nenhuma fila cadastrada.">
+                  {filteredQueues.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-5 py-8 text-sm text-slate-500">
+                        Nenhuma fila cadastrada.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredQueues.map((queue) => (
+                      <DataRow key={queue.id}>
+                        <DataCell>{queue.name}</DataCell>
+                        <DataCell>
+                          <div className="flex items-center gap-2">
+                            <span className="h-4 w-10 rounded-sm border border-slate-200" style={{ backgroundColor: queue.color ?? "#1A1C32" }} />
+                            <span className="text-sm text-slate-500">{queue.color ?? "#1A1C32"}</span>
+                          </div>
+                        </DataCell>
+                        <DataCell subtle>{queue.agents.map((agent) => agent.name).join(", ") || "Sem membros"}</DataCell>
+                        <DataCell subtle>{queue.openTicketCount}</DataCell>
+                        <DataCell>
+                          {canManageQueues ? (
+                            <button type="button" onClick={() => startEditQueue(queue)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                              <Pencil className="h-4 w-4" />
+                              Editar
+                            </button>
+                          ) : null}
+                        </DataCell>
+                      </DataRow>
+                    ))
+                  )}
+                </DataTable>
+              }
+              editors={
+                <div className="grid gap-3">
+                  {filteredQueues.map((queue) => (
+                    <QueueEditor key={queue.id} queue={queue} agents={agents} loading={assignmentLoading === queue.id} canEdit={canAssignQueues} onSave={handleAssignQueueAgents} onChange={setQueues} />
+                  ))}
+                </div>
+              }
+            />
+            </SettingsQueuesSection>
           )}
-        </div>
+        />
       );
     }
 
@@ -4981,7 +5037,7 @@ export default function HomePage() {
                     <button
                       type="button"
                       onClick={() => {
-                        setActiveWorkspace("profile");
+                        navigateToWorkspaceModule("profile");
                         setUserMenuOpen(false);
                       }}
                       className="flex w-full items-center gap-3 px-4 py-3 text-sm text-slate-700 transition hover:bg-slate-50"
@@ -5013,15 +5069,15 @@ export default function HomePage() {
               {currentUser.permissions["dashboard.view"] ? <RailButton icon={LayoutGrid} label="Painel geral" expanded={showRail} active={activeWorkspace === "dashboard"} onClick={() => setActiveWorkspace("dashboard")} /> : null}
               {currentUser.permissions["tickets.view"] ? <RailButton icon={WhatsAppIcon} label="Atendimento" expanded={showRail} active={activeWorkspace === "tickets"} onClick={() => { setShowAllTickets(false); setActiveTab("atendendo"); setActiveWorkspace("tickets"); }} /> : null}
               {canViewClosedTickets ? <RailButton icon={Archive} label="Tickets fechados" expanded={showRail} active={activeWorkspace === "closedTickets"} onClick={() => { setShowAllTickets(false); setActiveWorkspace("closedTickets"); }} /> : null}
-              {currentUser.permissions["quickReplies.view"] ? <RailButton icon={Zap} label="Respostas rápidas" expanded={showRail} active={activeWorkspace === "quickReplies"} onClick={() => setActiveWorkspace("quickReplies")} /> : null}
-              {currentUser.permissions["api.view"] ? <RailButton icon={Code2} label="API" expanded={showRail} active={activeWorkspace === "api"} onClick={() => setActiveWorkspace("api")} /> : null}
-              {currentUser.permissions["contacts.view"] ? <RailButton icon={Users} label="Contatos" expanded={showRail} active={activeWorkspace === "contacts"} onClick={() => setActiveWorkspace("contacts")} /> : null}
-              {currentUser.permissions["activity.view"] ? <RailButton icon={Activity} label="Atividade operacional" expanded={showRail} active={activeWorkspace === "activity"} onClick={() => setActiveWorkspace("activity")} /> : null}
-              {currentUser.permissions["calendar.view"] ? <RailButton icon={Calendar} label="Agendamentos" expanded={showRail} active={activeWorkspace === "calendar"} onClick={() => setActiveWorkspace("calendar")} /> : null}
-              {currentUser.permissions["automations.view"] ? <RailButton icon={Workflow} label="Automações" expanded={showRail} active={activeWorkspace === "automations"} onClick={() => setActiveWorkspace("automations")} /> : null}
+              {currentUser.permissions["quickReplies.view"] ? <RailButton icon={Zap} label="Respostas rápidas" expanded={showRail} active={activeWorkspace === "quickReplies"} onClick={() => navigateToWorkspaceModule("quickReplies")} /> : null}
+              {currentUser.permissions["api.view"] ? <RailButton icon={Code2} label="API" expanded={showRail} active={activeWorkspace === "api"} onClick={() => navigateToWorkspaceModule("api")} /> : null}
+            {currentUser.permissions["contacts.view"] ? <RailButton icon={Users} label="Contatos" expanded={showRail} active={activeWorkspace === "contacts"} onClick={() => navigateToWorkspaceModule("contacts")} /> : null}
+              {currentUser.permissions["activity.view"] ? <RailButton icon={Activity} label="Atividade operacional" expanded={showRail} active={activeWorkspace === "activity"} onClick={() => navigateToWorkspaceModule("activity")} /> : null}
+              {currentUser.permissions["calendar.view"] ? <RailButton icon={Calendar} label="Agendamentos" expanded={showRail} active={activeWorkspace === "calendar"} onClick={() => navigateToWorkspaceModule("calendar")} /> : null}
+              {currentUser.permissions["automations.view"] ? <RailButton icon={Workflow} label="Automações" expanded={showRail} active={activeWorkspace === "automations"} onClick={() => navigateToWorkspaceModule("automations")} /> : null}
             </div>
             <div className="flex w-full flex-col gap-1 px-2">
-              {currentUser.permissions["settings.view"] ? <RailButton icon={Settings} label="Configurações" expanded={showRail} active={activeWorkspace === "settings"} onClick={() => setActiveWorkspace("settings")} /> : null}
+              {currentUser.permissions["settings.view"] ? <RailButton icon={Settings} label="Configurações" expanded={showRail} active={activeWorkspace === "settings"} onClick={() => navigateToWorkspaceModule("settings")} /> : null}
             </div>
           </aside>
 
