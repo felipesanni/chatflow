@@ -2365,6 +2365,7 @@ export default function HomePage() {
       baseUrl: "",
       apiKey: "",
       webhookSecret: "",
+      defaultQueueId: "",
     });
     setAgentForm({
       name: "",
