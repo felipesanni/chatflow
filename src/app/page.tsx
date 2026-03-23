@@ -4903,50 +4903,50 @@ export default function HomePage() {
                 </div>
               </div>
             ) : null}
-            {appDialog ? (
-              <div className="absolute inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
-                <div className="my-auto flex w-full max-w-lg flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
-                  <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
-                    <div>
-                      <div className={`text-[11px] font-bold uppercase tracking-[0.16em] ${appDialog.tone === "danger" ? "text-red-500" : "text-sky-600"}`}>
-                        {appDialog.kind === "confirm" ? "Confirmação" : "Aviso"}
-                      </div>
-                      <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{appDialog.title}</div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => resolveAppDialog(false)}
-                      className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="px-6 py-6 text-sm leading-7 text-slate-600">{appDialog.description}</div>
-                  <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
-                    {appDialog.kind === "confirm" ? (
-                      <button
-                        type="button"
-                        onClick={() => resolveAppDialog(false)}
-                        className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
-                      >
-                        {appDialog.cancelLabel ?? "Cancelar"}
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => resolveAppDialog(true)}
-                      className={`inline-flex h-11 items-center justify-center rounded-2xl px-5 text-sm font-semibold text-white transition disabled:cursor-not-allowed ${appDialog.tone === "danger" ? "bg-red-600 hover:bg-red-700" : "bg-[#1A1C32] hover:bg-[#111426]"}`}
-                    >
-                      {appDialog.confirmLabel ?? "Entendi"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
           </>
         ) : (
           <EmptyCenter />
         )}
+        {appDialog ? (
+          <div className="fixed inset-0 z-[120] flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+            <div className="my-auto flex w-full max-w-lg flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                <div>
+                  <div className={`text-[11px] font-bold uppercase tracking-[0.16em] ${appDialog.tone === "danger" ? "text-red-500" : "text-sky-600"}`}>
+                    {appDialog.kind === "confirm" ? "Confirmação" : "Aviso"}
+                  </div>
+                  <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{appDialog.title}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => resolveAppDialog(false)}
+                  className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="px-6 py-6 text-sm leading-7 text-slate-600">{appDialog.description}</div>
+              <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
+                {appDialog.kind === "confirm" ? (
+                  <button
+                    type="button"
+                    onClick={() => resolveAppDialog(false)}
+                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                  >
+                    {appDialog.cancelLabel ?? "Cancelar"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => resolveAppDialog(true)}
+                  className={`inline-flex h-11 items-center justify-center rounded-2xl px-5 text-sm font-semibold text-white transition disabled:cursor-not-allowed ${appDialog.tone === "danger" ? "bg-red-600 hover:bg-red-700" : "bg-[#1A1C32] hover:bg-[#111426]"}`}
+                >
+                  {appDialog.confirmLabel ?? "Entendi"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </>
     );
   })();
