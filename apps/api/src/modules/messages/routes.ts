@@ -3,7 +3,14 @@ import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import type { Prisma } from '@prisma/client';
 import { requirePermission } from '../../lib/auth-guard.js';
-import { sendEvolutionDeleteMessage, sendEvolutionReaction, sendEvolutionUpdateMessage } from '../../lib/evolution-client.js';
+import {
+  sendEvolutionAudio,
+  sendEvolutionDeleteMessage,
+  sendEvolutionMedia,
+  sendEvolutionReaction,
+  sendEvolutionText,
+  sendEvolutionUpdateMessage,
+} from '../../lib/evolution-client.js';
 import { loadEnv } from '../../config/env.js';
 import { decryptSecret, encryptSecret } from '../../lib/secrets.js';
 import type { PermissionMap } from '../../lib/permissions.js';

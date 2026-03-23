@@ -4864,6 +4864,7 @@ export default function HomePage() {
                 </div>
               </form>
               </div>
+            </div>
 
               {showTicketDetails ? (
                 <aside className="hidden w-[320px] shrink-0 border-l border-slate-200 bg-white xl:flex xl:flex-col">
