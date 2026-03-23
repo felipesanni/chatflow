@@ -1,4 +1,5 @@
 export const EVOLUTION_EVENT_QUEUE = 'evolution-events';
+export const SCHEDULED_MESSAGE_QUEUE = 'scheduled-messages';
 
 export interface EvolutionEventJobPayload {
   source: string;
@@ -9,3 +10,6 @@ export interface EvolutionEventJobPayload {
   validateSecret?: boolean;
 }
 
+export interface ScheduledMessageJobPayload {
+  scheduledMessageId: string;
+}

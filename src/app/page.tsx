@@ -144,6 +144,25 @@ type ComposerAttachment = {
   dataUrl: string;
 };
 
+type ScheduledMessageItem = {
+  id: string;
+  ticketId: string;
+  body: string | null;
+  contentType: string;
+  internalNote: boolean;
+  attachment?: ComposerAttachment | null;
+  replyToMessageId?: string | null;
+  sendAt: string;
+  status: "pending" | "processing" | "failed" | "sent" | "canceled";
+  errorMessage?: string | null;
+  sentAt?: string | null;
+  createdAt: string;
+  createdBy: {
+    id: string;
+    name: string;
+  };
+};
+
 type InstanceItem = {
   id: string;
   name: string;
@@ -509,6 +528,11 @@ function formatHour(value: string) {
   }
 }
 
+function toDateTimeLocalValue(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function formatDurationMetric(minutes: number | null | undefined) {
   if (minutes == null || Number.isNaN(minutes)) return "Sem base";
   if (minutes < 60) return `${Math.round(minutes)} min`;
@@ -764,6 +788,7 @@ export default function HomePage() {
   const [showTicketDetails, setShowTicketDetails] = React.useState(false);
   const [showTransferPanel, setShowTransferPanel] = React.useState(false);
   const [showGroupNameModal, setShowGroupNameModal] = React.useState(false);
+  const [showScheduleModal, setShowScheduleModal] = React.useState(false);
   const [appDialog, setAppDialog] = React.useState<AppDialogState | null>(null);
   const [profileName, setProfileName] = React.useState("");
   const [profileAvatarPreview, setProfileAvatarPreview] = React.useState<string | null>(null);
@@ -771,6 +796,11 @@ export default function HomePage() {
   const [brandMode, setBrandMode] = React.useState<"default" | "image" | "text">("default");
   const [brandText, setBrandText] = React.useState("CHATFLOW");
   const [composerAttachment, setComposerAttachment] = React.useState<ComposerAttachment | null>(null);
+  const [scheduledMessages, setScheduledMessages] = React.useState<ScheduledMessageItem[]>([]);
+  const [scheduleLoading, setScheduleLoading] = React.useState(false);
+  const [scheduleForm, setScheduleForm] = React.useState({
+    sendAt: toDateTimeLocalValue(new Date(Date.now() + 60 * 60 * 1000)),
+  });
   const [showEmojiPicker, setShowEmojiPicker] = React.useState(false);
   const [recordingAudio, setRecordingAudio] = React.useState(false);
   const [openMessageMenuId, setOpenMessageMenuId] = React.useState<string | null>(null);
@@ -1393,6 +1423,17 @@ export default function HomePage() {
     }
   }, [user]);
 
+  const refreshScheduledMessages = React.useCallback(async (ticketId: string) => {
+    if (!user) return;
+
+    try {
+      const payload = await apiFetch<{ items: ScheduledMessageItem[] }>(`/tickets/${ticketId}/scheduled-messages`, { method: "GET" });
+      setScheduledMessages(payload.items);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar mensagens agendadas.");
+    }
+  }, [user]);
+
   const refreshInstances = React.useCallback(async () => {
     if (!user || !normalizePermissions(user.role, user.permissions)["channels.view"]) return;
     try {
@@ -1468,13 +1509,14 @@ export default function HomePage() {
     await refreshTickets();
     if (selectedTicketId) {
       await refreshMessages(selectedTicketId);
+      await refreshScheduledMessages(selectedTicketId);
     }
     await refreshInstances();
     await refreshAgents();
     await refreshQueues();
     await refreshCustomers();
     await refreshQuickReplies();
-  }, [refreshAgents, refreshCustomers, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshQuickReplies, refreshTickets, selectedTicketId]);
+  }, [refreshAgents, refreshCustomers, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshQuickReplies, refreshScheduledMessages, refreshTickets, selectedTicketId]);
 
   React.useEffect(() => {
     void refreshAuth();
@@ -1522,11 +1564,27 @@ export default function HomePage() {
   }, [refreshMessages, selectedTicketId, user]);
 
   React.useEffect(() => {
+    if (!selectedTicketId || !user) {
+      setScheduledMessages([]);
+      return;
+    }
+
+    void refreshScheduledMessages(selectedTicketId);
+  }, [refreshScheduledMessages, selectedTicketId, user]);
+
+  React.useEffect(() => {
     setGroupNameInput(selectedTicket?.manualGroupName ?? selectedTicket?.customerName ?? "");
   }, [selectedTicket?.customerName, selectedTicket?.id, selectedTicket?.manualGroupName]);
 
   React.useEffect(() => {
     setShowGroupNameModal(false);
+  }, [selectedTicket?.id]);
+
+  React.useEffect(() => {
+    setShowScheduleModal(false);
+    setScheduleForm({
+      sendAt: toDateTimeLocalValue(new Date(Date.now() + 60 * 60 * 1000)),
+    });
   }, [selectedTicket?.id]);
 
   function resolveAppDialog(value: boolean) {
@@ -1593,15 +1651,17 @@ export default function HomePage() {
       const ticketIdToRefresh = payload?.ticketId ?? selectedTicketId;
       if (ticketIdToRefresh) {
         void refreshMessages(ticketIdToRefresh, { silent: true });
+        void refreshScheduledMessages(ticketIdToRefresh);
       }
     };
-    socket.on("connect", () => {
-      void refreshDashboard();
-      void refreshTickets();
-      if (selectedTicketId) {
-        void refreshMessages(selectedTicketId, { silent: true });
-      }
-    });
+      socket.on("connect", () => {
+        void refreshDashboard();
+        void refreshTickets();
+        if (selectedTicketId) {
+          void refreshMessages(selectedTicketId, { silent: true });
+          void refreshScheduledMessages(selectedTicketId);
+        }
+      });
     socket.on("connect_error", () => {
       setPanelMessage("Conexão em tempo real indisponível. O painel continua funcionando por atualização periódica.");
     });
@@ -1617,7 +1677,7 @@ export default function HomePage() {
       socket.disconnect();
       socketRef.current = null;
     };
-    }, [refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
+    }, [refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!user) return;
@@ -1627,11 +1687,12 @@ export default function HomePage() {
         return;
       }
 
-      void refreshDashboard();
-      void refreshTickets();
-      if (selectedTicketId) {
-        void refreshMessages(selectedTicketId, { silent: true });
-      }
+        void refreshDashboard();
+        void refreshTickets();
+        if (selectedTicketId) {
+          void refreshMessages(selectedTicketId, { silent: true });
+          void refreshScheduledMessages(selectedTicketId);
+        }
 
       if (user.role === "admin") {
         void refreshInstances();
@@ -1641,18 +1702,19 @@ export default function HomePage() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
+    }, [refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!user) return;
 
-    const handleVisibilityOrFocus = () => {
-      void refreshDashboard();
-      void refreshTickets();
-      if (selectedTicketId) {
-        void refreshMessages(selectedTicketId, { silent: true });
-      }
-    };
+      const handleVisibilityOrFocus = () => {
+        void refreshDashboard();
+        void refreshTickets();
+        if (selectedTicketId) {
+          void refreshMessages(selectedTicketId, { silent: true });
+          void refreshScheduledMessages(selectedTicketId);
+        }
+      };
 
     if (typeof window !== "undefined") {
       window.addEventListener("focus", handleVisibilityOrFocus);
@@ -1670,7 +1732,7 @@ export default function HomePage() {
         document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
       }
     };
-  }, [refreshDashboard, refreshMessages, refreshTickets, selectedTicketId, user]);
+    }, [refreshDashboard, refreshMessages, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!messagesViewportRef.current || !shouldStickMessagesToBottomRef.current) {
@@ -2169,6 +2231,86 @@ export default function HomePage() {
       setPanelMessage(error instanceof Error ? error.message : editingMessageId ? "Falha ao editar mensagem." : "Falha ao enviar mensagem.");
     } finally {
       setSendLoading(false);
+    }
+  }
+
+  async function handleScheduleMessage() {
+    if (!selectedTicketId) return;
+
+    const trimmedInput = messageInput.trim();
+    if (!trimmedInput && !composerAttachment) {
+      setPanelMessage("Escreva uma mensagem ou anexe um arquivo antes de agendar.");
+      return;
+    }
+
+    const shortcutMatch = trimmedInput.match(/^\/([a-z0-9_-]+)$/i);
+    const resolvedBody =
+      shortcutMatch
+        ? quickReplies.find((item) => item.isActive && item.shortcut.toLowerCase() === shortcutMatch[1].toLowerCase())?.content ?? trimmedInput
+        : trimmedInput;
+
+    setScheduleLoading(true);
+    try {
+      await apiFetch(`/tickets/${selectedTicketId}/scheduled-messages`, {
+        method: "POST",
+        body: JSON.stringify({
+          body: resolvedBody,
+          internalNote: composerInternalNoteMode,
+          replyToMessageId: replyToMessageId ?? undefined,
+          sendAt: new Date(scheduleForm.sendAt).toISOString(),
+          attachment: composerAttachment
+            ? {
+                kind: composerAttachment.kind,
+                fileName: composerAttachment.fileName,
+                mimeType: composerAttachment.mimeType,
+                sizeBytes: composerAttachment.sizeBytes,
+                dataUrl: composerAttachment.dataUrl,
+              }
+            : undefined,
+        }),
+      });
+
+      setEditingMessageId(null);
+      setReplyToMessageId(null);
+      setComposerInternalNoteMode(false);
+      setMessageInput("");
+      setComposerAttachment(null);
+      setShowScheduleModal(false);
+      await refreshScheduledMessages(selectedTicketId);
+      setPanelMessage("Mensagem agendada com sucesso.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao agendar mensagem.");
+    } finally {
+      setScheduleLoading(false);
+    }
+  }
+
+  async function handleCancelScheduledMessage(scheduledMessageId: string) {
+    if (!selectedTicketId) return;
+
+    const confirmed = await openConfirmDialog({
+      title: "Cancelar mensagem agendada",
+      description: "Essa mensagem não será mais enviada automaticamente.",
+      confirmLabel: "Cancelar agendamento",
+      cancelLabel: "Voltar",
+      tone: "danger",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    setScheduleLoading(true);
+    try {
+      await apiFetch(`/tickets/${selectedTicketId}/scheduled-messages/${scheduledMessageId}`, {
+        method: "DELETE",
+      });
+      await refreshScheduledMessages(selectedTicketId);
+      setPanelMessage("Mensagem agendada cancelada.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao cancelar mensagem agendada.");
+    } finally {
+      setScheduleLoading(false);
     }
   }
 
@@ -4527,7 +4669,36 @@ export default function HomePage() {
                 </div>
               </div>
 
-              <form onSubmit={handleSendMessage} className="border-t border-slate-200 bg-white px-4 py-2.5 md:px-5">
+                <div className="border-t border-slate-200 bg-white">
+                  {scheduledMessages.length > 0 ? (
+                    <div className="border-b border-slate-200 px-4 py-3 md:px-5">
+                      <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Mensagens agendadas</div>
+                      <div className="space-y-2">
+                        {scheduledMessages.map((item) => (
+                          <div key={item.id} className="flex items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                            <div className="min-w-0">
+                              <div className="text-sm font-semibold text-slate-800">
+                                {item.body?.trim() || (item.attachment ? `[${item.attachment.kind}] ${item.attachment.fileName}` : "Mensagem agendada")}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                {item.internalNote ? "Observação interna" : "Envio externo"} • {formatDateTime(item.sendAt)} • {item.createdBy.name}
+                              </div>
+                              {item.errorMessage ? <div className="mt-1 text-xs text-red-500">{item.errorMessage}</div> : null}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void handleCancelScheduledMessage(item.id)}
+                              className="shrink-0 rounded-full border border-red-200 bg-white px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-red-500 transition hover:bg-red-50"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                <form onSubmit={handleSendMessage} className="px-4 py-2.5 md:px-5">
                 <input ref={attachmentUploadRef} type="file" className="hidden" onChange={(event) => void handleComposerAttachmentChange(event)} />
                 {isEditingMessage && editingMessage ? (
                   <div className="mb-3 flex items-center justify-between gap-3 rounded-[22px] border border-emerald-100 bg-emerald-50/80 px-4 py-3">
@@ -4671,6 +4842,16 @@ export default function HomePage() {
                         </div>
                       ) : null}
                   </div>
+                  <button
+                    type="button"
+                    aria-label="Agendar mensagem"
+                    onClick={() => setShowScheduleModal(true)}
+                    disabled={sendLoading || isEditingMessage || (!messageInput.trim() && !composerAttachment) || shouldDisableComposer}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-[13px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                  >
+                    <Clock className="h-4 w-4" />
+                    Agendar
+                  </button>
                   <button
                     type="submit"
                     aria-label="Enviar mensagem"
@@ -4898,6 +5079,62 @@ export default function HomePage() {
                       className="inline-flex h-11 items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
                     >
                       {groupNameSaving ? "Salvando..." : "Salvar nome"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {showScheduleModal && selectedTicket ? (
+              <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+                <div className="my-auto flex w-full max-w-xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Agendar mensagem</div>
+                      <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{selectedTicketDisplayName}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowScheduleModal(false)}
+                      className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="space-y-4 px-6 py-6">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Prévia</div>
+                      <div className="mt-2 text-sm text-slate-700">
+                        {messageInput.trim() || (composerAttachment ? `[${composerAttachment.kind}] ${composerAttachment.fileName}` : "Mensagem vazia")}
+                      </div>
+                    </div>
+                    <label className="block text-sm font-medium text-slate-600">
+                      Enviar em
+                      <input
+                        type="datetime-local"
+                        value={scheduleForm.sendAt}
+                        onChange={(event) => setScheduleForm({ sendAt: event.target.value })}
+                        className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                      />
+                    </label>
+                    <div className="text-sm text-slate-500">
+                      A mensagem ficará pendente e será enviada automaticamente no horário definido.
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
+                    <button
+                      type="button"
+                      onClick={() => setShowScheduleModal(false)}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleScheduleMessage()}
+                      disabled={scheduleLoading}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      {scheduleLoading ? "Agendando..." : "Confirmar agendamento"}
                     </button>
                   </div>
                 </div>

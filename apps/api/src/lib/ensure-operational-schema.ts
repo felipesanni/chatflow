@@ -86,6 +86,14 @@ const operationalStatements = [
     END $$;
   `,
   `
+    DO $$
+    BEGIN
+      CREATE TYPE "ScheduledMessageStatus" AS ENUM ('pending', 'processing', 'sent', 'failed', 'canceled');
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `,
+  `
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
@@ -323,6 +331,32 @@ const operationalStatements = [
   `,
   `
     CREATE INDEX IF NOT EXISTS webhook_logs_received_at_idx ON webhook_logs(received_at DESC);
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS scheduled_messages (
+      id UUID PRIMARY KEY,
+      ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+      created_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      body TEXT,
+      content_type "MessageContentType" NOT NULL DEFAULT 'text',
+      attachment_payload JSONB,
+      internal_note BOOLEAN NOT NULL DEFAULT FALSE,
+      reply_to_message_id UUID REFERENCES ticket_messages(id) ON DELETE SET NULL,
+      send_at TIMESTAMPTZ NOT NULL,
+      status "ScheduledMessageStatus" NOT NULL DEFAULT 'pending',
+      error_message TEXT,
+      sent_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS scheduled_messages_ticket_id_send_at_idx
+      ON scheduled_messages(ticket_id, send_at ASC);
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS scheduled_messages_status_send_at_idx
+      ON scheduled_messages(status, send_at ASC);
   `,
   `
     CREATE TABLE IF NOT EXISTS queue_agents (

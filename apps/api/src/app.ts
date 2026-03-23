@@ -19,6 +19,7 @@ import { quickReplyRoutes } from './modules/quick-replies/routes.js';
 import { queueRoutes } from './modules/queues/routes.js';
 import { ticketRoutes } from './modules/tickets/routes.js';
 import { messageRoutes } from './modules/messages/routes.js';
+import { scheduledMessageRoutes } from './modules/scheduled-messages/routes.js';
 import { whatsappRoutes } from './modules/whatsapp/routes.js';
 
 export async function buildApp() {
@@ -58,6 +59,7 @@ export async function buildApp() {
   await app.register(queueRoutes, { prefix: '/api' });
   await app.register(ticketRoutes, { prefix: '/api' });
   await app.register(messageRoutes, { prefix: '/api' });
+  await app.register(scheduledMessageRoutes, { prefix: '/api' });
   await app.register(whatsappRoutes, { prefix: '/api' });
 
   return app;

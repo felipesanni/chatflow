@@ -73,6 +73,14 @@ enum TicketEventType {
   tag_removed
 }
 
+enum ScheduledMessageStatus {
+  pending
+  processing
+  sent
+  failed
+  canceled
+}
+
 model User {
   id          String      @id @db.Uuid
   email       String      @unique
@@ -86,6 +94,7 @@ model User {
   agent       Agent?
   assignmentActions TicketAssignment[] @relation("assignment_created_by")
   ticketEvents TicketEvent[]
+  scheduledMessages ScheduledMessage[] @relation("scheduled_message_created_by")
 
   @@map("users")
 }
@@ -200,6 +209,7 @@ model Ticket {
   messages             TicketMessage[]
   assignments          TicketAssignment[]
   events               TicketEvent[]
+  scheduledMessages    ScheduledMessage[]
 
   @@index([status, updatedAt(sort: Desc)])
   @@index([currentAgentId, updatedAt(sort: Desc)])
@@ -243,10 +253,35 @@ model TicketMessage {
   replyToMessage   TicketMessage?     @relation("message_replies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
   replies          TicketMessage[]    @relation("message_replies")
   attachments      Attachment[]
+  scheduledReplies ScheduledMessage[] @relation("scheduled_message_reply_to")
 
   @@index([ticketId, createdAt(sort: Asc)])
   @@index([externalMessageId])
   @@map("ticket_messages")
+}
+
+model ScheduledMessage {
+  id               String                 @id @db.Uuid
+  ticketId         String                 @map("ticket_id") @db.Uuid
+  createdByUserId  String                 @map("created_by_user_id") @db.Uuid
+  body             String?
+  contentType      MessageContentType     @default(text) @map("content_type")
+  attachmentPayload Json?                 @map("attachment_payload")
+  internalNote     Boolean                @default(false) @map("internal_note")
+  replyToMessageId String?                @map("reply_to_message_id") @db.Uuid
+  sendAt           DateTime               @map("send_at")
+  status           ScheduledMessageStatus @default(pending)
+  errorMessage     String?                @map("error_message")
+  sentAt           DateTime?              @map("sent_at")
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
+  ticket           Ticket                 @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  createdByUser    User                   @relation("scheduled_message_created_by", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  replyToMessage   TicketMessage?         @relation("scheduled_message_reply_to", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, sendAt(sort: Asc)])
+  @@index([status, sendAt(sort: Asc)])
+  @@map("scheduled_messages")
 }
 
 model Attachment {
