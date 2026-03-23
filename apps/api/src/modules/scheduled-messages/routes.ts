@@ -211,7 +211,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
       { scheduledMessageId: item.id },
       {
         delayMs: Math.max(0, sendAt.getTime() - Date.now()),
-        jobId: `scheduled-message:${item.id}`,
+        jobId: `scheduled-message-${item.id}`,
       },
     );
 
