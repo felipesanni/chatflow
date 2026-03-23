@@ -6,6 +6,7 @@ import type { PermissionMap } from '../../lib/permissions.js';
 
 const dashboardQuerySchema = z.object({
   range: z.enum(['today', '7d', '30d']).optional().default('7d'),
+  agentId: z.string().uuid().optional(),
 });
 
 function startOfDay(date: Date) {
@@ -96,6 +97,13 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     const query = dashboardQuerySchema.parse(request.query);
     const range = buildRange(query.range);
     const visibleTicketWhere = buildVisibleTicketWhere(access.permissions, access.queueIds, access.session.userId);
+    const selectedAgentId = query.agentId ?? null;
+
+    if (selectedAgentId && selectedAgentId !== access.session.userId && !access.permissions['team.view']) {
+      return reply.forbidden('Voce nao possui permissao para visualizar o dashboard de outros usuarios.');
+    }
+
+    const selectedAgentConstraint = selectedAgentId ? { currentAgentId: selectedAgentId } : {};
     const closedVisibilityConstraint = access.permissions['tickets.closedView']
       ? {}
       : { status: { in: ['open', 'pending'] as TicketStatus[] } };
@@ -104,6 +112,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       where: {
         AND: [
           visibleTicketWhere,
+          selectedAgentConstraint,
           { status: { in: ['open', 'pending'] as TicketStatus[] } },
         ],
       },
@@ -127,6 +136,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       where: {
         AND: [
           visibleTicketWhere,
+          selectedAgentConstraint,
           closedVisibilityConstraint,
           {
             OR: [
@@ -157,6 +167,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         ticket: {
           AND: [
             visibleTicketWhere,
+            selectedAgentConstraint,
             closedVisibilityConstraint,
           ],
         },
@@ -333,6 +344,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         from: range.from,
         to: range.to,
       },
+      selectedAgentId,
       overview: {
         openTickets: activeTickets.filter((ticket) => ticket.status === 'open' && !ticket.isGroup).length,
         pendingTickets: activeTickets.filter((ticket) => ticket.status === 'pending' && !ticket.isGroup).length,

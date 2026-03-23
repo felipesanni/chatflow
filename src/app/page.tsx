@@ -226,6 +226,7 @@ type DashboardOverview = {
     from: string;
     to: string;
   };
+  selectedAgentId: string | null;
   overview: {
     openTickets: number;
     pendingTickets: number;
@@ -723,6 +724,7 @@ export default function HomePage() {
   const [quickReplies, setQuickReplies] = React.useState<QuickReplyItem[]>([]);
   const [dashboardOverview, setDashboardOverview] = React.useState<DashboardOverview | null>(null);
   const [dashboardRange, setDashboardRange] = React.useState<DashboardRangeKey>("7d");
+  const [dashboardAgentId, setDashboardAgentId] = React.useState<string>("all");
 
   const [ticketLoading, setTicketLoading] = React.useState(false);
   const [messageLoading, setMessageLoading] = React.useState(false);
@@ -932,6 +934,32 @@ export default function HomePage() {
   const canViewClosedTickets = currentUser.permissions["tickets.closedView"];
   const isClosedTicketsWorkspace = activeWorkspace === "closedTickets";
   const canDeleteSelectedTicket = Boolean(selectedTicket && canBulkDeleteTickets);
+  const dashboardAgentOptions = React.useMemo(() => {
+    const options = [{ id: "all", name: "Visão geral" }];
+    const seen = new Set<string>(["all"]);
+
+    if (currentUser.id) {
+      options.push({ id: currentUser.id, name: `Meu desempenho (${currentUser.name || "Usuário atual"})` });
+      seen.add(currentUser.id);
+    }
+
+    if (canViewTeam) {
+      for (const agent of agents) {
+        if (!seen.has(agent.id)) {
+          options.push({ id: agent.id, name: agent.name });
+          seen.add(agent.id);
+        }
+      }
+    }
+
+    return options;
+  }, [agents, canViewTeam, currentUser.id, currentUser.name]);
+
+  React.useEffect(() => {
+    if (!dashboardAgentOptions.some((option) => option.id === dashboardAgentId)) {
+      setDashboardAgentId("all");
+    }
+  }, [dashboardAgentId, dashboardAgentOptions]);
 
   const isSelectedTicketOwnedByCurrentUser = Boolean(selectedTicket && selectedTicket.currentAgent?.id === user?.id);
   const canAcceptSelectedTicket = Boolean(
@@ -1421,14 +1449,19 @@ export default function HomePage() {
     if (!user || !normalizePermissions(user.role, user.permissions)["dashboard.view"]) return;
     setDashboardLoading(true);
     try {
-      const payload = await apiFetch<DashboardOverview>(`/dashboard/overview?range=${dashboardRange}`, { method: "GET" });
+      const query = new URLSearchParams({ range: dashboardRange });
+      if (dashboardAgentId !== "all") {
+        query.set("agentId", dashboardAgentId);
+      }
+
+      const payload = await apiFetch<DashboardOverview>(`/dashboard/overview?${query.toString()}`, { method: "GET" });
       setDashboardOverview(payload);
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar o painel geral.");
     } finally {
       setDashboardLoading(false);
     }
-  }, [dashboardRange, user]);
+  }, [dashboardAgentId, dashboardRange, user]);
 
   const refreshAll = React.useCallback(async () => {
     await refreshDashboard();
@@ -2818,6 +2851,15 @@ export default function HomePage() {
 
   async function handleDeleteAgent(agentId: string, agentName: string) {
     if (!canDeleteAgents) return;
+    if (agentId === currentUser.id) {
+      await openAlertDialog({
+        title: "Exclusão não permitida",
+        description: "Você não pode excluir o próprio usuário enquanto estiver autenticado.",
+        confirmLabel: "Entendi",
+        tone: "default",
+      });
+      return;
+    }
 
     const confirmed = await openConfirmDialog({
       title: "Excluir usuário",
@@ -3073,6 +3115,7 @@ export default function HomePage() {
     if (activeWorkspace === "dashboard") {
       const periodLabel = dashboardOverview?.period.label ?? "Carregando";
       const maxDailyVolume = Math.max(...(dashboardOverview?.dailySeries.map((item) => Math.max(item.created, item.closed, item.inbound, item.outbound)) ?? [1]));
+      const selectedDashboardAgentLabel = dashboardAgentOptions.find((option) => option.id === dashboardAgentId)?.name ?? "Visão geral";
 
       return (
         <div className="flex h-full flex-col gap-4 p-6">
@@ -3081,19 +3124,36 @@ export default function HomePage() {
               <div>
                 <div className="text-sm font-semibold text-slate-900">Período analisado</div>
                 <div className="mt-1 text-sm text-slate-500">{periodLabel}</div>
+                <div className="mt-1 text-sm text-slate-500">Escopo: {selectedDashboardAgentLabel}</div>
               </div>
-              <label className="block text-sm font-medium text-slate-600">
-                <span className="sr-only">Período do dashboard</span>
-                <select
-                  value={dashboardRange}
-                  onChange={(event) => setDashboardRange(event.target.value as DashboardRangeKey)}
-                  className="h-11 min-w-[180px] rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-                >
-                  <option value="today">Hoje</option>
-                  <option value="7d">Últimos 7 dias</option>
-                  <option value="30d">Últimos 30 dias</option>
-                </select>
-              </label>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <label className="block text-sm font-medium text-slate-600">
+                  <span className="sr-only">Escopo do dashboard</span>
+                  <select
+                    value={dashboardAgentId}
+                    onChange={(event) => setDashboardAgentId(event.target.value)}
+                    className="h-11 min-w-[220px] rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                  >
+                    {dashboardAgentOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-sm font-medium text-slate-600">
+                  <span className="sr-only">Período do dashboard</span>
+                  <select
+                    value={dashboardRange}
+                    onChange={(event) => setDashboardRange(event.target.value as DashboardRangeKey)}
+                    className="h-11 min-w-[180px] rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                  >
+                    <option value="today">Hoje</option>
+                    <option value="7d">Últimos 7 dias</option>
+                    <option value="30d">Últimos 30 dias</option>
+                  </select>
+                </label>
+              </div>
             </div>
           </WorkspaceSection>
 
@@ -3367,7 +3427,7 @@ export default function HomePage() {
                                 </button>
                               </>
                             ) : null}
-                            {canDeleteAgents ? (
+                            {canDeleteAgents && agent.id !== currentUser.id ? (
                               <button type="button" onClick={() => void handleDeleteAgent(agent.id, agent.name)} className="inline-flex items-center gap-2 text-sm font-medium text-rose-600 transition hover:text-rose-700">
                                 <Trash2 className="h-4 w-4" />
                                 Excluir
@@ -3948,7 +4008,7 @@ export default function HomePage() {
                                 </button>
                               </>
                             ) : null}
-                            {canDeleteAgents ? (
+                            {canDeleteAgents && agent.id !== currentUser.id ? (
                               <button type="button" onClick={() => void handleDeleteAgent(agent.id, agent.name)} className="inline-flex items-center gap-2 text-sm font-medium text-rose-600 transition hover:text-rose-700">
                                 <Trash2 className="h-4 w-4" />
                                 Excluir
