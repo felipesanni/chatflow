@@ -64,6 +64,7 @@ type TicketItem = {
   status: "open" | "pending" | "closed";
   customerId?: string | null;
   customerName: string;
+  manualGroupName?: string | null;
   externalChatId: string;
   externalContactId?: string | null;
   customerAvatarUrl?: string | null;
@@ -72,7 +73,7 @@ type TicketItem = {
   isGroup: boolean;
   updatedAt: string;
   currentAgent: { id: string; name: string } | null;
-  currentQueue: { id: string; name: string } | null;
+  currentQueue: { id: string; name: string; color?: string | null } | null;
   whatsappInstance: { id: string; name: string };
 };
 
@@ -205,6 +206,15 @@ type QuickReplyItem = {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+};
+
+type AppDialogState = {
+  kind: "alert" | "confirm";
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  tone?: "default" | "danger";
 };
 
 const permissionDefinitions = [
@@ -633,6 +643,7 @@ export default function HomePage() {
   const [quickReplyLoading, setQuickReplyLoading] = React.useState(false);
   const [customerLoading, setCustomerLoading] = React.useState(false);
   const [conversationLoading, setConversationLoading] = React.useState(false);
+  const [groupNameSaving, setGroupNameSaving] = React.useState(false);
   const [assignmentLoading, setAssignmentLoading] = React.useState<string | null>(null);
   const [editingInstanceId, setEditingInstanceId] = React.useState<string | null>(null);
   const [editingAgentId, setEditingAgentId] = React.useState<string | null>(null);
@@ -646,6 +657,7 @@ export default function HomePage() {
   const [editingMessageId, setEditingMessageId] = React.useState<string | null>(null);
   const [replyToMessageId, setReplyToMessageId] = React.useState<string | null>(null);
   const [composerInternalNoteMode, setComposerInternalNoteMode] = React.useState(false);
+  const [groupNameInput, setGroupNameInput] = React.useState("");
   const [searchQuery, setSearchQuery] = React.useState("");
   const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "grupos">("atendendo");
   const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
@@ -658,6 +670,8 @@ export default function HomePage() {
   const [selectedQueueFilter, setSelectedQueueFilter] = React.useState<string>("all");
   const [showTicketDetails, setShowTicketDetails] = React.useState(false);
   const [showTransferPanel, setShowTransferPanel] = React.useState(false);
+  const [showGroupNameModal, setShowGroupNameModal] = React.useState(false);
+  const [appDialog, setAppDialog] = React.useState<AppDialogState | null>(null);
   const [profileName, setProfileName] = React.useState("");
   const [profileAvatarPreview, setProfileAvatarPreview] = React.useState<string | null>(null);
   const [brandLogoPreview, setBrandLogoPreview] = React.useState<string | null>(null);
@@ -748,6 +762,7 @@ export default function HomePage() {
     note: "",
   });
   const socketRef = React.useRef<Socket | null>(null);
+  const appDialogResolverRef = React.useRef<((value: boolean) => void) | null>(null);
   const userMenuRef = React.useRef<HTMLDivElement | null>(null);
   const messageMenuRef = React.useRef<HTMLDivElement | null>(null);
   const attachmentUploadRef = React.useRef<HTMLInputElement | null>(null);
@@ -774,8 +789,8 @@ export default function HomePage() {
   }, [customers, selectedTicket]);
   const selectedTicketDisplayName = React.useMemo(() => {
     if (!selectedTicket) return "";
-    const baseName = selectedCustomer?.name ?? selectedTicket.customerName;
-    return selectedCustomer?.companyName ? `${baseName} - ${selectedCustomer.companyName}` : baseName;
+    const baseName = selectedTicket.isGroup ? selectedTicket.customerName : (selectedCustomer?.name ?? selectedTicket.customerName);
+    return selectedTicket.isGroup ? baseName : (selectedCustomer?.companyName ? `${baseName} - ${selectedCustomer.companyName}` : baseName);
   }, [selectedCustomer?.companyName, selectedTicket]);
   const editingMessage = React.useMemo(
     () => messages.find((message) => message.id === editingMessageId) ?? null,
@@ -800,8 +815,8 @@ export default function HomePage() {
       ? customers.find((customer) => customer.id === ticket.customerId)
       : customers.find((customer) => onlyPhoneDigits(customer.phone ?? "") === onlyPhoneDigits(ticket.externalContactId ?? ticket.externalChatId));
 
-    const baseName = matchedCustomer?.name ?? ticket.customerName;
-    return matchedCustomer?.companyName ? `${baseName} - ${matchedCustomer.companyName}` : baseName;
+    const baseName = ticket.isGroup ? ticket.customerName : (matchedCustomer?.name ?? ticket.customerName);
+    return ticket.isGroup ? baseName : (matchedCustomer?.companyName ? `${baseName} - ${matchedCustomer.companyName}` : baseName);
   }
 
   const canViewGroups = currentUser.permissions["tickets.groups"];
@@ -1354,6 +1369,35 @@ export default function HomePage() {
     shouldStickMessagesToBottomRef.current = true;
     void refreshMessages(selectedTicketId);
   }, [refreshMessages, selectedTicketId, user]);
+
+  React.useEffect(() => {
+    setGroupNameInput(selectedTicket?.manualGroupName ?? selectedTicket?.customerName ?? "");
+  }, [selectedTicket?.customerName, selectedTicket?.id, selectedTicket?.manualGroupName]);
+
+  React.useEffect(() => {
+    setShowGroupNameModal(false);
+  }, [selectedTicket?.id]);
+
+  function resolveAppDialog(value: boolean) {
+    const resolver = appDialogResolverRef.current;
+    appDialogResolverRef.current = null;
+    setAppDialog(null);
+    resolver?.(value);
+  }
+
+  function openConfirmDialog(config: Omit<AppDialogState, "kind">) {
+    return new Promise<boolean>((resolve) => {
+      appDialogResolverRef.current = resolve;
+      setAppDialog({ ...config, kind: "confirm" });
+    });
+  }
+
+  function openAlertDialog(config: Omit<AppDialogState, "kind" | "cancelLabel">) {
+    return new Promise<boolean>((resolve) => {
+      appDialogResolverRef.current = resolve;
+      setAppDialog({ ...config, kind: "alert" });
+    });
+  }
 
   React.useEffect(() => {
     setSelectedTicketIdsForBulkDelete((current) => current.filter((ticketId) => tickets.some((ticket) => ticket.id === ticketId)));
@@ -2064,7 +2108,13 @@ export default function HomePage() {
       return;
     }
 
-    if (typeof window !== "undefined" && !window.confirm("Apagar esta mensagem para todos?")) {
+    if (!(await openConfirmDialog({
+      title: "Apagar mensagem para todos",
+      description: "Essa ação tenta remover a mensagem para todos os participantes da conversa.",
+      confirmLabel: "Apagar para todos",
+      cancelLabel: "Cancelar",
+      tone: "danger",
+    }))) {
       return;
     }
 
@@ -2085,7 +2135,13 @@ export default function HomePage() {
       return;
     }
 
-    if (typeof window !== "undefined" && !window.confirm("Apagar esta mensagem apenas para você?")) {
+    if (!(await openConfirmDialog({
+      title: "Apagar mensagem para você",
+      description: "A mensagem será removida apenas da sua visualização no painel.",
+      confirmLabel: "Apagar para mim",
+      cancelLabel: "Cancelar",
+      tone: "danger",
+    }))) {
       return;
     }
 
@@ -2133,9 +2189,13 @@ export default function HomePage() {
       return;
     }
 
-    const confirmed = typeof window === "undefined"
-      ? true
-      : window.confirm(`Apagar ${selectedTicketIdsForBulkDelete.length} ticket(s) selecionado(s)? Esta ação remove o histórico desses tickets no painel.`);
+    const confirmed = await openConfirmDialog({
+      title: "Apagar tickets em lote",
+      description: `Apagar ${selectedTicketIdsForBulkDelete.length} ticket(s) selecionado(s)? Esta ação remove o histórico desses tickets no painel.`,
+      confirmLabel: "Apagar tickets",
+      cancelLabel: "Cancelar",
+      tone: "danger",
+    });
 
     if (!confirmed) {
       return;
@@ -2164,9 +2224,13 @@ export default function HomePage() {
       return;
     }
 
-    const confirmed = typeof window === "undefined"
-      ? true
-      : window.confirm(`Apagar ${selectedMessageIdsForBulkDelete.length} mensagem(ns) selecionada(s)? Esta ação remove essas mensagens do ticket no painel.`);
+    const confirmed = await openConfirmDialog({
+      title: "Apagar mensagens em lote",
+      description: `Apagar ${selectedMessageIdsForBulkDelete.length} mensagem(ns) selecionada(s)? Esta ação remove essas mensagens do ticket no painel.`,
+      confirmLabel: "Apagar mensagens",
+      cancelLabel: "Cancelar",
+      tone: "danger",
+    });
 
     if (!confirmed) {
       return;
@@ -2196,9 +2260,13 @@ export default function HomePage() {
       return;
     }
 
-    const confirmed = typeof window === "undefined"
-      ? true
-      : window.confirm(`Apagar o ticket de ${selectedTicket?.customerName ?? "contato"}? Esta ação remove o histórico deste ticket no painel.`);
+    const confirmed = await openConfirmDialog({
+      title: "Apagar ticket",
+      description: `Apagar o ticket de ${selectedTicket?.customerName ?? "contato"}? Esta ação remove o histórico deste ticket no painel.`,
+      confirmLabel: "Apagar ticket",
+      cancelLabel: "Cancelar",
+      tone: "danger",
+    });
 
     if (!confirmed) {
       return;
@@ -2218,6 +2286,29 @@ export default function HomePage() {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao apagar ticket.");
     } finally {
       setBulkDeleteLoading(false);
+    }
+  }
+
+  async function handleSaveSelectedGroupName() {
+    if (!selectedTicket || !selectedTicket.isGroup || groupNameSaving) {
+      return;
+    }
+
+    setGroupNameSaving(true);
+    try {
+      await apiFetch(`/tickets/${selectedTicket.id}/group-name`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: groupNameInput.trim() || null,
+        }),
+      });
+      await refreshTickets();
+      setShowGroupNameModal(false);
+      setPanelMessage("Nome manual do grupo atualizado.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao salvar o nome manual do grupo.");
+    } finally {
+      setGroupNameSaving(false);
     }
   }
 
@@ -2614,9 +2705,13 @@ export default function HomePage() {
   async function handleDeleteCustomer(customerId: string) {
     if (!canManageContacts) return;
 
-    const confirmed = typeof window === "undefined"
-      ? true
-      : window.confirm("Deseja realmente excluir este contato? Os tickets continuarão no histórico, mas o vínculo com o contato será removido.");
+    const confirmed = await openConfirmDialog({
+      title: "Excluir contato",
+      description: "Os tickets continuarão no histórico, mas o vínculo com o contato será removido.",
+      confirmLabel: "Excluir contato",
+      cancelLabel: "Cancelar",
+      tone: "danger",
+    });
 
     if (!confirmed) {
       return;
@@ -2664,7 +2759,12 @@ export default function HomePage() {
       const matchedCustomer = customers.find((customer) => customer.phone && onlyPhoneDigits(customer.phone) === normalizedPhone) ?? null;
 
       if (existingOpenConversationTicket) {
-        window.alert(`Ja existe um ticket aberto com ${existingOpenConversationTicket.customerName} nesta instancia para este numero.`);
+        await openAlertDialog({
+          title: "Ticket já existente",
+          description: `Já existe um ticket aberto com ${existingOpenConversationTicket.customerName} nesta instância para este número.`,
+          confirmLabel: "Abrir ticket",
+          tone: "default",
+        });
         closeManagementModal();
         setSelectedTicketId(existingOpenConversationTicket.id);
         setActiveWorkspace("tickets");
@@ -2687,7 +2787,12 @@ export default function HomePage() {
       setSelectedTicketId(payload.item.id);
       setActiveWorkspace("tickets");
       if (!payload.created) {
-        window.alert(`Ja existe um ticket aberto com ${payload.item.customerName} nesta instancia para este numero.`);
+        await openAlertDialog({
+          title: "Ticket já existente",
+          description: `Já existe um ticket aberto com ${payload.item.customerName} nesta instância para este número.`,
+          confirmLabel: "Abrir ticket",
+          tone: "default",
+        });
       }
       setPanelMessage(payload.created ? "Nova conversa iniciada." : "Conversa existente aberta.");
     } catch (error) {
@@ -4225,7 +4330,17 @@ export default function HomePage() {
                           <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                             <div className="flex items-center justify-between gap-3 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
                               <span>{selectedTicket.isGroup ? "Grupo" : "Nome"}</span>
-                              {!selectedTicket.isGroup && selectedCustomer && canManageContacts ? (
+                              {selectedTicket.isGroup ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setShowGroupNameModal(true)}
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:border-slate-300 hover:text-slate-700"
+                                  aria-label="Renomear grupo"
+                                  title="Renomear grupo"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                              ) : selectedCustomer && canManageContacts ? (
                                 <button
                                   type="button"
                                   onClick={() => startEditCustomer(selectedCustomer, { preserveWorkspace: true })}
@@ -4236,7 +4351,9 @@ export default function HomePage() {
                                 </button>
                               ) : null}
                             </div>
-                            <div className="mt-1 text-sm font-semibold text-slate-800">{selectedCustomer?.name ?? selectedTicket.customerName}</div>
+                            <div className="mt-1 text-sm font-semibold text-slate-800">
+                              {selectedTicket.isGroup ? selectedTicket.customerName : (selectedCustomer?.name ?? selectedTicket.customerName)}
+                            </div>
                           </div>
                           {!selectedTicket.isGroup ? (
                             <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
@@ -4357,6 +4474,96 @@ export default function HomePage() {
                       </button>
                     </div>
                   </form>
+                </div>
+              </div>
+            ) : null}
+            {showGroupNameModal && selectedTicket?.isGroup ? (
+              <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+                <div className="my-auto flex w-full max-w-lg flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Renomear grupo</div>
+                      <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{selectedTicket.customerName}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowGroupNameModal(false)}
+                      className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="space-y-4 px-6 py-6">
+                    <div className="text-sm text-slate-500">
+                      Defina um nome manual para este grupo. Ele terá prioridade sobre o nome recebido pela Evolution.
+                    </div>
+                    <input
+                      value={groupNameInput}
+                      onChange={(event) => setGroupNameInput(event.target.value)}
+                      placeholder="Ex.: Grupo Comercial"
+                      className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                    />
+                  </div>
+                  <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowGroupNameModal(false);
+                        setGroupNameInput(selectedTicket.manualGroupName ?? selectedTicket.customerName ?? "");
+                      }}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveSelectedGroupName()}
+                      disabled={groupNameSaving}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      {groupNameSaving ? "Salvando..." : "Salvar nome"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {appDialog ? (
+              <div className="absolute inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+                <div className="my-auto flex w-full max-w-lg flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+                  <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                    <div>
+                      <div className={`text-[11px] font-bold uppercase tracking-[0.16em] ${appDialog.tone === "danger" ? "text-red-500" : "text-sky-600"}`}>
+                        {appDialog.kind === "confirm" ? "Confirmação" : "Aviso"}
+                      </div>
+                      <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{appDialog.title}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => resolveAppDialog(false)}
+                      className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="px-6 py-6 text-sm leading-7 text-slate-600">{appDialog.description}</div>
+                  <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
+                    {appDialog.kind === "confirm" ? (
+                      <button
+                        type="button"
+                        onClick={() => resolveAppDialog(false)}
+                        className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                      >
+                        {appDialog.cancelLabel ?? "Cancelar"}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => resolveAppDialog(true)}
+                      className={`inline-flex h-11 items-center justify-center rounded-2xl px-5 text-sm font-semibold text-white transition disabled:cursor-not-allowed ${appDialog.tone === "danger" ? "bg-red-600 hover:bg-red-700" : "bg-[#1A1C32] hover:bg-[#111426]"}`}
+                    >
+                      {appDialog.confirmLabel ?? "Entendi"}
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -5286,7 +5493,11 @@ export default function HomePage() {
                                   <MiniBadge className="bg-blue-600 text-white" text="GRUPO" />
                                 ) : (
                                   <>
-                                    <MiniBadge className="bg-red-500 text-white" text={ticket.currentQueue?.name ?? "SEM FILA"} />
+                                    <MiniBadge
+                                      className={ticket.currentQueue?.color ? "text-white" : "bg-red-500 text-white"}
+                                      text={ticket.currentQueue?.name ?? "SEM FILA"}
+                                      style={ticket.currentQueue?.color ? { backgroundColor: ticket.currentQueue.color } : undefined}
+                                    />
                   <MiniBadge className="bg-slate-900 text-white" text={ticket.isGroup ? "COMPARTILHADO" : (ticket.currentAgent?.name ?? "SEM AGENTE")} />
                                   </>
                                 )}
@@ -5456,8 +5667,8 @@ function StatusTab(props: { label: string; count: number; active: boolean; onCli
   );
 }
 
-function MiniBadge(props: { text: string; className: string }) {
-  return <span className={`inline-flex max-w-full truncate rounded-md px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] ${props.className}`}>{props.text}</span>;
+function MiniBadge(props: { text: string; className: string; style?: React.CSSProperties }) {
+  return <span style={props.style} className={`inline-flex max-w-full truncate rounded-md px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] ${props.className}`}>{props.text}</span>;
 }
 
 function statusBadgeClassName(status: "open" | "pending" | "closed") {

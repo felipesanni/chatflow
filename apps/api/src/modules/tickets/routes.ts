@@ -76,6 +76,10 @@ const closeTicketBodySchema = z.preprocess((value) => {
   reason: z.string().trim().min(1).optional(),
 }));
 
+const updateGroupNameBodySchema = z.object({
+  name: z.string().trim().max(120).nullable().optional(),
+});
+
 function normalizePhone(value: string) {
   const digits = value.replace(/\D+/g, '');
 
@@ -138,7 +142,9 @@ function buildDuplicateGroupSummary(groupKey: string, items: Array<any>) {
     canonicalChatId: primary.externalContactId ?? primary.externalChatId,
     whatsappInstanceId: primary.whatsappInstanceId,
     whatsappInstanceName: primary.whatsappInstance.name,
-    customerName: primary.customerNameSnapshot,
+    customerName: (primary.isGroup && typeof primary.title === 'string' && primary.title.trim().length > 0)
+      ? primary.title.trim()
+      : primary.customerNameSnapshot,
     isGroup: primary.isGroup,
     totalTickets: sortedItems.length,
     items: sortedItems.map((ticket) => ({
@@ -187,18 +193,24 @@ async function findOrCreateCustomer(
 }
 
 function serializeTicket(ticket: any) {
+  const manualGroupName = ticket.isGroup && typeof ticket.title === 'string' && ticket.title.trim().length > 0
+    ? ticket.title.trim()
+    : null;
+  const displayName = manualGroupName ?? ticket.customerNameSnapshot;
+
   return {
     id: ticket.id,
     status: ticket.status,
     customerId: ticket.customerId,
-    customerName: ticket.customerNameSnapshot,
+    customerName: displayName,
+    manualGroupName,
     externalChatId: ticket.externalChatId,
     externalContactId: ticket.externalContactId,
     customerAvatarUrl: ticket.customerAvatarUrl,
     lastMessagePreview: ticket.lastMessagePreview,
     unreadCount: ticket.unreadCount,
     currentAgent: ticket.currentAgent ? { id: ticket.currentAgent.id, name: ticket.currentAgent.name } : null,
-    currentQueue: ticket.currentQueue ? { id: ticket.currentQueue.id, name: ticket.currentQueue.name } : null,
+    currentQueue: ticket.currentQueue ? { id: ticket.currentQueue.id, name: ticket.currentQueue.name, color: ticket.currentQueue.color } : null,
     whatsappInstance: { id: ticket.whatsappInstance.id, name: ticket.whatsappInstance.name },
     isGroup: ticket.isGroup,
     updatedAt: ticket.updatedAt,
@@ -270,6 +282,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         whatsappInstanceId: true,
         externalChatId: true,
         externalContactId: true,
+        title: true,
         customerNameSnapshot: true,
         status: true,
         unreadCount: true,
@@ -388,6 +401,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
           ? [{
               OR: [
                 { customerNameSnapshot: { contains: query.search, mode: 'insensitive' as const } },
+                { title: { contains: query.search, mode: 'insensitive' as const } },
                 { externalChatId: { contains: query.search, mode: 'insensitive' as const } },
                 { lastMessagePreview: { contains: query.search, mode: 'insensitive' as const } },
               ],
@@ -447,7 +461,12 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       item: {
         id: ticket.id,
         status: ticket.status,
-        customerName: ticket.customerNameSnapshot,
+        customerName: (ticket.isGroup && typeof ticket.title === 'string' && ticket.title.trim().length > 0)
+          ? ticket.title.trim()
+          : ticket.customerNameSnapshot,
+        manualGroupName: ticket.isGroup && typeof ticket.title === 'string' && ticket.title.trim().length > 0
+          ? ticket.title.trim()
+          : null,
         externalChatId: ticket.externalChatId,
         externalContactId: ticket.externalContactId,
         customerAvatarUrl: ticket.customerAvatarUrl,
@@ -457,7 +476,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         isGroup: ticket.isGroup,
         customer: ticket.customer,
         currentAgent: ticket.currentAgent,
-        currentQueue: ticket.currentQueue,
+        currentQueue: ticket.currentQueue ? { ...ticket.currentQueue, color: ticket.currentQueue.color } : null,
         whatsappInstance: ticket.whatsappInstance,
         createdAt: ticket.createdAt,
         updatedAt: ticket.updatedAt,
@@ -466,6 +485,75 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         id: session.userId,
         role: session.role,
       },
+    };
+  });
+
+  app.patch('/tickets/:ticketId/group-name', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.view');
+    if (!access) return;
+    const session = access.session;
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const body = updateGroupNameBodySchema.parse(request.body ?? {});
+
+    const currentTicket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      include: {
+        currentAgent: true,
+        currentQueue: true,
+        whatsappInstance: true,
+      },
+    });
+
+    if (!currentTicket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!currentTicket.isGroup) {
+      return reply.badRequest('Somente grupos aceitam apelido manual.');
+    }
+
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, currentTicket)) {
+      return reply.forbidden('Voce nao possui permissao para editar este grupo.');
+    }
+
+    const normalizedName = typeof body.name === 'string' && body.name.trim().length > 0
+      ? body.name.trim()
+      : null;
+
+    const ticket = await app.prisma.ticket.update({
+      where: { id: params.ticketId },
+      data: {
+        title: normalizedName,
+      },
+      include: {
+        currentAgent: true,
+        currentQueue: true,
+        whatsappInstance: true,
+      },
+    });
+
+    await app.prisma.ticketEvent.create({
+      data: {
+        id: randomUUID(),
+        ticketId: ticket.id,
+        eventType: 'assigned',
+        actorUserId: session.userId,
+        metadata: {
+          action: 'group_name_updated',
+          manualGroupName: normalizedName,
+        },
+      },
+    });
+
+    app.io.emit('ticket.updated', {
+      ticketId: ticket.id,
+      status: ticket.status,
+      currentAgentId: ticket.currentAgentId,
+      currentQueueId: ticket.currentQueueId,
+    });
+
+    return {
+      item: serializeTicket(ticket),
     };
   });
 
