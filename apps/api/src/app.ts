@@ -9,6 +9,7 @@ import { realtimePlugin } from './plugins/realtime.js';
 import { evolutionSocketsPlugin } from './plugins/evolution-sockets.js';
 import { ensureBootstrapAdmin } from './lib/bootstrap-admin.js';
 import { ensureOperationalSchema } from './lib/ensure-operational-schema.js';
+import { createEvolutionDebugMonitor } from './lib/evolution-debug.js';
 import { healthRoutes } from './modules/health/routes.js';
 import { authRoutes } from './modules/auth/routes.js';
 import { agentRoutes } from './modules/agents/routes.js';
@@ -42,6 +43,7 @@ export async function buildApp() {
   await app.register(realtimePlugin, {
     corsOrigin: env.WEB_APP_URL,
   });
+  app.decorate('evolutionDebug', createEvolutionDebugMonitor());
   await ensureOperationalSchema(app);
   await ensureBootstrapAdmin(app, env);
   await app.register(evolutionSocketsPlugin);

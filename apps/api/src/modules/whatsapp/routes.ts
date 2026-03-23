@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import { requirePermission } from '../../lib/auth-guard.js';
 import { loadEnv } from '../../config/env.js';
+import { buildEvolutionDebugEntry } from '../../lib/evolution-debug.js';
 import { decryptSecret, encryptSecret } from '../../lib/secrets.js';
 import { configureEvolutionWebSocket } from '../../lib/evolution-client.js';
 import { pickEvolutionIncomingSecret, processEvolutionEvent } from '../../lib/evolution-events.js';
@@ -40,6 +41,10 @@ const updateInstanceSchema = z.object({
   defaultQueueId: optionalQueueIdSchema,
 });
 
+const debugEventsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+});
+
 const env = loadEnv();
 
 export const whatsappRoutes: FastifyPluginAsync = async (app) => {
@@ -53,6 +58,17 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
       validateSecret: true,
     };
 
+    const debugEntry = buildEvolutionDebugEntry({
+      source: 'webhook',
+      event: body.event ?? 'UNKNOWN',
+      payload: body,
+      instanceName: body.instance,
+      baseUrl: null,
+      socketUrl: null,
+    });
+    app.evolutionDebug.push(debugEntry);
+    app.io.emit('evolution.debug', debugEntry);
+
     if (app.jobs.enabled) {
       const jobId = await app.jobs.enqueueEvolutionEvent(jobPayload);
       return reply.code(202).send({
@@ -63,6 +79,22 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
 
     const result = await processEvolutionEvent(app, jobPayload);
     return reply.code(result.statusCode).send(result.body);
+  });
+
+  app.get('/whatsapp/debug/events', async (request, reply) => {
+    if (!(await requirePermission(app, request, reply, 'channels.manage'))) return;
+
+    const query = debugEventsQuerySchema.parse(request.query ?? {});
+    return reply.send({
+      items: app.evolutionDebug.list(query.limit),
+    });
+  });
+
+  app.delete('/whatsapp/debug/events', async (request, reply) => {
+    if (!(await requirePermission(app, request, reply, 'channels.manage'))) return;
+
+    app.evolutionDebug.clear();
+    return reply.code(204).send();
   });
 
   app.get('/whatsapp/instances', async (request, reply) => {

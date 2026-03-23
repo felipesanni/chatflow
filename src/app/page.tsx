@@ -207,6 +207,31 @@ type QuickReplyItem = {
   updatedAt: string;
 };
 
+type EvolutionDebugEvent = {
+  id: string;
+  recordedAt: string;
+  stage: "received";
+  source: "webhook" | "socket";
+  event: string;
+  instanceName: string | null;
+  baseUrl: string | null;
+  socketUrl: string | null;
+  remoteJid: string | null;
+  isGroup: boolean;
+  groupName: string | null;
+  pushName: string | null;
+  verifiedBizName: string | null;
+  bodyPreview: string | null;
+  contentType: string | null;
+  payloadSummary: {
+    topLevelKeys: string[];
+    dataKeys: string[];
+    firstDataItemKeys: string[];
+    hasDataArray: boolean;
+    dataLength: number | null;
+  };
+};
+
 const permissionDefinitions = [
   { key: "dashboard.view", group: "Painel geral", label: "Visualizar painel geral" },
   { key: "tickets.view", group: "Atendimento", label: "Visualizar atendimento" },
@@ -245,6 +270,39 @@ type PermissionMap = Record<PermissionKey, boolean>;
 type WorkspaceKey = "dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings";
 
 const permissionKeys = permissionDefinitions.map((item) => item.key) as PermissionKey[];
+const EVOLUTION_DEBUG_STORAGE_KEY = "chatflow:evolution-debug-events";
+const EVOLUTION_DEBUG_RETENTION_MS = 6 * 60 * 60 * 1000;
+
+function pruneEvolutionDebugEvents(events: EvolutionDebugEvent[]) {
+  const cutoff = Date.now() - EVOLUTION_DEBUG_RETENTION_MS;
+  return events.filter((event) => {
+    const recordedAt = Date.parse(event.recordedAt);
+    return Number.isFinite(recordedAt) && recordedAt >= cutoff;
+  });
+}
+
+function readStoredEvolutionDebugEvents() {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = window.localStorage.getItem(EVOLUTION_DEBUG_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return pruneEvolutionDebugEvents(parsed as EvolutionDebugEvent[]);
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredEvolutionDebugEvents(events: EvolutionDebugEvent[]) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(EVOLUTION_DEBUG_STORAGE_KEY, JSON.stringify(pruneEvolutionDebugEvents(events)));
+  } catch {}
+}
+
 const workspacePermissions: Record<WorkspaceKey, PermissionKey> = {
   dashboard: "dashboard.view",
   tickets: "tickets.view",
@@ -622,6 +680,7 @@ export default function HomePage() {
   const [queues, setQueues] = React.useState<QueueItem[]>([]);
   const [customers, setCustomers] = React.useState<CustomerItem[]>([]);
   const [quickReplies, setQuickReplies] = React.useState<QuickReplyItem[]>([]);
+  const [evolutionDebugEvents, setEvolutionDebugEvents] = React.useState<EvolutionDebugEvent[]>([]);
 
   const [ticketLoading, setTicketLoading] = React.useState(false);
   const [messageLoading, setMessageLoading] = React.useState(false);
@@ -1383,6 +1442,14 @@ export default function HomePage() {
   }, [isClosedTicketsWorkspace]);
 
   React.useEffect(() => {
+    setEvolutionDebugEvents(readStoredEvolutionDebugEvents());
+  }, []);
+
+  React.useEffect(() => {
+    writeStoredEvolutionDebugEvents(evolutionDebugEvents);
+  }, [evolutionDebugEvents]);
+
+  React.useEffect(() => {
     if (!user || !SOCKET_URL) return;
 
     const socket = io(SOCKET_URL, {
@@ -1398,6 +1465,12 @@ export default function HomePage() {
       if (ticketIdToRefresh) {
         void refreshMessages(ticketIdToRefresh, { silent: true });
       }
+    };
+    const handleEvolutionDebugEvent = (payload: EvolutionDebugEvent) => {
+      setEvolutionDebugEvents((current) => {
+        const next = pruneEvolutionDebugEvents([payload, ...current.filter((item) => item.id !== payload.id)]);
+        return next.slice(0, 200);
+      });
     };
 
     socket.on("connect", () => {
@@ -1416,6 +1489,7 @@ export default function HomePage() {
     socket.on("instance.updated", () => void refreshInstances());
     socket.on("agent.updated", () => void refreshAgents());
     socket.on("queue.updated", () => void refreshQueues());
+    socket.on("evolution.debug", handleEvolutionDebugEvent);
 
     return () => {
       socket.disconnect();
@@ -2814,6 +2888,12 @@ export default function HomePage() {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
           <WorkspaceSection title="Canais e instâncias" description="Gerencie as conexões com a Evolution em visualização de lista.">
+            <EvolutionDebugMonitorCard
+              events={evolutionDebugEvents}
+              socketReady={Boolean(SOCKET_URL)}
+              onClear={() => setEvolutionDebugEvents([])}
+            />
+
             <ModuleToolbar
               title="Conexões"
               count={filteredInstances.length}
@@ -5587,6 +5667,59 @@ function WorkspaceSection(props: { title: string; description: string; children:
       </div>
       <div className="space-y-4">{props.children}</div>
     </section>
+  );
+}
+
+function EvolutionDebugMonitorCard(props: { events: EvolutionDebugEvent[]; socketReady: boolean; onClear: () => void }) {
+  const events = props.events.slice(0, 12);
+
+  return (
+    <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-4">
+      <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="text-sm font-semibold uppercase tracking-[0.05em] text-slate-500">Monitor Evolution</div>
+          <div className="mt-1 text-xl font-semibold text-slate-900">Eventos recebidos no frontend via Socket.IO</div>
+          <div className="mt-1 text-sm text-slate-500">
+            Retenção local de até 6 horas no navegador. {props.socketReady ? "Atualização em tempo real ativa." : "Socket não configurado."}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={props.onClear}
+          className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+        >
+          Limpar monitor
+        </button>
+      </div>
+
+      {events.length === 0 ? (
+        <p className="pt-4 text-sm text-slate-500">Nenhum evento monitorado ainda. Envie uma mensagem no grupo para verificar se `groupName`, `pushName` e `remoteJid` chegam ao frontend.</p>
+      ) : (
+        <div className="mt-4 grid gap-3">
+          {events.map((event) => (
+            <article key={event.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusChip tone={event.isGroup ? "success" : "default"}>{event.event}</StatusChip>
+                <StatusChip tone={event.source === "socket" ? "success" : "warning"}>{event.source}</StatusChip>
+                <span className="text-xs text-slate-400">{formatDateTime(event.recordedAt)}</span>
+              </div>
+              <div className="mt-3 grid gap-2 text-sm text-slate-600 md:grid-cols-2">
+                <div><span className="font-semibold text-slate-800">Instância:</span> {event.instanceName ?? "Sem instância"}</div>
+                <div><span className="font-semibold text-slate-800">Remote JID:</span> {event.remoteJid ?? "Sem remoteJid"}</div>
+                <div><span className="font-semibold text-slate-800">Nome do grupo:</span> {event.groupName ?? "Não informado"}</div>
+                <div><span className="font-semibold text-slate-800">Push name:</span> {event.pushName ?? "Não informado"}</div>
+                <div><span className="font-semibold text-slate-800">Biz name:</span> {event.verifiedBizName ?? "Não informado"}</div>
+                <div><span className="font-semibold text-slate-800">Content type:</span> {event.contentType ?? "Não informado"}</div>
+              </div>
+              {event.bodyPreview ? <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-600">{event.bodyPreview}</p> : null}
+              <div className="mt-3 text-xs text-slate-400">
+                keys: {event.payloadSummary.topLevelKeys.join(", ") || "nenhuma"} {event.payloadSummary.dataKeys.length > 0 ? `| data: ${event.payloadSummary.dataKeys.join(", ")}` : ""}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

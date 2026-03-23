@@ -581,16 +581,31 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         ?? metadataAliases.find((alias) => alias.includes('@'))
         ?? null;
       const metadataDisplayName = extractMetadataDisplayName(params.payload, parsed);
-      const fetchedMetadataGroupLookup =
-        metadataIsGroup
-        && metadataRemoteJid
+        const fetchedMetadataGroupLookup =
+          metadataIsGroup
+          && metadataRemoteJid
           ? await fetchEvolutionGroupName({
               baseUrl: instance.baseUrl,
               apiKey: decryptedApiKey,
               instanceName: instance.evolutionInstanceName,
               remoteJid: metadataRemoteJid,
-            }).catch(() => null)
-          : null;
+            }).catch((error) => {
+              app.log.error({
+                action: 'evolution_group_lookup_error',
+                instanceId: instance.id,
+                remoteJid: metadataRemoteJid,
+                phase: 'metadata',
+                error: error instanceof Error
+                  ? {
+                      name: error.name,
+                      message: error.message,
+                      stack: error.stack,
+                    }
+                  : error,
+              }, 'Falha ao consultar nome de grupo na Evolution.');
+              return null;
+            })
+            : null;
       const fetchedMetadataGroupName = fetchedMetadataGroupLookup?.groupName ?? null;
       if (metadataIsGroup && metadataRemoteJid && fetchedMetadataGroupLookup) {
         app.log.info({
@@ -997,14 +1012,29 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           remoteJid: profilePictureTarget,
         }).catch(() => null);
     const fetchedCustomerAvatarUrl = profilePictureResponse?.profilePictureUrl ?? null;
-    const fetchedGroupLookup = parsed.isGroup && resolvedRemoteJid
-      ? await fetchEvolutionGroupName({
-          baseUrl: instance.baseUrl,
-          apiKey: decryptedApiKey,
-          instanceName: instance.evolutionInstanceName,
-          remoteJid: resolvedRemoteJid,
-        }).catch(() => null)
-      : null;
+      const fetchedGroupLookup = parsed.isGroup && resolvedRemoteJid
+        ? await fetchEvolutionGroupName({
+            baseUrl: instance.baseUrl,
+            apiKey: decryptedApiKey,
+            instanceName: instance.evolutionInstanceName,
+            remoteJid: resolvedRemoteJid,
+          }).catch((error) => {
+            app.log.error({
+              action: 'evolution_group_lookup_error',
+              instanceId: instance.id,
+              remoteJid: resolvedRemoteJid,
+              phase: 'message',
+              error: error instanceof Error
+                ? {
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack,
+                  }
+                : error,
+            }, 'Falha ao consultar nome de grupo na Evolution.');
+            return null;
+          })
+        : null;
     const fetchedGroupName = fetchedGroupLookup?.groupName ?? null;
     if (parsed.isGroup && resolvedRemoteJid && fetchedGroupLookup) {
       app.log.info({

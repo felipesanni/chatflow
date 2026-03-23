@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { io, type Socket } from 'socket.io-client';
 import { decryptSecret } from '../lib/secrets.js';
 import { loadEnv } from '../config/env.js';
+import { buildEvolutionDebugEntry, type EvolutionDebugMonitor } from '../lib/evolution-debug.js';
 import { configureEvolutionWebSocket } from '../lib/evolution-client.js';
 import { processEvolutionEvent } from '../lib/evolution-events.js';
 
@@ -13,6 +14,7 @@ interface EvolutionSocketManager {
 declare module 'fastify' {
   interface FastifyInstance {
     evolutionSockets: EvolutionSocketManager;
+    evolutionDebug: EvolutionDebugMonitor;
   }
 }
 
@@ -151,6 +153,17 @@ export const evolutionSocketsPlugin = fp(async (app: FastifyInstance) => {
               socketUrl: instanceSocketUrl,
               payloadInstance: typeof payload?.instance === 'string' ? payload.instance : null,
             }, 'Evento recebido da Evolution via websocket.');
+
+            const debugEntry = buildEvolutionDebugEntry({
+              source: 'socket',
+              event: eventName,
+              payload,
+              instanceName: instance.evolutionInstanceName,
+              baseUrl: instance.baseUrl,
+              socketUrl: instanceSocketUrl,
+            });
+            app.evolutionDebug.push(debugEntry);
+            app.io.emit('evolution.debug', debugEntry);
 
             if (app.jobs.enabled) {
               await app.jobs.enqueueEvolutionEvent({
