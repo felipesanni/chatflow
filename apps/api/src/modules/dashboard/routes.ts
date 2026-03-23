@@ -115,6 +115,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         title: true,
         unreadCount: true,
         createdAt: true,
+        closedAt: true,
         updatedAt: true,
         currentAgent: { select: { id: true, name: true } },
         currentQueue: { select: { id: true, name: true, color: true } },
