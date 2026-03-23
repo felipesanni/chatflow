@@ -753,7 +753,6 @@ export default function HomePage() {
   const [showRail, setShowRail] = React.useState(false);
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
   const [showOnlyUnread, setShowOnlyUnread] = React.useState(false);
-  const [showOnlyMine, setShowOnlyMine] = React.useState(false);
   const [showAllTickets, setShowAllTickets] = React.useState(false);
   const [selectedQueueFilter, setSelectedQueueFilter] = React.useState<string>("all");
   const [showTicketDetails, setShowTicketDetails] = React.useState(false);
@@ -918,6 +917,7 @@ export default function HomePage() {
   const canManageQueues = currentUser.permissions["queues.manage"];
   const canAssignQueues = currentUser.permissions["queues.assign"];
   const canStartConversation = currentUser.permissions["tickets.reply"];
+  const canViewOtherTickets = currentUser.permissions["tickets.viewOthers"] || currentUser.permissions["tickets.viewAll"];
   const canReplyUnassignedTickets = currentUser.permissions["tickets.replyUnassigned"];
   const canViewContacts = currentUser.permissions["contacts.view"];
   const canManageContacts = currentUser.permissions["contacts.manage"];
@@ -994,25 +994,21 @@ export default function HomePage() {
     return tickets.filter((ticket) => {
       const matchesTab = isClosedTicketsWorkspace
         ? ticket.status === "closed" && !ticket.isGroup
-        : showAllTickets
-          ? currentUser.role === "agent"
-            ? !ticket.isGroup && ticket.currentAgent?.id === user?.id
-            : true
-          : activeTab === "grupos"
-            ? ticket.isGroup
-            : activeTab === "aguardando"
-              ? ticket.status === "pending" && !ticket.isGroup
-              : ticket.status === "open" && !ticket.isGroup;
+        : activeTab === "grupos"
+          ? ticket.isGroup
+          : activeTab === "aguardando"
+            ? ticket.status === "pending" && !ticket.isGroup
+            : ticket.status === "open" && !ticket.isGroup;
 
       if (!matchesTab) {
         return false;
       }
 
-      if (showOnlyUnread && ticket.unreadCount === 0) {
+      if (!isClosedTicketsWorkspace && (!showAllTickets || !canViewOtherTickets) && ticket.currentAgent?.id !== user?.id) {
         return false;
       }
 
-      if (showOnlyMine && ticket.currentAgent?.id !== user?.id) {
+      if (showOnlyUnread && ticket.unreadCount === 0) {
         return false;
       }
 
@@ -1039,17 +1035,24 @@ export default function HomePage() {
           .toLowerCase()
           .includes(search);
     });
-  }, [activeTab, isClosedTicketsWorkspace, searchQuery, selectedQueueFilter, showAllTickets, showOnlyMine, showOnlyUnread, tickets, user?.id]);
+  }, [activeTab, canViewOtherTickets, isClosedTicketsWorkspace, searchQuery, selectedQueueFilter, showAllTickets, showOnlyUnread, tickets, user?.id]);
 
-  const counters = React.useMemo(
-    () => ({
-      atendendo: tickets.filter((ticket) => ticket.status === "open" && !ticket.isGroup).length,
-      aguardando: tickets.filter((ticket) => ticket.status === "pending" && !ticket.isGroup).length,
-      fechados: tickets.filter((ticket) => ticket.status === "closed" && !ticket.isGroup).length,
-      grupos: tickets.filter((ticket) => ticket.isGroup).length,
-    }),
-    [tickets],
-  );
+  const counters = React.useMemo(() => {
+    const scopedTickets = tickets.filter((ticket) => {
+      if (showAllTickets && canViewOtherTickets) {
+        return true;
+      }
+
+      return ticket.currentAgent?.id === user?.id;
+    });
+
+    return {
+      atendendo: scopedTickets.filter((ticket) => ticket.status === "open" && !ticket.isGroup).length,
+      aguardando: scopedTickets.filter((ticket) => ticket.status === "pending" && !ticket.isGroup).length,
+      fechados: scopedTickets.filter((ticket) => ticket.status === "closed" && !ticket.isGroup).length,
+      grupos: scopedTickets.filter((ticket) => ticket.isGroup).length,
+    };
+  }, [canViewOtherTickets, showAllTickets, tickets, user?.id]);
 
   const managementSearch = searchQuery.trim().toLowerCase();
 
@@ -5576,10 +5579,17 @@ export default function HomePage() {
                             }}
                           />
                         ) : null}
-                        {!isClosedTicketsWorkspace ? (
-                          <SidebarIconButton icon={Eye} label={showAllTickets ? "Ocultar todos os tickets" : "Mostrar todos os tickets"} active={showAllTickets} onClick={() => { setShowAllTickets((current) => !current); setActiveWorkspace("tickets"); }} />
+                        {!isClosedTicketsWorkspace && canViewOtherTickets ? (
+                          <SidebarIconButton
+                            icon={showAllTickets ? EyeOff : Eye}
+                            label={showAllTickets ? "Voltar para meus tickets" : "Mostrar demais tickets"}
+                            active={showAllTickets}
+                            onClick={() => {
+                              setShowAllTickets((current) => !current);
+                              setActiveWorkspace("tickets");
+                            }}
+                          />
                         ) : null}
-                        <SidebarIconButton icon={CheckSquare} label="Mostrar apenas meus atendimentos" active={showOnlyMine} onClick={() => setShowOnlyMine((current) => !current)} />
                         <SidebarIconButton icon={EyeOff} label="Mostrar apenas não lidos" active={showOnlyUnread} onClick={() => setShowOnlyUnread((current) => !current)} />
                         </div>
                     <div className="relative min-w-0 max-w-full">
@@ -5615,9 +5625,9 @@ export default function HomePage() {
                     </div>
                   ) : (
                     <div className={`grid items-center gap-2 ${canViewGroups ? "grid-cols-3" : "grid-cols-2"}`}>
-                      <StatusTab label="ATENDENDO" count={counters.atendendo} active={!showAllTickets && activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
-                      <StatusTab label="AGUARDANDO" count={counters.aguardando} active={!showAllTickets && activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
-                      {canViewGroups ? <StatusTab label="GRUPOS" count={counters.grupos} active={!showAllTickets && activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setShowAllTickets(false); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" /> : null}
+                      <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
+                      <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
+                      {canViewGroups ? <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" /> : null}
                     </div>
                   )}
                 </div>
@@ -5664,8 +5674,8 @@ export default function HomePage() {
 
                   <div className="flex-1 min-h-0 min-w-0 overflow-y-auto bg-white px-2 py-2">
                   {visibleTickets.length === 0 ? (
-                    <div className="p-10 text-center text-xs font-medium text-slate-400">
-                      {isClosedTicketsWorkspace ? "Nenhum ticket fechado para os filtros atuais." : showAllTickets ? "Nenhum ticket encontrado para os filtros atuais." : "Nenhum atendimento nesta categoria."}
+                  <div className="p-10 text-center text-xs font-medium text-slate-400">
+                      {isClosedTicketsWorkspace ? "Nenhum ticket fechado para os filtros atuais." : "Nenhum atendimento nesta categoria."}
                     </div>
                   ) : (
                     visibleTickets.map((ticket) => {
