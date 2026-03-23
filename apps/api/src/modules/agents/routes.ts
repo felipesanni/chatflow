@@ -127,7 +127,8 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.put('/agents/:agentId', async (request, reply) => {
-    if (!(await requirePermission(app, request, reply, 'agents.manage'))) return;
+    const access = await requirePermission(app, request, reply, 'agents.manage');
+    if (!access) return;
 
     const params = z.object({ agentId: z.string().uuid() }).parse(request.params);
     const body = updateAgentSchema.parse(request.body);
@@ -153,6 +154,10 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
 
     if (emailConflict) {
       return reply.conflict('Ja existe outro usuario com este e-mail.');
+    }
+
+    if (normalizedPassword && !access.permissions['agents.password.manage']) {
+      return reply.forbidden('Voce nao possui permissao para alterar senhas de usuarios.');
     }
 
     await app.prisma.$transaction(async (tx) => {
@@ -199,6 +204,36 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         permissions: resolvePermissions(body.role, body.permissions ?? defaultPermissionsForRole(body.role)),
         queues: updated?.queueLinks.map((link: any) => ({ id: link.queue.id, name: link.queue.name })) ?? [],
       },
+    });
+  });
+
+  app.delete('/agents/:agentId', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'agents.delete');
+    if (!access) return;
+
+    const params = z.object({ agentId: z.string().uuid() }).parse(request.params);
+
+    if (params.agentId === access.session.userId) {
+      return reply.forbidden('Voce nao pode excluir o proprio usuario.');
+    }
+
+    const existing = await app.prisma.agent.findUnique({
+      where: { id: params.agentId },
+      include: { user: true },
+    });
+
+    if (!existing) {
+      return reply.notFound('Agente nao encontrado.');
+    }
+
+    await app.prisma.user.delete({
+      where: { id: existing.user.id },
+    });
+
+    app.io.emit('agent.updated', { agentId: params.agentId, action: 'deleted' });
+
+    return reply.code(200).send({
+      message: 'Agente excluido com sucesso.',
     });
   });
 };

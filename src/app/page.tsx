@@ -303,6 +303,8 @@ const permissionDefinitions = [
   { key: "quickReplies.manage", group: "Respostas rápidas", label: "Cadastrar e editar respostas rápidas" },
   { key: "team.view", group: "Equipe e filas", label: "Visualizar equipe e filas" },
   { key: "agents.manage", group: "Equipe e filas", label: "Cadastrar e editar usuários" },
+  { key: "agents.delete", group: "Equipe e filas", label: "Excluir usuários" },
+  { key: "agents.password.manage", group: "Equipe e filas", label: "Alterar senhas de usuários" },
   { key: "queues.manage", group: "Equipe e filas", label: "Cadastrar e editar filas" },
   { key: "queues.assign", group: "Equipe e filas", label: "Associar agentes às filas" },
   { key: "api.view", group: "API", label: "Visualizar módulo de API" },
@@ -366,6 +368,8 @@ function defaultPermissionsForRole(role: "admin" | "agent"): PermissionMap {
     "quickReplies.manage": false,
     "team.view": false,
     "agents.manage": false,
+    "agents.delete": false,
+    "agents.password.manage": false,
     "queues.manage": false,
     "queues.assign": false,
     "api.view": false,
@@ -914,6 +918,8 @@ export default function HomePage() {
   const canManageInstances = currentUser.permissions["channels.manage"];
   const canManageQuickReplies = currentUser.permissions["quickReplies.manage"];
   const canManageAgents = currentUser.permissions["agents.manage"];
+  const canDeleteAgents = currentUser.permissions["agents.delete"];
+  const canManageAgentPasswords = currentUser.permissions["agents.password.manage"];
   const canManageQueues = currentUser.permissions["queues.manage"];
   const canAssignQueues = currentUser.permissions["queues.assign"];
   const canStartConversation = currentUser.permissions["tickets.reply"];
@@ -2762,6 +2768,11 @@ export default function HomePage() {
       return;
     }
 
+    if (editingAgentId && trimmedPassword && !canManageAgentPasswords) {
+      setPanelMessage("Você não possui permissão para alterar senhas de usuários.");
+      return;
+    }
+
     setAgentLoading(true);
     try {
       const payload = {
@@ -2802,6 +2813,41 @@ export default function HomePage() {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao criar fila.");
     } finally {
       setQueueLoading(false);
+    }
+  }
+
+  async function handleDeleteAgent(agentId: string, agentName: string) {
+    if (!canDeleteAgents) return;
+
+    const confirmed = await openConfirmDialog({
+      title: "Excluir usuário",
+      description: `Deseja realmente excluir ${agentName}? Esta ação não poderá ser desfeita.`,
+      confirmLabel: "Excluir usuário",
+      cancelLabel: "Cancelar",
+      tone: "danger",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    setAgentLoading(true);
+    try {
+      await apiFetch(`/agents/${agentId}`, {
+        method: "DELETE",
+      });
+
+      if (editingAgentId === agentId) {
+        resetAgentForm();
+        closeManagementModal();
+      }
+
+      setPanelMessage("Usuário excluído.");
+      await refreshAgents();
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao excluir usuário.");
+    } finally {
+      setAgentLoading(false);
     }
   }
 
@@ -3307,16 +3353,26 @@ export default function HomePage() {
                       <DataCell subtle>{agent.presence}</DataCell>
                       <DataCell subtle>{agent.queues.map((queue) => queue.name).join(", ") || "Sem filas"}</DataCell>
                       <DataCell>
-                        {canManageAgents ? (
+                        {canManageAgents || canDeleteAgents ? (
                           <div className="flex items-center gap-4">
-                            <button type="button" onClick={() => startDuplicateAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-sky-600 transition hover:text-sky-700">
-                              <Plus className="h-4 w-4" />
-                              Duplicar
-                            </button>
-                            <button type="button" onClick={() => startEditAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
-                              <Pencil className="h-4 w-4" />
-                              Editar
-                            </button>
+                            {canManageAgents ? (
+                              <>
+                                <button type="button" onClick={() => startDuplicateAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-sky-600 transition hover:text-sky-700">
+                                  <Plus className="h-4 w-4" />
+                                  Duplicar
+                                </button>
+                                <button type="button" onClick={() => startEditAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                                  <Pencil className="h-4 w-4" />
+                                  Editar
+                                </button>
+                              </>
+                            ) : null}
+                            {canDeleteAgents ? (
+                              <button type="button" onClick={() => void handleDeleteAgent(agent.id, agent.name)} className="inline-flex items-center gap-2 text-sm font-medium text-rose-600 transition hover:text-rose-700">
+                                <Trash2 className="h-4 w-4" />
+                                Excluir
+                              </button>
+                            ) : null}
                           </div>
                         ) : null}
                       </DataCell>
@@ -3878,16 +3934,26 @@ export default function HomePage() {
                       <DataCell subtle>{agent.presence}</DataCell>
                       <DataCell subtle>{agent.queues.map((queue) => queue.name).join(", ") || "Sem filas"}</DataCell>
                       <DataCell>
-                        {canManageAgents ? (
+                        {canManageAgents || canDeleteAgents ? (
                           <div className="flex items-center gap-4">
-                            <button type="button" onClick={() => startDuplicateAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-sky-600 transition hover:text-sky-700">
-                              <Plus className="h-4 w-4" />
-                              Duplicar
-                            </button>
-                            <button type="button" onClick={() => startEditAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
-                              <Pencil className="h-4 w-4" />
-                              Editar
-                            </button>
+                            {canManageAgents ? (
+                              <>
+                                <button type="button" onClick={() => startDuplicateAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-sky-600 transition hover:text-sky-700">
+                                  <Plus className="h-4 w-4" />
+                                  Duplicar
+                                </button>
+                                <button type="button" onClick={() => startEditAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                                  <Pencil className="h-4 w-4" />
+                                  Editar
+                                </button>
+                              </>
+                            ) : null}
+                            {canDeleteAgents ? (
+                              <button type="button" onClick={() => void handleDeleteAgent(agent.id, agent.name)} className="inline-flex items-center gap-2 text-sm font-medium text-rose-600 transition hover:text-rose-700">
+                                <Trash2 className="h-4 w-4" />
+                                Excluir
+                              </button>
+                            ) : null}
                           </div>
                         ) : null}
                       </DataCell>
@@ -5147,8 +5213,16 @@ export default function HomePage() {
                 <div className="grid gap-4 md:grid-cols-2">
                   <CompactField label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} placeholder="Nome completo" />
                   <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} placeholder="usuario@empresa.com" autoComplete="email" />
-                  <CompactField label={editingAgentId ? "Nova senha" : "Senha"} type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} placeholder={editingAgentId ? "Opcional para manter a atual" : "Senha de acesso"} autoComplete="new-password" />
-                  <CompactField label={editingAgentId ? "Confirmar nova senha" : "Confirmar senha"} type="password" value={agentForm.confirmPassword} onChange={(value) => setAgentForm((current) => ({ ...current, confirmPassword: value }))} placeholder="Repita a senha" autoComplete="new-password" />
+                  {!editingAgentId || canManageAgentPasswords ? (
+                    <>
+                      <CompactField label={editingAgentId ? "Nova senha" : "Senha"} type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} placeholder={editingAgentId ? "Opcional para manter a atual" : "Senha de acesso"} autoComplete="new-password" />
+                      <CompactField label={editingAgentId ? "Confirmar nova senha" : "Confirmar senha"} type="password" value={agentForm.confirmPassword} onChange={(value) => setAgentForm((current) => ({ ...current, confirmPassword: value }))} placeholder="Repita a senha" autoComplete="new-password" />
+                    </>
+                  ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500 md:col-span-2">
+                      Você pode editar os dados do usuário, mas a troca de senha exige a permissão <span className="font-semibold">agents.password.manage</span>.
+                    </div>
+                  )}
                   <label className="block text-sm font-medium text-slate-600">
                     Perfil
                     <select
