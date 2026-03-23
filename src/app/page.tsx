@@ -647,6 +647,7 @@ export default function HomePage() {
   const [assignmentLoading, setAssignmentLoading] = React.useState<string | null>(null);
   const [editingInstanceId, setEditingInstanceId] = React.useState<string | null>(null);
   const [editingAgentId, setEditingAgentId] = React.useState<string | null>(null);
+  const [duplicatingAgentName, setDuplicatingAgentName] = React.useState<string | null>(null);
   const [editingQueueId, setEditingQueueId] = React.useState<string | null>(null);
   const [editingQuickReplyId, setEditingQuickReplyId] = React.useState<string | null>(null);
   const [editingCustomerId, setEditingCustomerId] = React.useState<string | null>(null);
@@ -2354,6 +2355,7 @@ export default function HomePage() {
 
   function resetAgentForm() {
     setEditingAgentId(null);
+    setDuplicatingAgentName(null);
     setAgentForm({ name: "", email: "", password: "", confirmPassword: "", role: "agent", queueIds: [], permissions: defaultPermissionsForRole("agent") });
     setManagementModalTab("general");
   }
@@ -2405,9 +2407,28 @@ export default function HomePage() {
 
   function startEditAgent(agent: AgentItem) {
     setEditingAgentId(agent.id);
+    setDuplicatingAgentName(null);
     setAgentForm({
       name: agent.name,
       email: agent.email,
+      password: "",
+      confirmPassword: "",
+      role: agent.role,
+      queueIds: agent.queues.map((queue) => queue.id),
+      permissions: normalizePermissions(agent.role, agent.permissions),
+    });
+    setActiveWorkspace("settings");
+    setAdminSection("agents");
+    setManagementModalTab("general");
+    setManagementModal("agent");
+  }
+
+  function startDuplicateAgent(agent: AgentItem) {
+    setEditingAgentId(null);
+    setDuplicatingAgentName(agent.name);
+    setAgentForm({
+      name: `${agent.name} (cópia)`,
+      email: "",
       password: "",
       confirmPassword: "",
       role: agent.role,
@@ -2515,6 +2536,7 @@ export default function HomePage() {
     setManagementModalTab("general");
     setEditingInstanceId(null);
     setEditingAgentId(null);
+    setDuplicatingAgentName(null);
     setEditingQueueId(null);
     setEditingQuickReplyId(null);
     setEditingCustomerId(null);
@@ -3070,10 +3092,16 @@ export default function HomePage() {
                       <DataCell subtle>{agent.queues.map((queue) => queue.name).join(", ") || "Sem filas"}</DataCell>
                       <DataCell>
                         {canManageAgents ? (
-                          <button type="button" onClick={() => startEditAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
-                            <Pencil className="h-4 w-4" />
-                            Editar
-                          </button>
+                          <div className="flex items-center gap-4">
+                            <button type="button" onClick={() => startDuplicateAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-sky-600 transition hover:text-sky-700">
+                              <Plus className="h-4 w-4" />
+                              Duplicar
+                            </button>
+                            <button type="button" onClick={() => startEditAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                              <Pencil className="h-4 w-4" />
+                              Editar
+                            </button>
+                          </div>
                         ) : null}
                       </DataCell>
                     </DataRow>
@@ -3635,10 +3663,16 @@ export default function HomePage() {
                       <DataCell subtle>{agent.queues.map((queue) => queue.name).join(", ") || "Sem filas"}</DataCell>
                       <DataCell>
                         {canManageAgents ? (
-                          <button type="button" onClick={() => startEditAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
-                            <Pencil className="h-4 w-4" />
-                            Editar
-                          </button>
+                          <div className="flex items-center gap-4">
+                            <button type="button" onClick={() => startDuplicateAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-sky-600 transition hover:text-sky-700">
+                              <Plus className="h-4 w-4" />
+                              Duplicar
+                            </button>
+                            <button type="button" onClick={() => startEditAgent(agent)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                              <Pencil className="h-4 w-4" />
+                              Editar
+                            </button>
+                          </div>
                         ) : null}
                       </DataCell>
                     </DataRow>
@@ -4881,8 +4915,10 @@ export default function HomePage() {
       }, {});
 
       return {
-        title: editingAgentId ? "Editar usuário" : "Adicionar usuário",
-        description: "Cadastre agentes e administradores do painel operacional, com acesso granular por módulo e ação.",
+        title: editingAgentId ? "Editar usuário" : duplicatingAgentName ? "Duplicar usuário" : "Adicionar usuário",
+        description: duplicatingAgentName
+          ? `Criando uma cópia de ${duplicatingAgentName} com as mesmas filas e permissões.`
+          : "Cadastre agentes e administradores do painel operacional, com acesso granular por módulo e ação.",
         content: (
           <form onSubmit={handleCreateAgent} className="space-y-4">
             <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
