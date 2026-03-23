@@ -11,6 +11,7 @@ import { ensureBootstrapAdmin } from './lib/bootstrap-admin.js';
 import { ensureOperationalSchema } from './lib/ensure-operational-schema.js';
 import { createEvolutionDebugMonitor } from './lib/evolution-debug.js';
 import { healthRoutes } from './modules/health/routes.js';
+import { dashboardRoutes } from './modules/dashboard/routes.js';
 import { authRoutes } from './modules/auth/routes.js';
 import { agentRoutes } from './modules/agents/routes.js';
 import { customerRoutes } from './modules/customers/routes.js';
@@ -49,6 +50,7 @@ export async function buildApp() {
   await app.register(evolutionSocketsPlugin);
 
   await app.register(healthRoutes, { prefix: '/api' });
+  await app.register(dashboardRoutes, { prefix: '/api' });
   await app.register(authRoutes, { prefix: '/api' });
   await app.register(agentRoutes, { prefix: '/api' });
   await app.register(customerRoutes, { prefix: '/api' });

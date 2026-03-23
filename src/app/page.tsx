@@ -217,6 +217,71 @@ type AppDialogState = {
   tone?: "default" | "danger";
 };
 
+type DashboardRangeKey = "today" | "7d" | "30d";
+
+type DashboardOverview = {
+  period: {
+    key: DashboardRangeKey;
+    label: string;
+    from: string;
+    to: string;
+  };
+  overview: {
+    openTickets: number;
+    pendingTickets: number;
+    groupTickets: number;
+    closedInPeriod: number;
+    unassignedTickets: number;
+    withoutQueueTickets: number;
+    inboundMessages: number;
+    outboundMessages: number;
+    averageFirstResponseMinutes: number | null;
+    averageHandleMinutes: number | null;
+    averageAcceptanceMinutes: number | null;
+  };
+  queues: Array<{
+    id: string;
+    name: string;
+    color: string | null;
+    open: number;
+    pending: number;
+    closed: number;
+  }>;
+  agents: Array<{
+    id: string;
+    name: string;
+    open: number;
+    pending: number;
+    closed: number;
+  }>;
+  dailySeries: Array<{
+    date: string;
+    created: number;
+    closed: number;
+    inbound: number;
+    outbound: number;
+  }>;
+  alerts: {
+    stalePending: Array<{
+      id: string;
+      customerName: string;
+      waitingMinutes: number;
+      queueName: string;
+      agentName: string;
+    }>;
+    withoutQueue: Array<{
+      id: string;
+      customerName: string;
+      status: string;
+    }>;
+    withoutAgent: Array<{
+      id: string;
+      customerName: string;
+      status: string;
+    }>;
+  };
+};
+
 const permissionDefinitions = [
   { key: "dashboard.view", group: "Painel geral", label: "Visualizar painel geral" },
   { key: "tickets.view", group: "Atendimento", label: "Visualizar atendimento" },
@@ -439,6 +504,25 @@ function formatHour(value: string) {
   }
 }
 
+function formatDurationMetric(minutes: number | null | undefined) {
+  if (minutes == null || Number.isNaN(minutes)) return "Sem base";
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = Math.round(minutes % 60);
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}min` : `${hours}h`;
+}
+
+function formatShortDateLabel(value: string) {
+  try {
+    return new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+    }).format(new Date(`${value}T00:00:00`));
+  } catch {
+    return value;
+  }
+}
+
 function onlyPhoneDigits(value: string) {
   return value.replace(/\D/g, "").slice(0, 13);
 }
@@ -633,6 +717,8 @@ export default function HomePage() {
   const [queues, setQueues] = React.useState<QueueItem[]>([]);
   const [customers, setCustomers] = React.useState<CustomerItem[]>([]);
   const [quickReplies, setQuickReplies] = React.useState<QuickReplyItem[]>([]);
+  const [dashboardOverview, setDashboardOverview] = React.useState<DashboardOverview | null>(null);
+  const [dashboardRange, setDashboardRange] = React.useState<DashboardRangeKey>("7d");
 
   const [ticketLoading, setTicketLoading] = React.useState(false);
   const [messageLoading, setMessageLoading] = React.useState(false);
@@ -643,6 +729,7 @@ export default function HomePage() {
   const [quickReplyLoading, setQuickReplyLoading] = React.useState(false);
   const [customerLoading, setCustomerLoading] = React.useState(false);
   const [conversationLoading, setConversationLoading] = React.useState(false);
+  const [dashboardLoading, setDashboardLoading] = React.useState(false);
   const [groupNameSaving, setGroupNameSaving] = React.useState(false);
   const [assignmentLoading, setAssignmentLoading] = React.useState<string | null>(null);
   const [editingInstanceId, setEditingInstanceId] = React.useState<string | null>(null);
@@ -1316,7 +1403,21 @@ export default function HomePage() {
     }
   }, [user]);
 
+  const refreshDashboard = React.useCallback(async () => {
+    if (!user || !normalizePermissions(user.role, user.permissions)["dashboard.view"]) return;
+    setDashboardLoading(true);
+    try {
+      const payload = await apiFetch<DashboardOverview>(`/dashboard/overview?range=${dashboardRange}`, { method: "GET" });
+      setDashboardOverview(payload);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar o painel geral.");
+    } finally {
+      setDashboardLoading(false);
+    }
+  }, [dashboardRange, user]);
+
   const refreshAll = React.useCallback(async () => {
+    await refreshDashboard();
     await refreshTickets();
     if (selectedTicketId) {
       await refreshMessages(selectedTicketId);
@@ -1326,7 +1427,7 @@ export default function HomePage() {
     await refreshQueues();
     await refreshCustomers();
     await refreshQuickReplies();
-  }, [refreshAgents, refreshCustomers, refreshInstances, refreshMessages, refreshQueues, refreshQuickReplies, refreshTickets, selectedTicketId]);
+  }, [refreshAgents, refreshCustomers, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshQuickReplies, refreshTickets, selectedTicketId]);
 
   React.useEffect(() => {
     void refreshAuth();
@@ -1341,10 +1442,12 @@ export default function HomePage() {
       setQueues([]);
       setCustomers([]);
       setQuickReplies([]);
+      setDashboardOverview(null);
       setSelectedTicketId(null);
       return;
     }
 
+    void refreshDashboard();
     void refreshTickets();
     if (canViewChannels) {
       void refreshInstances();
@@ -1359,7 +1462,7 @@ export default function HomePage() {
     if (canViewQuickReplies) {
       void refreshQuickReplies();
     }
-  }, [canTransferTickets, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshCustomers, refreshInstances, refreshQueues, refreshQuickReplies, refreshTickets, user]);
+  }, [canTransferTickets, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshCustomers, refreshDashboard, refreshInstances, refreshQueues, refreshQuickReplies, refreshTickets, user]);
 
   React.useEffect(() => {
     if (!selectedTicketId || !user) {
@@ -1446,6 +1549,7 @@ export default function HomePage() {
       }
     };
     socket.on("connect", () => {
+      void refreshDashboard();
       void refreshTickets();
       if (selectedTicketId) {
         void refreshMessages(selectedTicketId, { silent: true });
@@ -1466,7 +1570,7 @@ export default function HomePage() {
       socket.disconnect();
       socketRef.current = null;
     };
-    }, [refreshAgents, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
+    }, [refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!user) return;
@@ -1476,6 +1580,7 @@ export default function HomePage() {
         return;
       }
 
+      void refreshDashboard();
       void refreshTickets();
       if (selectedTicketId) {
         void refreshMessages(selectedTicketId, { silent: true });
@@ -1489,12 +1594,13 @@ export default function HomePage() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [refreshAgents, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
+  }, [refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!user) return;
 
     const handleVisibilityOrFocus = () => {
+      void refreshDashboard();
       void refreshTickets();
       if (selectedTicketId) {
         void refreshMessages(selectedTicketId, { silent: true });
@@ -1517,7 +1623,7 @@ export default function HomePage() {
         document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
       }
     };
-  }, [refreshMessages, refreshTickets, selectedTicketId, user]);
+  }, [refreshDashboard, refreshMessages, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!messagesViewportRef.current || !shouldStickMessagesToBottomRef.current) {
@@ -2903,36 +3009,130 @@ export default function HomePage() {
 
   const workspacePanel = (() => {
     if (activeWorkspace === "dashboard") {
+      const periodLabel = dashboardOverview?.period.label ?? "Carregando";
+      const maxDailyVolume = Math.max(...(dashboardOverview?.dailySeries.map((item) => Math.max(item.created, item.closed, item.inbound, item.outbound)) ?? [1]));
+
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <div className="grid gap-4">
-            <WorkspaceStatCard title="Atendendo" value={String(counters.atendendo)} accent="emerald" description="Conversas com agente responsável." />
-            <WorkspaceStatCard title="Aguardando" value={String(counters.aguardando)} accent="amber" description="Tickets novos sem responsável." />
-            <WorkspaceStatCard title="Grupos" value={String(counters.grupos)} accent="blue" description="Conversas coletivas monitoradas." />
-          </div>
-          <WorkspaceSection title="Últimos tickets" description="Atalhos rápidos para voltar à caixa de entrada.">
-            <div className="grid gap-3">
-              {tickets.slice(0, 6).map((ticket) => (
-                <button
-                    key={ticket.id}
-                    type="button"
-                    onClick={() => {
-                      setActiveWorkspace(ticket.status === "closed" ? "closedTickets" : "tickets");
-                      setSelectedTicketId(ticket.id);
-                      setShowTicketDetails(false);
-                    }}
-                  className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+          <WorkspaceSection title="Visão geral da operação" description="Indicadores reais de atendimento, resposta e distribuição da equipe.">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Período analisado</div>
+                <div className="mt-1 text-sm text-slate-500">{periodLabel}</div>
+              </div>
+              <label className="block text-sm font-medium text-slate-600">
+                <span className="sr-only">Período do dashboard</span>
+                <select
+                  value={dashboardRange}
+                  onChange={(event) => setDashboardRange(event.target.value as DashboardRangeKey)}
+                  className="h-11 min-w-[180px] rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-slate-900">{ticket.customerName}</div>
-                    <span className="text-[11px] font-bold uppercase text-slate-400">{traduzirStatusTicket(ticket.status)}</span>
-                  </div>
-                  <div className="mt-2 text-sm text-slate-500">{ticket.lastMessagePreview ?? "Sem mensagem registrada."}</div>
-                  <div className="mt-3 text-[11px] uppercase tracking-[0.05em] text-slate-400">{ticket.currentQueue?.name ?? "Sem fila"} | {formatHour(ticket.updatedAt)}</div>
-                </button>
-              ))}
+                  <option value="today">Hoje</option>
+                  <option value="7d">Últimos 7 dias</option>
+                  <option value="30d">Últimos 30 dias</option>
+                </select>
+              </label>
             </div>
           </WorkspaceSection>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <WorkspaceStatCard title="Tickets abertos" value={String(dashboardOverview?.overview.openTickets ?? 0)} accent="emerald" description="Conversas individuais em atendimento agora." />
+            <WorkspaceStatCard title="Aguardando" value={String(dashboardOverview?.overview.pendingTickets ?? 0)} accent="amber" description="Conversas individuais sem resposta final." />
+            <WorkspaceStatCard title="Fechados no período" value={String(dashboardOverview?.overview.closedInPeriod ?? 0)} accent="slate" description="Encerramentos concluídos dentro do recorte." />
+            <WorkspaceStatCard title="Grupos ativos" value={String(dashboardOverview?.overview.groupTickets ?? 0)} accent="blue" description="Conversas coletivas ainda em andamento." />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <WorkspaceStatCard title="1ª resposta média" value={formatDurationMetric(dashboardOverview?.overview.averageFirstResponseMinutes)} accent="blue" description="Tempo médio entre a 1ª entrada e a 1ª resposta." />
+            <WorkspaceStatCard title="Tempo médio de atendimento" value={formatDurationMetric(dashboardOverview?.overview.averageHandleMinutes)} accent="emerald" description="Da abertura até o encerramento do ticket." />
+            <WorkspaceStatCard title="Tempo médio até assumir" value={formatDurationMetric(dashboardOverview?.overview.averageAcceptanceMinutes)} accent="amber" description="Da abertura até o aceite do atendimento." />
+            <WorkspaceStatCard title="Mensagens no período" value={`${dashboardOverview?.overview.inboundMessages ?? 0}/${dashboardOverview?.overview.outboundMessages ?? 0}`} accent="slate" description="Entradas e saídas no recorte atual." />
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[1.35fr_1fr]">
+            <WorkspaceSection title="Volume diário" description="Entradas, saídas, aberturas e encerramentos ao longo do período.">
+              <div className="space-y-3">
+                {(dashboardOverview?.dailySeries ?? []).map((item) => (
+                  <div key={item.date} className="grid gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                      <div className="font-semibold text-slate-900">{formatShortDateLabel(item.date)}</div>
+                      <div className="text-xs uppercase tracking-[0.08em] text-slate-400">
+                        {item.created} abertos · {item.closed} fechados · {item.inbound} in · {item.outbound} out
+                      </div>
+                    </div>
+                    <div className="grid gap-2">
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                        <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max(6, (item.created / maxDailyVolume) * 100)}%` }} />
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                        <div className="h-full rounded-full bg-sky-500" style={{ width: `${Math.max(6, (item.inbound / maxDailyVolume) * 100)}%` }} />
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                        <div className="h-full rounded-full bg-[#1A1C32]" style={{ width: `${Math.max(6, (item.outbound / maxDailyVolume) * 100)}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {dashboardLoading && !dashboardOverview ? <div className="text-sm text-slate-500">Carregando série diária...</div> : null}
+              </div>
+            </WorkspaceSection>
+
+            <WorkspaceSection title="Alertas operacionais" description="Itens que merecem atenção imediata da operação.">
+              <div className="grid gap-3">
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
+                  <div className="text-xs font-bold uppercase tracking-[0.14em] text-amber-700">Aguardando há mais tempo</div>
+                  <div className="mt-3 space-y-2">
+                    {(dashboardOverview?.alerts.stalePending ?? []).slice(0, 4).map((item) => (
+                      <div key={item.id} className="flex items-center justify-between gap-3 text-sm">
+                        <div className="font-medium text-slate-800">{item.customerName}</div>
+                        <div className="text-amber-700">{formatDurationMetric(item.waitingMinutes)}</div>
+                      </div>
+                    ))}
+                    {dashboardOverview?.alerts.stalePending?.length === 0 ? <div className="text-sm text-slate-500">Nenhum ticket aguardando fora do normal.</div> : null}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4">
+                  <div className="text-xs font-bold uppercase tracking-[0.14em] text-rose-700">Sem fila / sem agente</div>
+                  <div className="mt-3 text-sm text-slate-700">
+                    {dashboardOverview?.overview.withoutQueueTickets ?? 0} sem fila · {dashboardOverview?.overview.unassignedTickets ?? 0} sem agente
+                  </div>
+                </div>
+              </div>
+            </WorkspaceSection>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-2">
+            <WorkspaceSection title="Distribuição por fila" description="Carga de trabalho consolidada por fila dentro do período.">
+              <DataTable columns={["Fila", "Abertos", "Aguardando", "Fechados"]} emptyMessage="Nenhuma fila encontrada.">
+                {(dashboardOverview?.queues ?? []).slice(0, 8).map((queue) => (
+                  <DataRow key={queue.id}>
+                    <DataCell>
+                      <div className="flex items-center gap-3">
+                        <span className="h-3 w-3 rounded-full" style={{ backgroundColor: queue.color ?? "#CBD5E1" }} />
+                        {queue.name}
+                      </div>
+                    </DataCell>
+                    <DataCell subtle>{String(queue.open)}</DataCell>
+                    <DataCell subtle>{String(queue.pending)}</DataCell>
+                    <DataCell subtle>{String(queue.closed)}</DataCell>
+                  </DataRow>
+                ))}
+              </DataTable>
+            </WorkspaceSection>
+
+            <WorkspaceSection title="Distribuição por agente" description="Visão rápida de quem está com carga ativa e fechamentos no período.">
+              <DataTable columns={["Agente", "Abertos", "Aguardando", "Fechados"]} emptyMessage="Nenhum agente encontrado.">
+                {(dashboardOverview?.agents ?? []).slice(0, 8).map((agent) => (
+                  <DataRow key={agent.id}>
+                    <DataCell>{agent.name}</DataCell>
+                    <DataCell subtle>{String(agent.open)}</DataCell>
+                    <DataCell subtle>{String(agent.pending)}</DataCell>
+                    <DataCell subtle>{String(agent.closed)}</DataCell>
+                  </DataRow>
+                ))}
+              </DataTable>
+            </WorkspaceSection>
+          </div>
         </div>
       );
     }
