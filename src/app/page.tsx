@@ -230,6 +230,7 @@ type EvolutionDebugEvent = {
     hasDataArray: boolean;
     dataLength: number | null;
   };
+  rawPayload: Record<string, unknown>;
 };
 
 const permissionDefinitions = [
@@ -5704,51 +5705,40 @@ function WorkspaceSection(props: { title: string; description: string; children:
 }
 
 function EvolutionDebugMonitorCard(props: { events: EvolutionDebugEvent[]; socketReady: boolean; onClear: () => void }) {
-  const events = props.events.slice(0, 12);
+  const events = props.events.slice(0, 40);
 
   return (
-    <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-4">
-      <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 lg:flex-row lg:items-start lg:justify-between">
+    <div className="rounded-[24px] border border-slate-200 bg-[#0b1020] p-4 shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-slate-800 pb-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <div className="text-sm font-semibold uppercase tracking-[0.05em] text-slate-500">Monitor Evolution</div>
-          <div className="mt-1 text-xl font-semibold text-slate-900">Eventos recebidos pela API</div>
-          <div className="mt-1 text-sm text-slate-500">
-            Retenção local de até 6 horas no navegador. {props.socketReady ? "Atualização em tempo real ativa." : "Leitura pelo ciclo normal de atualização do painel."}
+          <div className="text-sm font-semibold uppercase tracking-[0.05em] text-slate-400">Monitor Evolution</div>
+          <div className="mt-1 text-xl font-semibold text-slate-50">Console de eventos brutos</div>
+          <div className="mt-1 text-sm text-slate-400">
+            Retenção local de até 6 horas. {props.socketReady ? "Realtime ativo quando disponível." : "Leitura pelo ciclo normal de atualização do painel."}
           </div>
         </div>
         <button
           type="button"
           onClick={props.onClear}
-          className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+          className="inline-flex h-10 items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-4 text-sm font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-800"
         >
           Limpar monitor
         </button>
       </div>
 
       {events.length === 0 ? (
-        <p className="pt-4 text-sm text-slate-500">Nenhum evento monitorado ainda. Envie uma mensagem no grupo para verificar se `groupName`, `pushName` e `remoteJid` chegam ao frontend.</p>
+        <p className="pt-4 font-mono text-sm text-slate-400">Nenhum evento bruto capturado ainda.</p>
       ) : (
-        <div className="mt-4 grid gap-3">
+        <div className="mt-4 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
           {events.map((event) => (
-            <article key={event.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex flex-wrap items-center gap-2">
-                <StatusChip tone={event.isGroup ? "success" : "default"}>{event.event}</StatusChip>
-                <StatusChip tone={event.source === "socket" ? "success" : "warning"}>{event.source}</StatusChip>
-                <span className="text-xs text-slate-400">{formatDateTime(event.recordedAt)}</span>
+            <div key={event.id} className="border-b border-slate-800 last:border-b-0">
+              <div className="px-4 py-2 font-mono text-xs text-slate-400">
+                [{formatDateTime(event.recordedAt)}] {event.source} {event.event}
               </div>
-              <div className="mt-3 grid gap-2 text-sm text-slate-600 md:grid-cols-2">
-                <div><span className="font-semibold text-slate-800">Instância:</span> {event.instanceName ?? "Sem instância"}</div>
-                <div><span className="font-semibold text-slate-800">Remote JID:</span> {event.remoteJid ?? "Sem remoteJid"}</div>
-                <div><span className="font-semibold text-slate-800">Nome do grupo:</span> {event.groupName ?? "Não informado"}</div>
-                <div><span className="font-semibold text-slate-800">Push name:</span> {event.pushName ?? "Não informado"}</div>
-                <div><span className="font-semibold text-slate-800">Biz name:</span> {event.verifiedBizName ?? "Não informado"}</div>
-                <div><span className="font-semibold text-slate-800">Content type:</span> {event.contentType ?? "Não informado"}</div>
-              </div>
-              {event.bodyPreview ? <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-600">{event.bodyPreview}</p> : null}
-              <div className="mt-3 text-xs text-slate-400">
-                keys: {event.payloadSummary.topLevelKeys.join(", ") || "nenhuma"} {event.payloadSummary.dataKeys.length > 0 ? `| data: ${event.payloadSummary.dataKeys.join(", ")}` : ""}
-              </div>
-            </article>
+              <pre className="max-h-[420px] overflow-auto px-4 pb-4 text-xs leading-6 text-slate-100 whitespace-pre-wrap break-all">
+                {JSON.stringify(event.rawPayload, null, 2)}
+              </pre>
+            </div>
           ))}
         </div>
       )}

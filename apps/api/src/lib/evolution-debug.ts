@@ -24,6 +24,7 @@ export interface EvolutionDebugEntry {
     hasDataArray: boolean;
     dataLength: number | null;
   };
+  rawPayload: Record<string, unknown>;
 }
 
 export interface EvolutionDebugMonitor {
@@ -121,5 +122,6 @@ export function buildEvolutionDebugEntry(params: {
     bodyPreview,
     contentType: parsed.contentType ?? null,
     payloadSummary: summarizePayloadShape(params.payload),
+    rawPayload: params.payload,
   };
 }
