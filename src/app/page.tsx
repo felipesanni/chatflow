@@ -3529,6 +3529,12 @@ export default function HomePage() {
             </WorkspaceSection>
           ) : adminSection === "instances" ? (
             <WorkspaceSection title="Canais e instâncias" description="Gerencie as conexões com a Evolution em um único lugar dentro das configurações.">
+              <EvolutionDebugMonitorCard
+                events={evolutionDebugEvents}
+                socketReady={Boolean(SOCKET_URL)}
+                onClear={() => setEvolutionDebugEvents([])}
+              />
+
               <ModuleToolbar
                 title="Conexões"
                 count={filteredInstances.length}
