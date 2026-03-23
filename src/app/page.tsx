@@ -2137,8 +2137,16 @@ export default function HomePage() {
     if (!selectedTicketId) return;
 
     try {
+      const acceptedTicketId = selectedTicketId;
+      const acceptedTicket = tickets.find((ticket) => ticket.id === acceptedTicketId) ?? null;
       await apiFetch(`/tickets/${selectedTicketId}/accept`, { method: "POST" });
       await refreshTickets();
+      await refreshMessages(acceptedTicketId);
+      setSelectedTicketId(acceptedTicketId);
+      setActiveWorkspace("tickets");
+      setShowAllTickets(false);
+      setActiveTab(acceptedTicket?.isGroup ? "grupos" : "atendendo");
+      setPanelMessage("Atendimento assumido com sucesso.");
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao assumir ticket.");
     }
