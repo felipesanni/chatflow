@@ -303,6 +303,17 @@ function writeStoredEvolutionDebugEvents(events: EvolutionDebugEvent[]) {
   } catch {}
 }
 
+function mergeEvolutionDebugEvents(current: EvolutionDebugEvent[], incoming: EvolutionDebugEvent[]) {
+  const merged = [...incoming, ...current].reduce<EvolutionDebugEvent[]>((acc, item) => {
+    if (!acc.some((entry) => entry.id === item.id)) {
+      acc.push(item);
+    }
+    return acc;
+  }, []);
+
+  return pruneEvolutionDebugEvents(merged).slice(0, 200);
+}
+
 const workspacePermissions: Record<WorkspaceKey, PermissionKey> = {
   dashboard: "dashboard.view",
   tickets: "tickets.view",
@@ -1316,6 +1327,18 @@ export default function HomePage() {
     }
   }, [user]);
 
+  const refreshEvolutionDebugEvents = React.useCallback(async () => {
+    const permissions = user ? normalizePermissions(user.role, user.permissions) : null;
+    if (!user || !permissions?.["channels.manage"]) return;
+
+    try {
+      const payload = await apiFetch<{ items: EvolutionDebugEvent[] }>("/whatsapp/debug/events?limit=50", { method: "GET" });
+      setEvolutionDebugEvents((current) => mergeEvolutionDebugEvents(current, payload.items));
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar monitor da Evolution.");
+    }
+  }, [user]);
+
   const refreshAgents = React.useCallback(async () => {
     const permissions = user ? normalizePermissions(user.role, user.permissions) : null;
     if (!user || !(permissions?.["team.view"] || permissions?.["tickets.transfer"])) return;
@@ -1390,6 +1413,7 @@ export default function HomePage() {
     void refreshTickets();
     if (canViewChannels) {
       void refreshInstances();
+      void refreshEvolutionDebugEvents();
     }
     if (canViewTeam || canTransferTickets) {
       void refreshAgents();
@@ -1401,7 +1425,7 @@ export default function HomePage() {
     if (canViewQuickReplies) {
       void refreshQuickReplies();
     }
-  }, [canTransferTickets, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshCustomers, refreshInstances, refreshQueues, refreshQuickReplies, refreshTickets, user]);
+  }, [canTransferTickets, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshCustomers, refreshEvolutionDebugEvents, refreshInstances, refreshQueues, refreshQuickReplies, refreshTickets, user]);
 
   React.useEffect(() => {
     if (!selectedTicketId || !user) {
@@ -1475,6 +1499,7 @@ export default function HomePage() {
 
     socket.on("connect", () => {
       void refreshTickets();
+      void refreshEvolutionDebugEvents();
       if (selectedTicketId) {
         void refreshMessages(selectedTicketId, { silent: true });
       }
@@ -1495,7 +1520,7 @@ export default function HomePage() {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [refreshAgents, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
+    }, [refreshAgents, refreshEvolutionDebugEvents, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!user) return;
@@ -1512,19 +1537,21 @@ export default function HomePage() {
 
       if (user.role === "admin") {
         void refreshInstances();
+        void refreshEvolutionDebugEvents();
         void refreshAgents();
         void refreshQueues();
       }
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [refreshAgents, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
+  }, [refreshAgents, refreshEvolutionDebugEvents, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!user) return;
 
     const handleVisibilityOrFocus = () => {
       void refreshTickets();
+      void refreshEvolutionDebugEvents();
       if (selectedTicketId) {
         void refreshMessages(selectedTicketId, { silent: true });
       }
@@ -1546,7 +1573,7 @@ export default function HomePage() {
         document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
       }
     };
-  }, [refreshMessages, refreshTickets, selectedTicketId, user]);
+  }, [refreshEvolutionDebugEvents, refreshMessages, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!messagesViewportRef.current || !shouldStickMessagesToBottomRef.current) {
@@ -5684,9 +5711,9 @@ function EvolutionDebugMonitorCard(props: { events: EvolutionDebugEvent[]; socke
       <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="text-sm font-semibold uppercase tracking-[0.05em] text-slate-500">Monitor Evolution</div>
-          <div className="mt-1 text-xl font-semibold text-slate-900">Eventos recebidos no frontend via Socket.IO</div>
+          <div className="mt-1 text-xl font-semibold text-slate-900">Eventos recebidos pela API</div>
           <div className="mt-1 text-sm text-slate-500">
-            Retenção local de até 6 horas no navegador. {props.socketReady ? "Atualização em tempo real ativa." : "Socket não configurado."}
+            Retenção local de até 6 horas no navegador. {props.socketReady ? "Atualização em tempo real ativa." : "Leitura pelo ciclo normal de atualização do painel."}
           </div>
         </div>
         <button
