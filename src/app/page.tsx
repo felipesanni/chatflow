@@ -5467,14 +5467,12 @@ function statusBadgeClassName(status: "open" | "pending" | "closed") {
 }
 
 function statusBadgeText(status: "open" | "pending" | "closed", instanceName?: string | null) {
-  const baseStatus = status === "open"
-    ? "ATENDENDO"
-    : status === "pending"
-      ? "AGUARDANDO"
-      : "FECHADO";
-
   const normalizedInstanceName = typeof instanceName === "string" ? instanceName.trim() : "";
-  return normalizedInstanceName ? `${baseStatus} ${normalizedInstanceName.toUpperCase()}` : baseStatus;
+  if (normalizedInstanceName) {
+    return normalizedInstanceName.toUpperCase();
+  }
+
+  return status === "open" ? "EM ATENDIMENTO" : status === "pending" ? "SEM INSTANCIA" : "FECHADO";
 }
 
 function AudioMessagePlayer(props: {
