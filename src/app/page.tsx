@@ -207,32 +207,6 @@ type QuickReplyItem = {
   updatedAt: string;
 };
 
-type EvolutionDebugEvent = {
-  id: string;
-  recordedAt: string;
-  stage: "received";
-  source: "webhook" | "socket";
-  event: string;
-  instanceName: string | null;
-  baseUrl: string | null;
-  socketUrl: string | null;
-  remoteJid: string | null;
-  isGroup: boolean;
-  groupName: string | null;
-  pushName: string | null;
-  verifiedBizName: string | null;
-  bodyPreview: string | null;
-  contentType: string | null;
-  payloadSummary: {
-    topLevelKeys: string[];
-    dataKeys: string[];
-    firstDataItemKeys: string[];
-    hasDataArray: boolean;
-    dataLength: number | null;
-  };
-  rawPayload: Record<string, unknown>;
-};
-
 const permissionDefinitions = [
   { key: "dashboard.view", group: "Painel geral", label: "Visualizar painel geral" },
   { key: "tickets.view", group: "Atendimento", label: "Visualizar atendimento" },
@@ -271,49 +245,6 @@ type PermissionMap = Record<PermissionKey, boolean>;
 type WorkspaceKey = "dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings";
 
 const permissionKeys = permissionDefinitions.map((item) => item.key) as PermissionKey[];
-const EVOLUTION_DEBUG_STORAGE_KEY = "chatflow:evolution-debug-events";
-const EVOLUTION_DEBUG_RETENTION_MS = 6 * 60 * 60 * 1000;
-
-function pruneEvolutionDebugEvents(events: EvolutionDebugEvent[]) {
-  const cutoff = Date.now() - EVOLUTION_DEBUG_RETENTION_MS;
-  return events.filter((event) => {
-    const recordedAt = Date.parse(event.recordedAt);
-    return Number.isFinite(recordedAt) && recordedAt >= cutoff;
-  });
-}
-
-function readStoredEvolutionDebugEvents() {
-  if (typeof window === "undefined") return [];
-
-  try {
-    const raw = window.localStorage.getItem(EVOLUTION_DEBUG_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return pruneEvolutionDebugEvents(parsed as EvolutionDebugEvent[]);
-  } catch {
-    return [];
-  }
-}
-
-function writeStoredEvolutionDebugEvents(events: EvolutionDebugEvent[]) {
-  if (typeof window === "undefined") return;
-
-  try {
-    window.localStorage.setItem(EVOLUTION_DEBUG_STORAGE_KEY, JSON.stringify(pruneEvolutionDebugEvents(events)));
-  } catch {}
-}
-
-function mergeEvolutionDebugEvents(current: EvolutionDebugEvent[], incoming: EvolutionDebugEvent[]) {
-  const merged = [...incoming, ...current].reduce<EvolutionDebugEvent[]>((acc, item) => {
-    if (!acc.some((entry) => entry.id === item.id)) {
-      acc.push(item);
-    }
-    return acc;
-  }, []);
-
-  return pruneEvolutionDebugEvents(merged).slice(0, 200);
-}
 
 const workspacePermissions: Record<WorkspaceKey, PermissionKey> = {
   dashboard: "dashboard.view",
@@ -692,7 +623,6 @@ export default function HomePage() {
   const [queues, setQueues] = React.useState<QueueItem[]>([]);
   const [customers, setCustomers] = React.useState<CustomerItem[]>([]);
   const [quickReplies, setQuickReplies] = React.useState<QuickReplyItem[]>([]);
-  const [evolutionDebugEvents, setEvolutionDebugEvents] = React.useState<EvolutionDebugEvent[]>([]);
 
   const [ticketLoading, setTicketLoading] = React.useState(false);
   const [messageLoading, setMessageLoading] = React.useState(false);
@@ -1328,18 +1258,6 @@ export default function HomePage() {
     }
   }, [user]);
 
-  const refreshEvolutionDebugEvents = React.useCallback(async () => {
-    const permissions = user ? normalizePermissions(user.role, user.permissions) : null;
-    if (!user || !permissions?.["channels.manage"]) return;
-
-    try {
-      const payload = await apiFetch<{ items: EvolutionDebugEvent[] }>("/whatsapp/debug/events?limit=50", { method: "GET" });
-      setEvolutionDebugEvents((current) => mergeEvolutionDebugEvents(current, payload.items));
-    } catch (error) {
-      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar monitor da Evolution.");
-    }
-  }, [user]);
-
   const refreshAgents = React.useCallback(async () => {
     const permissions = user ? normalizePermissions(user.role, user.permissions) : null;
     if (!user || !(permissions?.["team.view"] || permissions?.["tickets.transfer"])) return;
@@ -1414,7 +1332,6 @@ export default function HomePage() {
     void refreshTickets();
     if (canViewChannels) {
       void refreshInstances();
-      void refreshEvolutionDebugEvents();
     }
     if (canViewTeam || canTransferTickets) {
       void refreshAgents();
@@ -1426,7 +1343,7 @@ export default function HomePage() {
     if (canViewQuickReplies) {
       void refreshQuickReplies();
     }
-  }, [canTransferTickets, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshCustomers, refreshEvolutionDebugEvents, refreshInstances, refreshQueues, refreshQuickReplies, refreshTickets, user]);
+  }, [canTransferTickets, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshCustomers, refreshInstances, refreshQueues, refreshQuickReplies, refreshTickets, user]);
 
   React.useEffect(() => {
     if (!selectedTicketId || !user) {
@@ -1467,14 +1384,6 @@ export default function HomePage() {
   }, [isClosedTicketsWorkspace]);
 
   React.useEffect(() => {
-    setEvolutionDebugEvents(readStoredEvolutionDebugEvents());
-  }, []);
-
-  React.useEffect(() => {
-    writeStoredEvolutionDebugEvents(evolutionDebugEvents);
-  }, [evolutionDebugEvents]);
-
-  React.useEffect(() => {
     if (!user || !SOCKET_URL) return;
 
     const socket = io(SOCKET_URL, {
@@ -1491,16 +1400,8 @@ export default function HomePage() {
         void refreshMessages(ticketIdToRefresh, { silent: true });
       }
     };
-    const handleEvolutionDebugEvent = (payload: EvolutionDebugEvent) => {
-      setEvolutionDebugEvents((current) => {
-        const next = pruneEvolutionDebugEvents([payload, ...current.filter((item) => item.id !== payload.id)]);
-        return next.slice(0, 200);
-      });
-    };
-
     socket.on("connect", () => {
       void refreshTickets();
-      void refreshEvolutionDebugEvents();
       if (selectedTicketId) {
         void refreshMessages(selectedTicketId, { silent: true });
       }
@@ -1515,13 +1416,12 @@ export default function HomePage() {
     socket.on("instance.updated", () => void refreshInstances());
     socket.on("agent.updated", () => void refreshAgents());
     socket.on("queue.updated", () => void refreshQueues());
-    socket.on("evolution.debug", handleEvolutionDebugEvent);
 
     return () => {
       socket.disconnect();
       socketRef.current = null;
     };
-    }, [refreshAgents, refreshEvolutionDebugEvents, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
+    }, [refreshAgents, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!user) return;
@@ -1538,21 +1438,19 @@ export default function HomePage() {
 
       if (user.role === "admin") {
         void refreshInstances();
-        void refreshEvolutionDebugEvents();
         void refreshAgents();
         void refreshQueues();
       }
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [refreshAgents, refreshEvolutionDebugEvents, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
+  }, [refreshAgents, refreshInstances, refreshMessages, refreshQueues, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!user) return;
 
     const handleVisibilityOrFocus = () => {
       void refreshTickets();
-      void refreshEvolutionDebugEvents();
       if (selectedTicketId) {
         void refreshMessages(selectedTicketId, { silent: true });
       }
@@ -1574,7 +1472,7 @@ export default function HomePage() {
         document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
       }
     };
-  }, [refreshEvolutionDebugEvents, refreshMessages, refreshTickets, selectedTicketId, user]);
+  }, [refreshMessages, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!messagesViewportRef.current || !shouldStickMessagesToBottomRef.current) {
@@ -2913,15 +2811,9 @@ export default function HomePage() {
     }
 
     if (activeWorkspace === "channels") {
-      return (
-        <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Canais e instâncias" description="Gerencie as conexões com a Evolution em visualização de lista.">
-            <EvolutionDebugMonitorCard
-              events={evolutionDebugEvents}
-              socketReady={Boolean(SOCKET_URL)}
-              onClear={() => setEvolutionDebugEvents([])}
-            />
-
+          return (
+            <div className="flex h-full flex-col gap-4 p-6">
+              <WorkspaceSection title="Canais e instâncias" description="Gerencie as conexões com a Evolution em visualização de lista.">
             <ModuleToolbar
               title="Conexões"
               count={filteredInstances.length}
@@ -3557,12 +3449,6 @@ export default function HomePage() {
             </WorkspaceSection>
           ) : adminSection === "instances" ? (
             <WorkspaceSection title="Canais e instâncias" description="Gerencie as conexões com a Evolution em um único lugar dentro das configurações.">
-              <EvolutionDebugMonitorCard
-                events={evolutionDebugEvents}
-                socketReady={Boolean(SOCKET_URL)}
-                onClear={() => setEvolutionDebugEvents([])}
-              />
-
               <ModuleToolbar
                 title="Conexões"
                 count={filteredInstances.length}
@@ -5395,7 +5281,7 @@ export default function HomePage() {
 
                             <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
                               <div className="flex min-w-0 flex-wrap gap-1 overflow-hidden">
-                                <MiniBadge className={statusBadgeClassName(ticket.status)} text={statusBadgeText(ticket.status)} />
+                                <MiniBadge className={statusBadgeClassName(ticket.status)} text={statusBadgeText(ticket.status, ticket.whatsappInstance.name)} />
                                 {ticket.isGroup ? (
                                   <MiniBadge className="bg-blue-600 text-white" text="GRUPO" />
                                 ) : (
@@ -5580,10 +5466,15 @@ function statusBadgeClassName(status: "open" | "pending" | "closed") {
   return "bg-slate-500 text-white";
 }
 
-function statusBadgeText(status: "open" | "pending" | "closed") {
-  if (status === "open") return "ATENDENDO";
-  if (status === "pending") return "AGUARDANDO";
-  return "FECHADO";
+function statusBadgeText(status: "open" | "pending" | "closed", instanceName?: string | null) {
+  const baseStatus = status === "open"
+    ? "ATENDENDO"
+    : status === "pending"
+      ? "AGUARDANDO"
+      : "FECHADO";
+
+  const normalizedInstanceName = typeof instanceName === "string" ? instanceName.trim() : "";
+  return normalizedInstanceName ? `${baseStatus} ${normalizedInstanceName.toUpperCase()}` : baseStatus;
 }
 
 function AudioMessagePlayer(props: {
@@ -5701,48 +5592,6 @@ function WorkspaceSection(props: { title: string; description: string; children:
       </div>
       <div className="space-y-4">{props.children}</div>
     </section>
-  );
-}
-
-function EvolutionDebugMonitorCard(props: { events: EvolutionDebugEvent[]; socketReady: boolean; onClear: () => void }) {
-  const events = props.events.slice(0, 40);
-
-  return (
-    <div className="rounded-[24px] border border-slate-200 bg-[#0b1020] p-4 shadow-sm">
-      <div className="flex flex-col gap-3 border-b border-slate-800 pb-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <div className="text-sm font-semibold uppercase tracking-[0.05em] text-slate-400">Monitor Evolution</div>
-          <div className="mt-1 text-xl font-semibold text-slate-50">Console de eventos brutos</div>
-          <div className="mt-1 text-sm text-slate-400">
-            Retenção local de até 6 horas. {props.socketReady ? "Realtime ativo quando disponível." : "Leitura pelo ciclo normal de atualização do painel."}
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={props.onClear}
-          className="inline-flex h-10 items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-4 text-sm font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-800"
-        >
-          Limpar monitor
-        </button>
-      </div>
-
-      {events.length === 0 ? (
-        <p className="pt-4 font-mono text-sm text-slate-400">Nenhum evento bruto capturado ainda.</p>
-      ) : (
-        <div className="mt-4 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
-          {events.map((event) => (
-            <div key={event.id} className="border-b border-slate-800 last:border-b-0">
-              <div className="px-4 py-2 font-mono text-xs text-slate-400">
-                [{formatDateTime(event.recordedAt)}] {event.source} {event.event}
-              </div>
-              <pre className="max-h-[420px] overflow-auto px-4 pb-4 text-xs leading-6 text-slate-100 whitespace-pre-wrap break-all">
-                {JSON.stringify(event.rawPayload, null, 2)}
-              </pre>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
 
