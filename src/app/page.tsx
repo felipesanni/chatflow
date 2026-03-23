@@ -1004,7 +1004,12 @@ export default function HomePage() {
         return false;
       }
 
-      if (!isClosedTicketsWorkspace && (!showAllTickets || !canViewOtherTickets) && ticket.currentAgent?.id !== user?.id) {
+      if (
+        !isClosedTicketsWorkspace
+        && (!showAllTickets || !canViewOtherTickets)
+        && ticket.currentAgent
+        && ticket.currentAgent.id !== user?.id
+      ) {
         return false;
       }
 
@@ -1043,7 +1048,7 @@ export default function HomePage() {
         return true;
       }
 
-      return ticket.currentAgent?.id === user?.id;
+      return !ticket.currentAgent || ticket.currentAgent.id === user?.id;
     });
 
     return {
