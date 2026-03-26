@@ -796,6 +796,7 @@ export default function HomePage() {
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
   const [showOnlyUnread, setShowOnlyUnread] = React.useState(false);
   const [showAllTickets, setShowAllTickets] = React.useState(false);
+  const [showArchivedTickets, setShowArchivedTickets] = React.useState(false);
   const [selectedQueueFilter, setSelectedQueueFilter] = React.useState<string>("all");
   const [showTicketDetails, setShowTicketDetails] = React.useState(false);
   const [showTransferPanel, setShowTransferPanel] = React.useState(false);
@@ -1076,6 +1077,7 @@ export default function HomePage() {
   const canBulkDeleteMessages = currentUser.permissions["messages.bulkDelete"];
   const canViewClosedTickets = currentUser.permissions["tickets.closedView"];
   const isClosedTicketsWorkspace = activeWorkspace === "closedTickets";
+  const isArchivedTicketView = isClosedTicketsWorkspace || showArchivedTickets;
   const canDeleteSelectedTicket = Boolean(selectedTicket && canBulkDeleteTickets);
   const dashboardAgentOptions = React.useMemo(() => {
     const options = [{ id: "all", name: "Visão geral" }];
@@ -1169,7 +1171,7 @@ export default function HomePage() {
     const search = searchQuery.trim().toLowerCase();
 
     return tickets.filter((ticket) => {
-      const matchesTab = isClosedTicketsWorkspace
+      const matchesTab = isArchivedTicketView
         ? ticket.status === "closed" && !ticket.isGroup
         : activeTab === "grupos"
           ? ticket.isGroup
@@ -1182,7 +1184,7 @@ export default function HomePage() {
       }
 
       if (
-        !isClosedTicketsWorkspace
+        !isArchivedTicketView
         && (!showAllTickets || !canViewOtherTickets)
         && ticket.currentAgent
         && ticket.currentAgent.id !== user?.id
@@ -1217,7 +1219,7 @@ export default function HomePage() {
           .toLowerCase()
           .includes(search);
     });
-  }, [activeTab, canViewOtherTickets, isClosedTicketsWorkspace, searchQuery, selectedQueueFilter, showAllTickets, showOnlyUnread, tickets, user?.id]);
+  }, [activeTab, canViewOtherTickets, isArchivedTicketView, searchQuery, selectedQueueFilter, showAllTickets, showOnlyUnread, tickets, user?.id]);
 
   const counters = React.useMemo(() => {
     const scopedTickets = tickets.filter((ticket) => {
@@ -1741,6 +1743,7 @@ export default function HomePage() {
       setSelectedTicketIdsForBulkDelete([]);
       setMessageBulkSelectionMode(false);
       setSelectedMessageIdsForBulkDelete([]);
+      setShowArchivedTickets(false);
     }
   }, [activeWorkspace]);
 
@@ -5524,12 +5527,12 @@ export default function HomePage() {
               </div>
             ) : null}
             {showForwardModal && forwardSourceMessage ? (
-              <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
-                <div className="my-auto flex w-full max-w-2xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
-                  <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+              <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-4 backdrop-blur-[2px] sm:py-6">
+                <div className="my-auto flex w-full max-w-xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
                     <div>
                       <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Encaminhar mensagem</div>
-                      <div className="mt-1 text-lg font-semibold text-[#1A1C32]">Escolha um ou mais destinos</div>
+                      <div className="mt-1 text-base font-semibold text-[#1A1C32]">Escolha um ou mais destinos</div>
                     </div>
                     <button
                       type="button"
@@ -5539,10 +5542,10 @@ export default function HomePage() {
                       <X className="h-4 w-4" />
                     </button>
                   </div>
-                  <div className="space-y-4 px-6 py-6">
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <div className="space-y-3 px-5 py-4">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5">
                       <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Mensagem selecionada</div>
-                      <div className="mt-2 text-sm text-slate-700">
+                      <div className="mt-1 line-clamp-2 text-sm text-slate-700">
                         {buildForwardBodyFromMessage(forwardSourceMessage) || (forwardSourceMessage.attachments?.length ? `[${forwardSourceMessage.attachments[0]?.mimeType ?? "arquivo"}] ${forwardSourceMessage.attachments[0]?.fileName ?? "Anexo"}` : "Mensagem sem texto")}
                       </div>
                     </div>
@@ -5552,10 +5555,10 @@ export default function HomePage() {
                         value={forwardSearch}
                         onChange={(event) => setForwardSearch(event.target.value)}
                         placeholder="Pesquisar nome ou número"
-                        className="h-14 w-full rounded-[22px] border border-slate-200 bg-white pl-12 pr-4 text-base text-slate-700 outline-none transition focus:border-emerald-400"
+                        className="h-12 w-full rounded-[20px] border border-slate-200 bg-white pl-12 pr-4 text-sm text-slate-700 outline-none transition focus:border-emerald-400"
                       />
                     </div>
-                    <div className="max-h-[420px] overflow-y-auto rounded-[24px] border border-slate-200 bg-white">
+                    <div className="max-h-[360px] overflow-y-auto rounded-[24px] border border-slate-200 bg-white">
                       {forwardDestinations.length === 0 ? (
                         <div className="px-5 py-8 text-sm text-slate-400">Nenhuma conversa ou contato encontrado.</div>
                       ) : (
@@ -5566,7 +5569,7 @@ export default function HomePage() {
                               key={destination.key}
                               type="button"
                               onClick={() => toggleForwardDestinationSelection(destination.key)}
-                              className={`flex w-full items-center gap-4 border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 ${
+                              className={`flex w-full items-center gap-3 border-b border-slate-100 px-4 py-2.5 text-left transition last:border-b-0 ${
                                 selected ? "bg-emerald-50" : "bg-white hover:bg-slate-50"
                               }`}
                             >
@@ -5579,11 +5582,11 @@ export default function HomePage() {
                                 src={destination.avatarUrl}
                                 name={destination.label}
                                 alt={destination.label}
-                                className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700"
+                                className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700"
                               />
                               <div className="min-w-0 flex-1">
-                                <div className="truncate text-[17px] font-semibold text-slate-900">{destination.label}</div>
-                                <div className="mt-1 truncate text-sm text-slate-500">{destination.meta}</div>
+                                <div className="truncate text-[15px] font-semibold text-slate-900">{destination.label}</div>
+                                <div className="mt-0.5 truncate text-sm text-slate-500">{destination.meta}</div>
                               </div>
                             </button>
                           );
@@ -5591,7 +5594,7 @@ export default function HomePage() {
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-6 py-5">
+                  <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-5 py-4">
                     <div className="text-sm text-slate-500">
                       {selectedForwardDestinationKeys.length > 0
                         ? `${selectedForwardDestinationKeys.length} selecionado(s)`
@@ -6386,7 +6389,7 @@ export default function HomePage() {
           <aside className={`hidden h-full shrink-0 border-r border-slate-200 bg-white transition-[width] duration-200 md:flex md:flex-col md:justify-between md:py-4 ${showRail ? "w-[220px]" : "w-14"}`}>
             <div className="flex w-full flex-col gap-1 px-2">
               {currentUser.permissions["dashboard.view"] ? <RailButton icon={LayoutGrid} label="Painel geral" expanded={showRail} active={activeWorkspace === "dashboard"} onClick={() => setActiveWorkspace("dashboard")} /> : null}
-              {currentUser.permissions["tickets.view"] ? <RailButton icon={WhatsAppIcon} label="Atendimento" expanded={showRail} active={activeWorkspace === "tickets"} onClick={() => { setShowAllTickets(false); setActiveTab("atendendo"); setActiveWorkspace("tickets"); }} /> : null}
+{currentUser.permissions["tickets.view"] ? <RailButton icon={WhatsAppIcon} label="Atendimento" expanded={showRail} active={activeWorkspace === "tickets"} onClick={() => { setShowAllTickets(false); setShowArchivedTickets(false); setActiveTab("atendendo"); setActiveWorkspace("tickets"); }} /> : null}
               {canViewClosedTickets ? <RailButton icon={Archive} label="Tickets fechados" expanded={showRail} active={activeWorkspace === "closedTickets"} onClick={() => { setShowAllTickets(false); setActiveWorkspace("closedTickets"); }} /> : null}
               {currentUser.permissions["quickReplies.view"] ? <RailButton icon={Zap} label="Respostas rápidas" expanded={showRail} active={activeWorkspace === "quickReplies"} onClick={() => setActiveWorkspace("quickReplies")} /> : null}
               {currentUser.permissions["api.view"] ? <RailButton icon={Code2} label="API" expanded={showRail} active={activeWorkspace === "api"} onClick={() => setActiveWorkspace("api")} /> : null}
@@ -6444,15 +6447,16 @@ export default function HomePage() {
                         {canViewClosedTickets ? (
                           <SidebarIconButton
                             icon={Archive}
-                            label={isClosedTicketsWorkspace ? "Voltar para mensagens ativas" : "Mostrar arquivadas"}
-                            active={isClosedTicketsWorkspace}
+                            label={isArchivedTicketView ? "Voltar para mensagens ativas" : "Mostrar arquivadas"}
+                            active={isArchivedTicketView}
                             onClick={() => {
                               setShowAllTickets(false);
-                              setActiveWorkspace(isClosedTicketsWorkspace ? "tickets" : "closedTickets");
+                              setShowArchivedTickets((current) => !current);
+                              setActiveWorkspace("tickets");
                             }}
                           />
                         ) : null}
-                        {!isClosedTicketsWorkspace && canViewOtherTickets ? (
+                        {!isArchivedTicketView && canViewOtherTickets ? (
                           <SidebarIconButton
                             icon={showAllTickets ? EyeOff : Eye}
                             label={showAllTickets ? "Voltar para minhas mensagens" : "Mostrar todas as mensagens"}
@@ -6486,11 +6490,11 @@ export default function HomePage() {
                 </div>
 
                 <div className="border-b border-slate-200 px-3 py-2">
-                  {isClosedTicketsWorkspace ? (
+                  {isArchivedTicketView ? (
                     <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2">
                       <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
                         <Archive className="h-3.5 w-3.5" />
-                        Tickets fechados
+                        Tickets arquivados
                       </div>
                       <span className="rounded-full bg-slate-600 px-2 py-0.5 text-[10px] font-bold text-white">
                         {counters.fechados}
@@ -6498,9 +6502,9 @@ export default function HomePage() {
                     </div>
                   ) : (
                     <div className={`grid items-center gap-2 ${canViewGroups ? "grid-cols-3" : "grid-cols-2"}`}>
-                      <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
-                      <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
-                      {canViewGroups ? <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" /> : null}
+                      <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => { setShowArchivedTickets(false); setActiveWorkspace("tickets"); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
+                      <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => { setShowArchivedTickets(false); setActiveWorkspace("tickets"); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
+                      {canViewGroups ? <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => { setShowArchivedTickets(false); setActiveWorkspace("tickets"); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" /> : null}
                     </div>
                   )}
                 </div>
@@ -6548,7 +6552,7 @@ export default function HomePage() {
                   <div className="flex-1 min-h-0 min-w-0 overflow-y-auto bg-white px-2 py-2">
                   {visibleTickets.length === 0 ? (
                   <div className="p-10 text-center text-xs font-medium text-slate-400">
-                      {isClosedTicketsWorkspace ? "Nenhum ticket fechado para os filtros atuais." : "Nenhum atendimento nesta categoria."}
+                      {isArchivedTicketView ? "Nenhum ticket arquivado para os filtros atuais." : "Nenhum atendimento nesta categoria."}
                     </div>
                   ) : (
                     visibleTickets.map((ticket) => {
@@ -6566,7 +6570,7 @@ export default function HomePage() {
                             }
 
                             setSelectedTicketId(ticket.id);
-                            setActiveWorkspace(isClosedTicketsWorkspace ? "closedTickets" : "tickets");
+                            setActiveWorkspace("tickets");
                             setShowTicketDetails(false);
                           }}
                           className={`group relative mb-1.5 flex w-full min-w-0 items-start gap-2.5 rounded-[18px] border text-left transition ${selected ? "border-slate-300 bg-slate-50 shadow-sm" : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"} ${compact ? "p-2.5" : "p-3"}`}
