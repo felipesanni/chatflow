@@ -218,6 +218,30 @@ function pickNonEmptyStringList(values: unknown[]) {
   ));
 }
 
+function normalizeMessageTimestamp(value: unknown) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const milliseconds = value > 1_000_000_000_000 ? value : value * 1000;
+    const parsedDate = new Date(milliseconds);
+    return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
+  }
+
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const numeric = Number(value.trim());
+    if (Number.isFinite(numeric)) {
+      return normalizeMessageTimestamp(numeric);
+    }
+
+    const parsedDate = new Date(value);
+    return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
+  }
+
+  return null;
+}
+
 function findEditedProtocolMessage(value: unknown, depth = 0): { editedMessage: Record<string, any>; targetKey: Record<string, unknown> | null } | null {
   if (depth > 8) {
     return null;
@@ -892,6 +916,25 @@ export function parseEvolutionPayload(
     contactData?.verifiedBizName,
     participantData?.verifiedBizName,
   ]);
+  const messageTimestamp = normalizeMessageTimestamp(
+    pickFirstNonEmptyString([
+      data?.messageTimestamp,
+      data?.message_timestamp,
+      data?.timestamp,
+      data?.date_time,
+      messageKey?.messageTimestamp,
+      effectiveKey?.messageTimestamp,
+      pickObject(data?.key)?.messageTimestamp,
+    ]) ?? [
+      data?.messageTimestamp,
+      data?.message_timestamp,
+      data?.timestamp,
+      data?.date_time,
+      messageKey?.messageTimestamp,
+      effectiveKey?.messageTimestamp,
+      pickObject(data?.key)?.messageTimestamp,
+    ].find((value) => typeof value === 'number' || value instanceof Date) ?? null,
+  );
   const isEdited =
     resolvedContent.isEdited
     || normalizedEvent === 'MESSAGES_EDITED'
@@ -911,6 +954,7 @@ export function parseEvolutionPayload(
     body: parsedContent.body,
     contentType: parsedContent.contentType,
     attachments: parsedContent.attachments,
+    messageTimestamp,
     reaction,
     deletion,
     rawPayload: payload,

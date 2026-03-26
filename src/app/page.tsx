@@ -1703,6 +1703,7 @@ export default function HomePage() {
       })
       .slice(0, 8);
   }, [customers, forwardSearch]);
+  const managementSearch = searchQuery.trim().toLowerCase();
   const filteredApiModules = React.useMemo(() => {
     return CHATFLOW_API_REFERENCE_MODULES
       .map((module) => {
@@ -2164,9 +2165,6 @@ export default function HomePage() {
 
     setSelectedTicketId(null);
   }, [activeWorkspace, selectedTicketId, visibleTickets]);
-
-  const managementSearch = searchQuery.trim().toLowerCase();
-
   const filteredInstances = React.useMemo(() => {
     if (!managementSearch) return instances;
     return instances.filter((instance) =>
