@@ -1761,6 +1761,7 @@ export default function HomePage() {
     setApiTesterError(null);
     setApiTesterResult(null);
   }, [selectedApiEndpoint]);
+  const canManageApiTokens = currentUser.permissions["api.manage"];
   const handleRunApiTester = React.useCallback(async () => {
     const normalizedPath = normalizeApiTesterPath(apiTesterPath);
     if (!normalizedPath) {
@@ -1979,7 +1980,6 @@ export default function HomePage() {
   const canManageInstances = currentUser.permissions["channels.manage"];
   const canManageQuickReplies = currentUser.permissions["quickReplies.manage"];
   const canManageAgents = currentUser.permissions["agents.manage"];
-  const canManageApiTokens = currentUser.permissions["api.manage"];
   const canDeleteAgents = currentUser.permissions["agents.delete"];
   const canManageAgentPasswords = currentUser.permissions["agents.password.manage"];
   const canManageQueues = currentUser.permissions["queues.manage"];
