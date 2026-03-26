@@ -228,6 +228,12 @@ type CustomerItem = {
   } | null;
 };
 
+type CustomerTicketsViewerState = {
+  customer: CustomerItem;
+  tickets: TicketItem[];
+  loading: boolean;
+};
+
 type ForwardDestination = {
   key: string;
   kind: "ticket" | "contact" | "manual";
@@ -839,6 +845,7 @@ export default function HomePage() {
   }>(null);
   const [scheduledMessageDeleteTarget, setScheduledMessageDeleteTarget] = React.useState<ScheduledMessageItem | null>(null);
   const [forwardLoading, setForwardLoading] = React.useState(false);
+  const [customerTicketsViewer, setCustomerTicketsViewer] = React.useState<CustomerTicketsViewerState | null>(null);
   const [forwardMessageId, setForwardMessageId] = React.useState<string | null>(null);
   const [forwardSearch, setForwardSearch] = React.useState("");
   const [selectedForwardDestinationKeys, setSelectedForwardDestinationKeys] = React.useState<string[]>([]);
@@ -3589,6 +3596,33 @@ export default function HomePage() {
     }
   }
 
+  async function handleOpenCustomerTickets(customer: CustomerItem) {
+    setCustomerTicketsViewer({
+      customer,
+      tickets: [],
+      loading: true,
+    });
+
+    try {
+      const payload = await apiFetch<{ item: { id: string; name: string }; tickets: TicketItem[] }>(`/customers/${customer.id}/tickets`, { method: "GET" });
+      setCustomerTicketsViewer({
+        customer: {
+          ...customer,
+          name: payload.item.name,
+        },
+        tickets: payload.tickets,
+        loading: false,
+      });
+    } catch (error) {
+      setCustomerTicketsViewer({
+        customer,
+        tickets: [],
+        loading: false,
+      });
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar tickets do contato.");
+    }
+  }
+
   async function handleToggleCustomerDashboardVisibility(customer: CustomerItem, ignored: boolean) {
     if (!canManageContacts) return;
 
@@ -4208,16 +4242,12 @@ export default function HomePage() {
             />
 
             <DataTable
-              columns={
-                canManageContacts
-                  ? ["Nome", "Telefone", "E-mail", "Empresa", "Ultimo ticket", "Atualizado em", "Ações"]
-                  : ["Nome", "Telefone", "E-mail", "Empresa", "Ultimo ticket", "Atualizado em"]
-              }
+              columns={["Nome", "Telefone", "E-mail", "Empresa", "Ultimo ticket", "Atualizado em", "Ações"]}
               emptyMessage="Nenhum contato encontrado."
             >
               {filteredCustomers.length === 0 ? (
                 <tr>
-                  <td colSpan={canManageContacts ? 7 : 6} className="px-5 py-8 text-sm text-slate-500">
+                  <td colSpan={7} className="px-5 py-8 text-sm text-slate-500">
                     Nenhum contato encontrado.
                   </td>
                 </tr>
@@ -4251,20 +4281,26 @@ export default function HomePage() {
                       )}
                     </DataCell>
                     <DataCell subtle>{formatDateTime(customer.updatedAt)}</DataCell>
-                    {canManageContacts ? (
-                      <DataCell>
-                        <div className="flex items-center gap-3">
+                    <DataCell>
+                      <div className="flex items-center gap-3">
+                        <button type="button" onClick={() => void handleOpenCustomerTickets(customer)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
+                          <Eye className="h-4 w-4" />
+                          Ver tickets
+                        </button>
+                        {canManageContacts ? (
                           <button type="button" onClick={() => startEditCustomer(customer)} className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition hover:text-slate-900">
                             <Pencil className="h-4 w-4" />
                             Editar
                           </button>
+                        ) : null}
+                        {canManageContacts ? (
                           <button type="button" onClick={() => void handleDeleteCustomer(customer.id)} className="inline-flex items-center gap-2 text-sm font-medium text-rose-600 transition hover:text-rose-700">
                             <Trash2 className="h-4 w-4" />
                             Excluir
                           </button>
-                        </div>
-                      </DataCell>
-                    ) : null}
+                        ) : null}
+                      </div>
+                    </DataCell>
                   </DataRow>
                 ))
               )}
@@ -5821,6 +5857,75 @@ export default function HomePage() {
         ) : (
           <EmptyCenter />
         )}
+        {customerTicketsViewer ? (
+          <div className="fixed inset-0 z-[118] flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+            <div className="my-auto flex w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Contatos</div>
+                  <div className="mt-1 text-lg font-semibold text-[#1A1C32]">Tickets vinculados a {customerTicketsViewer.customer.name}</div>
+                  <div className="mt-1 text-sm text-slate-500">
+                    {customerTicketsViewer.loading ? "Carregando histórico..." : `${customerTicketsViewer.tickets.length} ticket(s) encontrados para este contato.`}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCustomerTicketsViewer(null)}
+                  className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="max-h-[70vh] overflow-y-auto px-6 py-6">
+                {customerTicketsViewer.loading ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                    Carregando tickets deste contato...
+                  </div>
+                ) : customerTicketsViewer.tickets.length === 0 ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                    Nenhum ticket visível encontrado para este contato.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {customerTicketsViewer.tickets.map((ticket) => (
+                      <div key={ticket.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="truncate text-sm font-semibold text-slate-900">{ticket.customerName}</div>
+                              <StatusChip tone={ticket.status === "open" ? "success" : ticket.status === "pending" ? "warning" : "default"}>
+                                {traduzirStatusTicket(ticket.status)}
+                              </StatusChip>
+                              {ticket.isGroup ? <StatusChip tone="default">Grupo</StatusChip> : null}
+                            </div>
+                            <div className="mt-2 grid gap-2 text-sm text-slate-500 md:grid-cols-2">
+                              <div>Fila: {ticket.currentQueue?.name ?? "Sem fila"}</div>
+                              <div>Responsável: {ticket.currentAgent?.name ?? "Sem agente"}</div>
+                              <div>Instância: {ticket.whatsappInstance.name}</div>
+                              <div>Atualizado em: {formatDateTime(ticket.updatedAt)}</div>
+                            </div>
+                            <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                              {ticket.lastMessagePreview?.trim() || "Sem prévia de mensagem."}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
+                <button
+                  type="button"
+                  onClick={() => setCustomerTicketsViewer(null)}
+                  className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
         {appDialog ? (
           <div className="fixed inset-0 z-[120] flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
             <div className="my-auto flex w-full max-w-lg flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">

@@ -22,6 +22,87 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
     return digits || null;
   }
 
+  function canViewCustomerTicket(
+    viewerId: string,
+    permissions: Record<string, boolean>,
+    viewerQueueIds: string[],
+    ticket: { currentAgentId: string | null; currentQueueId: string | null; status: string; isGroup: boolean },
+  ) {
+    if (ticket.status === 'closed' && !permissions['tickets.closedView']) {
+      return false;
+    }
+
+    if (ticket.isGroup) {
+      return permissions['tickets.groups'];
+    }
+
+    if (permissions['tickets.viewAll']) {
+      return true;
+    }
+
+    if (ticket.currentAgentId === viewerId) {
+      return true;
+    }
+
+    const canViewOtherUsers = permissions['tickets.viewOthers'];
+    const isQueueScoped = ticket.currentQueueId ? viewerQueueIds.includes(ticket.currentQueueId) : false;
+
+    if (ticket.currentQueueId) {
+      if (!isQueueScoped) {
+        return false;
+      }
+
+      return ticket.currentAgentId === null || canViewOtherUsers;
+    }
+
+    if (!permissions['tickets.viewUnassigned']) {
+      return false;
+    }
+
+    return ticket.currentAgentId === null || canViewOtherUsers;
+  }
+
+  function serializeCustomerTicket(ticket: {
+    id: string;
+    status: 'open' | 'pending' | 'closed';
+    customerId: string | null;
+    customerNameSnapshot: string;
+    title: string | null;
+    externalChatId: string;
+    externalContactId: string | null;
+    customerAvatarUrl: string | null;
+    lastMessagePreview: string | null;
+    unreadCount: number;
+    isGroup: boolean;
+    updatedAt: Date;
+    currentAgent: { id: string; name: string } | null;
+    currentQueue: { id: string; name: string; color: string | null } | null;
+    whatsappInstance: { id: string; name: string };
+  }) {
+    const manualGroupName = ticket.isGroup && typeof ticket.title === 'string' && ticket.title.trim().length > 0
+      ? ticket.title.trim()
+      : null;
+    const displayName = manualGroupName ?? ticket.customerNameSnapshot;
+
+    return {
+      id: ticket.id,
+      status: ticket.status,
+      customerId: ticket.customerId,
+      customerName: displayName,
+      manualGroupName,
+      externalChatId: ticket.externalChatId,
+      externalContactId: ticket.externalContactId,
+      customerAvatarUrl: ticket.customerAvatarUrl,
+      lastMessagePreview: ticket.lastMessagePreview,
+      unreadCount: ticket.unreadCount,
+      currentAgent: ticket.currentAgent ? { id: ticket.currentAgent.id, name: ticket.currentAgent.name } : null,
+      currentQueue: ticket.currentQueue ? { id: ticket.currentQueue.id, name: ticket.currentQueue.name, color: ticket.currentQueue.color } : null,
+      whatsappInstance: { id: ticket.whatsappInstance.id, name: ticket.whatsappInstance.name },
+      isGroup: ticket.isGroup,
+      updatedAt: ticket.updatedAt,
+    };
+  }
+
   app.get('/customers', async (request, reply) => {
     const access = await requirePermission(app, request, reply, 'contacts.view');
     if (!access) return;
@@ -73,6 +154,87 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
           : null,
       })),
     };
+  });
+
+  app.get('/customers/:customerId/tickets', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'contacts.view');
+    if (!access) return;
+
+    const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
+
+    const customer = await app.prisma.customer.findUnique({
+      where: { id: params.customerId },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    if (!customer) {
+      return reply.notFound('Contato nao encontrado.');
+    }
+
+    const tickets = await app.prisma.ticket.findMany({
+      where: {
+        customerId: params.customerId,
+      },
+      select: {
+        id: true,
+        status: true,
+        customerId: true,
+        customerNameSnapshot: true,
+        title: true,
+        externalChatId: true,
+        externalContactId: true,
+        customerAvatarUrl: true,
+        lastMessagePreview: true,
+        unreadCount: true,
+        isGroup: true,
+        updatedAt: true,
+        currentAgentId: true,
+        currentQueueId: true,
+        currentAgent: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        currentQueue: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+        whatsappInstance: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+    });
+
+    const visibleTickets = tickets
+      .filter((ticket) =>
+        canViewCustomerTicket(access.session.userId, access.permissions, access.queueIds, {
+          currentAgentId: ticket.currentAgentId,
+          currentQueueId: ticket.currentQueueId,
+          status: ticket.status,
+          isGroup: ticket.isGroup,
+        }))
+      .map(serializeCustomerTicket);
+
+    return reply.send({
+      item: {
+        id: customer.id,
+        name: customer.name,
+      },
+      tickets: visibleTickets,
+    });
   });
 
   app.post('/customers', async (request, reply) => {
