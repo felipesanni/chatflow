@@ -645,10 +645,10 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         });
         const existingTicket = aliasedTicket ?? (metadataCanonicalChatId
           ? await app.prisma.ticket.findFirst({
-              where: buildActiveTicketIdentityWhere(instance.id, metadataIdentity),
-              orderBy: {
-                updatedAt: 'desc',
-              },
+            where: buildActiveTicketIdentityWhere(instance.id, metadataIdentity),
+            orderBy: {
+              lastMessageAt: 'desc',
+            },
             })
           : null);
 
@@ -778,6 +778,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           where: { id: existingMessage.ticketId },
           data: {
             lastMessagePreview: parsed.body,
+            lastMessageAt: existingMessage.createdAt,
           },
         });
 
@@ -1092,6 +1093,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
             ),
             customerAvatarUrl: customerAvatarUrl ?? preMatchedOutboundMessage.ticket.customerAvatarUrl,
             lastMessagePreview: parsed.body,
+            lastMessageAt: parsed.messageTimestamp ?? new Date(),
             unreadCount: 0,
             updatedAt: new Date(),
           },
@@ -1109,6 +1111,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
               ),
               customerAvatarUrl: customerAvatarUrl ?? aliasedTicket.customerAvatarUrl,
               lastMessagePreview: parsed.body,
+              lastMessageAt: parsed.messageTimestamp ?? new Date(),
               unreadCount: parsed.fromMe ? 0 : { increment: 1 },
               status: parsed.fromMe ? aliasedTicket.status : aliasedTicket.currentAgentId ? aliasedTicket.status : 'pending',
               updatedAt: new Date(),
@@ -1121,7 +1124,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           const existingTicket = await tx.ticket.findFirst({
             where: buildActiveTicketIdentityWhere(instance.id, chatIdentity),
             orderBy: {
-              updatedAt: 'desc',
+              lastMessageAt: 'desc',
             },
           });
 
@@ -1140,6 +1143,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
                 unreadCount: parsed.fromMe ? 0 : 1,
                 isGroup: parsed.isGroup,
                 lastMessagePreview: parsed.body,
+                lastMessageAt: parsed.messageTimestamp ?? new Date(),
               },
             });
 
@@ -1164,6 +1168,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
               customerNameSnapshot: ensureTicketDisplayName(parsedWithResolvedGroupName, customer?.name ?? existingTicket.customerNameSnapshot),
               customerAvatarUrl: customerAvatarUrl ?? existingTicket.customerAvatarUrl,
               lastMessagePreview: parsed.body,
+              lastMessageAt: parsed.messageTimestamp ?? new Date(),
               unreadCount: parsed.fromMe ? 0 : { increment: 1 },
               status: parsed.fromMe ? existingTicket.status : existingTicket.currentAgentId ? existingTicket.status : 'pending',
               updatedAt: new Date(),

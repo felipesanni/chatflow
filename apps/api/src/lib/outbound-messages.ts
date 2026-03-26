@@ -259,6 +259,7 @@ export async function deliverOutboundMessage(app: FastifyInstance, params: Deliv
     where: { id: ticket.id },
     data: {
       lastMessagePreview: preview,
+      lastMessageAt: message.createdAt,
       unreadCount: 0,
       status: 'open',
       currentAgentId: ticket.isGroup ? null : (ticket.currentAgentId ?? actor.id),

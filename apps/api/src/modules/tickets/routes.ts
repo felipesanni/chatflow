@@ -225,9 +225,10 @@ function serializeTicket(ticket: any) {
     manualGroupName,
     externalChatId: ticket.externalChatId,
     externalContactId: ticket.externalContactId,
-    customerAvatarUrl: ticket.customerAvatarUrl,
-    lastMessagePreview: ticket.lastMessagePreview,
-    unreadCount: ticket.unreadCount,
+      customerAvatarUrl: ticket.customerAvatarUrl,
+      lastMessagePreview: ticket.lastMessagePreview,
+      lastMessageAt: ticket.lastMessageAt,
+      unreadCount: ticket.unreadCount,
     currentAgent: ticket.currentAgent ? { id: ticket.currentAgent.id, name: ticket.currentAgent.name } : null,
     currentQueue: ticket.currentQueue ? { id: ticket.currentQueue.id, name: ticket.currentQueue.name, color: ticket.currentQueue.color } : null,
     whatsappInstance: { id: ticket.whatsappInstance.id, name: ticket.whatsappInstance.name },
@@ -306,6 +307,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         status: true,
         unreadCount: true,
         isGroup: true,
+        lastMessageAt: true,
         currentAgentId: true,
         currentQueueId: true,
         createdAt: true,
@@ -316,9 +318,10 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
           },
         },
       },
-      orderBy: {
-        updatedAt: 'desc',
-      },
+      orderBy: [
+        { lastMessageAt: 'desc' },
+        { updatedAt: 'desc' },
+      ],
       take: query.limit,
     });
 
@@ -437,9 +440,10 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         currentQueue: true,
         whatsappInstance: true,
       },
-      orderBy: {
-        updatedAt: 'desc',
-      },
+      orderBy: [
+        { lastMessageAt: 'desc' },
+        { updatedAt: 'desc' },
+      ],
       ...(typeof query.limit === 'number' ? { take: query.limit } : {}),
     });
 
@@ -491,6 +495,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         externalContactId: ticket.externalContactId,
         customerAvatarUrl: ticket.customerAvatarUrl,
         lastMessagePreview: ticket.lastMessagePreview,
+        lastMessageAt: ticket.lastMessageAt,
         unreadCount: ticket.unreadCount,
         closedReason: ticket.closedReason,
         isGroup: ticket.isGroup,

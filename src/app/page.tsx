@@ -6,6 +6,7 @@ import { PhotoProvider, PhotoView } from "react-photo-view";
 import {
   Archive,
   ArrowRightLeft,
+  Copy,
   Calendar,
   CheckSquare,
   ChevronDown,
@@ -27,6 +28,7 @@ import {
   Phone,
   Paperclip,
   Plus,
+  Play,
   RefreshCw,
   Search,
   Send,
@@ -68,6 +70,7 @@ type TicketItem = {
   externalContactId?: string | null;
   customerAvatarUrl?: string | null;
   lastMessagePreview: string | null;
+  lastMessageAt?: string;
   unreadCount: number;
   isGroup: boolean;
   updatedAt: string;
@@ -330,6 +333,59 @@ type DashboardOverview = {
   };
 };
 
+type ApiDocMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+type ApiTesterAuthMode = "bearer" | "session" | "publica" | "sessao";
+
+type ApiEndpointDoc = {
+  key: string;
+  method: ApiDocMethod;
+  module: string;
+  title: string;
+  summary: string;
+  publicPath: string;
+  testerPath: string;
+  auth: ApiTesterAuthMode;
+  permission?: string;
+  query?: Array<{ name: string; description: string }>;
+  bodyExample?: string;
+  successExample?: string;
+  notes?: string[];
+};
+
+type ApiModuleDoc = {
+  key: string;
+  title: string;
+  description: string;
+  endpoints: ApiEndpointDoc[];
+};
+
+type ApiTesterResult = {
+  method: ApiDocMethod;
+  requestedPath: string;
+  status: number;
+  ok: boolean;
+  durationMs: number;
+  contentType: string | null;
+  headers: Array<{ key: string; value: string }>;
+  body: string;
+};
+
+type ApiAccessTokenItem = {
+  id: string;
+  name: string;
+  tokenPrefix: string;
+  isActive: boolean;
+  lastUsedAt: string | null;
+  createdAt: string;
+  createdBy: { id: string; name: string } | null;
+};
+
+type ApiAccessTokenCreateResponse = {
+  item: ApiAccessTokenItem;
+  token: string;
+  message: string;
+};
+
 const permissionDefinitions = [
   { key: "dashboard.view", group: "Painel geral", label: "Visualizar painel geral" },
   { key: "tickets.view", group: "Atendimento", label: "Visualizar atendimento" },
@@ -356,6 +412,7 @@ const permissionDefinitions = [
   { key: "queues.manage", group: "Equipe e filas", label: "Cadastrar e editar filas" },
   { key: "queues.assign", group: "Equipe e filas", label: "Associar agentes às filas" },
   { key: "api.view", group: "API", label: "Visualizar módulo de API" },
+  { key: "api.manage", group: "API", label: "Gerenciar tokens da API" },
   { key: "contacts.view", group: "Contatos", label: "Visualizar contatos" },
   { key: "contacts.manage", group: "Contatos", label: "Cadastrar e editar contatos" },
   { key: "profile.view", group: "Perfil", label: "Visualizar perfil" },
@@ -420,6 +477,7 @@ function defaultPermissionsForRole(role: "admin" | "agent"): PermissionMap {
     "queues.manage": false,
     "queues.assign": false,
     "api.view": false,
+    "api.manage": false,
     "contacts.view": true,
     "contacts.manage": false,
     "profile.view": true,
@@ -493,6 +551,601 @@ function resolvePublicUrls() {
     apiBaseUrl: detectedApiBaseUrl,
     webhookUrl: `${detectedApiBaseUrl}/api/webhooks/evolution`,
   };
+}
+
+const API_REFERENCE_MODULES: ApiModuleDoc[] = [
+  {
+    key: "auth",
+    title: "Autenticação",
+    description: "Sessão do painel, bootstrap inicial e perfil do usuário autenticado.",
+    endpoints: [
+      {
+        key: "auth-bootstrap",
+        method: "POST",
+        module: "Autenticação",
+        title: "Bootstrap inicial",
+        summary: "Cria o primeiro administrador do sistema quando o ambiente ainda não foi inicializado.",
+        publicPath: "/api/auth/bootstrap",
+        testerPath: "/auth/bootstrap",
+        auth: "publica",
+        bodyExample: JSON.stringify({ name: "Administrador", email: "admin@empresa.com", password: "Senha@123" }, null, 2),
+      },
+      {
+        key: "auth-login",
+        method: "POST",
+        module: "Autenticação",
+        title: "Login",
+        summary: "Inicia a sessão do usuário usando cookie autenticado.",
+        publicPath: "/api/auth/login",
+        testerPath: "/auth/login",
+        auth: "publica",
+        bodyExample: JSON.stringify({ email: "admin@empresa.com", password: "Senha@123" }, null, 2),
+      },
+      {
+        key: "auth-me",
+        method: "GET",
+        module: "Autenticação",
+        title: "Sessão atual",
+        summary: "Retorna o usuário autenticado e suas permissões.",
+        publicPath: "/api/auth/me",
+        testerPath: "/auth/me",
+        auth: "sessao",
+      },
+      {
+        key: "auth-profile",
+        method: "PATCH",
+        module: "Autenticação",
+        title: "Atualizar perfil",
+        summary: "Atualiza nome, avatar e senha do próprio usuário.",
+        publicPath: "/api/auth/me/profile",
+        testerPath: "/auth/me/profile",
+        auth: "sessao",
+        bodyExample: JSON.stringify({ name: "Novo nome" }, null, 2),
+      },
+      {
+        key: "auth-logout",
+        method: "POST",
+        module: "Autenticação",
+        title: "Logout",
+        summary: "Encerra a sessão atual do painel.",
+        publicPath: "/api/auth/logout",
+        testerPath: "/auth/logout",
+        auth: "sessao",
+      },
+    ],
+  },
+  {
+    key: "dashboard",
+    title: "Painel Geral",
+    description: "Indicadores operacionais, séries históricas e alertas consolidados.",
+    endpoints: [
+      {
+        key: "dashboard-overview",
+        method: "GET",
+        module: "Painel Geral",
+        title: "Resumo do dashboard",
+        summary: "Entrega cards, distribuição por fila/agente, série diária e alertas.",
+        publicPath: "/api/dashboard/overview",
+        testerPath: "/dashboard/overview?range=7d",
+        auth: "sessao",
+        query: [
+          { name: "range", description: "today, 7d ou 30d." },
+          { name: "agentId", description: "all, me ou um ID específico de agente." },
+        ],
+      },
+    ],
+  },
+  {
+    key: "tickets",
+    title: "Tickets",
+    description: "Caixa de entrada, abertura, aceite, transferência, encerramento e fusão.",
+    endpoints: [
+      {
+        key: "tickets-list",
+        method: "GET",
+        module: "Tickets",
+        title: "Listar tickets",
+        summary: "Base do módulo de Atendimento, com filtros por status e tipo de conversa.",
+        publicPath: "/api/tickets",
+        testerPath: "/tickets?status=open&isGroup=false",
+        auth: "sessao",
+        query: [
+          { name: "status", description: "open, pending ou closed." },
+          { name: "isGroup", description: "true para grupos, false para contatos individuais." },
+          { name: "queueId", description: "Filtra por fila específica." },
+        ],
+      },
+      {
+        key: "tickets-get",
+        method: "GET",
+        module: "Tickets",
+        title: "Detalhar ticket",
+        summary: "Retorna um ticket específico com os metadados principais.",
+        publicPath: "/api/tickets/:ticketId",
+        testerPath: "/tickets/SEU_TICKET_ID",
+        auth: "sessao",
+        notes: ["Substitua SEU_TICKET_ID antes de rodar o teste."],
+      },
+      {
+        key: "tickets-create",
+        method: "POST",
+        module: "Tickets",
+        title: "Abrir ticket",
+        summary: "Cria um atendimento manual para um telefone ou cliente existente.",
+        publicPath: "/api/tickets",
+        testerPath: "/tickets",
+        auth: "sessao",
+        permission: "tickets.manage",
+        bodyExample: JSON.stringify({ phone: "5511999999999", whatsappInstanceId: "SUA_INSTANCIA_ID" }, null, 2),
+      },
+      {
+        key: "tickets-accept",
+        method: "POST",
+        module: "Tickets",
+        title: "Aceitar atendimento",
+        summary: "Assume o ticket e marca o atendimento como em andamento.",
+        publicPath: "/api/tickets/:ticketId/accept",
+        testerPath: "/tickets/SEU_TICKET_ID/accept",
+        auth: "sessao",
+      },
+      {
+        key: "tickets-close",
+        method: "POST",
+        module: "Tickets",
+        title: "Fechar atendimento",
+        summary: "Encerra um ticket ativo ou pendente.",
+        publicPath: "/api/tickets/:ticketId/close",
+        testerPath: "/tickets/SEU_TICKET_ID/close",
+        auth: "sessao",
+      },
+      {
+        key: "tickets-reopen",
+        method: "POST",
+        module: "Tickets",
+        title: "Reabrir atendimento",
+        summary: "Move um ticket fechado de volta para a operação.",
+        publicPath: "/api/tickets/:ticketId/reopen",
+        testerPath: "/tickets/SEU_TICKET_ID/reopen",
+        auth: "sessao",
+      },
+      {
+        key: "tickets-transfer",
+        method: "POST",
+        module: "Tickets",
+        title: "Transferir ticket",
+        summary: "Altera fila e/ou responsável do atendimento.",
+        publicPath: "/api/tickets/:ticketId/transfer",
+        testerPath: "/tickets/SEU_TICKET_ID/transfer",
+        auth: "sessao",
+        bodyExample: JSON.stringify({ queueId: "SUA_FILA_ID", agentId: "SEU_AGENTE_ID", note: "Mudança de responsável" }, null, 2),
+      },
+      {
+        key: "tickets-group-name",
+        method: "PATCH",
+        module: "Tickets",
+        title: "Nome manual de grupo",
+        summary: "Define ou altera o nome manual de um grupo no atendimento.",
+        publicPath: "/api/tickets/:ticketId/group-name",
+        testerPath: "/tickets/SEU_TICKET_ID/group-name",
+        auth: "sessao",
+        bodyExample: JSON.stringify({ name: "Grupo Financeiro" }, null, 2),
+      },
+      {
+        key: "tickets-duplicates",
+        method: "GET",
+        module: "Tickets",
+        title: "Duplicidades",
+        summary: "Lista tickets duplicados para revisão e fusão.",
+        publicPath: "/api/tickets/duplicates",
+        testerPath: "/tickets/duplicates",
+        auth: "sessao",
+      },
+    ],
+  },
+  {
+    key: "messages",
+    title: "Mensagens",
+    description: "Histórico, envio, reações, edição e exclusão de mensagens do ticket.",
+    endpoints: [
+      {
+        key: "messages-list",
+        method: "GET",
+        module: "Mensagens",
+        title: "Listar mensagens",
+        summary: "Retorna o histórico completo de um ticket.",
+        publicPath: "/api/tickets/:ticketId/messages",
+        testerPath: "/tickets/SEU_TICKET_ID/messages",
+        auth: "sessao",
+      },
+      {
+        key: "messages-send",
+        method: "POST",
+        module: "Mensagens",
+        title: "Enviar mensagem",
+        summary: "Envia texto, nota interna ou mídia para o ticket.",
+        publicPath: "/api/tickets/:ticketId/messages",
+        testerPath: "/tickets/SEU_TICKET_ID/messages",
+        auth: "sessao",
+        bodyExample: JSON.stringify({ body: "Mensagem de teste" }, null, 2),
+        notes: ["Para anexos, o endpoint aceita multipart/form-data no fluxo normal da aplicação."],
+      },
+      {
+        key: "messages-edit",
+        method: "PATCH",
+        module: "Mensagens",
+        title: "Editar mensagem",
+        summary: "Edita o conteúdo de uma mensagem enviada.",
+        publicPath: "/api/tickets/:ticketId/messages/:messageId",
+        testerPath: "/tickets/SEU_TICKET_ID/messages/SUA_MENSAGEM_ID",
+        auth: "sessao",
+        bodyExample: JSON.stringify({ body: "Texto atualizado" }, null, 2),
+      },
+      {
+        key: "messages-reaction",
+        method: "POST",
+        module: "Mensagens",
+        title: "Reagir a mensagem",
+        summary: "Adiciona ou substitui reação em uma mensagem.",
+        publicPath: "/api/tickets/:ticketId/messages/:messageId/reactions",
+        testerPath: "/tickets/SEU_TICKET_ID/messages/SUA_MENSAGEM_ID/reactions",
+        auth: "sessao",
+        bodyExample: JSON.stringify({ emoji: "👍" }, null, 2),
+      },
+      {
+        key: "messages-delete",
+        method: "POST",
+        module: "Mensagens",
+        title: "Excluir mensagem",
+        summary: "Solicita exclusão da mensagem na integração.",
+        publicPath: "/api/tickets/:ticketId/messages/:messageId/delete",
+        testerPath: "/tickets/SEU_TICKET_ID/messages/SUA_MENSAGEM_ID/delete",
+        auth: "sessao",
+      },
+      {
+        key: "messages-attachment",
+        method: "GET",
+        module: "Mensagens",
+        title: "Baixar anexo",
+        summary: "Entrega o conteúdo binário de um anexo já vinculado ao ticket.",
+        publicPath: "/api/tickets/:ticketId/attachments/:attachmentId/content",
+        testerPath: "/tickets/SEU_TICKET_ID/attachments/SEU_ANEXO_ID/content",
+        auth: "sessao",
+      },
+    ],
+  },
+  {
+    key: "customers",
+    title: "Contatos",
+    description: "Cadastro operacional de contatos e leitura dos tickets vinculados.",
+    endpoints: [
+      {
+        key: "customers-list",
+        method: "GET",
+        module: "Contatos",
+        title: "Listar contatos",
+        summary: "Carrega os contatos da operação para consulta e manutenção.",
+        publicPath: "/api/customers",
+        testerPath: "/customers",
+        auth: "sessao",
+      },
+      {
+        key: "customers-create",
+        method: "POST",
+        module: "Contatos",
+        title: "Criar contato",
+        summary: "Cadastra um contato manualmente.",
+        publicPath: "/api/customers",
+        testerPath: "/customers",
+        auth: "sessao",
+        permission: "customers.manage",
+        bodyExample: JSON.stringify({ name: "Contato teste", phone: "5511999999999" }, null, 2),
+      },
+      {
+        key: "customers-update",
+        method: "PUT",
+        module: "Contatos",
+        title: "Atualizar contato",
+        summary: "Atualiza nome, telefone, empresa, notas e flags do contato.",
+        publicPath: "/api/customers/:customerId",
+        testerPath: "/customers/SEU_CONTATO_ID",
+        auth: "sessao",
+        permission: "customers.manage",
+        bodyExample: JSON.stringify({ name: "Contato atualizado", dashboardExcluded: false }, null, 2),
+      },
+      {
+        key: "customers-dashboard-visibility",
+        method: "PATCH",
+        module: "Contatos",
+        title: "Ignorar no dashboard",
+        summary: "Marca um contato para ser ignorado apenas nos cálculos do Painel Geral.",
+        publicPath: "/api/customers/:customerId/dashboard-visibility",
+        testerPath: "/customers/SEU_CONTATO_ID/dashboard-visibility",
+        auth: "sessao",
+        permission: "customers.manage",
+        bodyExample: JSON.stringify({ excluded: true }, null, 2),
+      },
+      {
+        key: "customers-tickets",
+        method: "GET",
+        module: "Contatos",
+        title: "Tickets do contato",
+        summary: "Lista todos os tickets associados a um contato específico.",
+        publicPath: "/api/customers/:customerId/tickets",
+        testerPath: "/customers/SEU_CONTATO_ID/tickets",
+        auth: "sessao",
+      },
+    ],
+  },
+  {
+    key: "team",
+    title: "Equipe e Filas",
+    description: "Gestão de agentes, permissões, filas e respostas rápidas.",
+    endpoints: [
+      {
+        key: "agents-list",
+        method: "GET",
+        module: "Equipe",
+        title: "Listar agentes",
+        summary: "Carrega usuários, perfil, presença, permissões e filas.",
+        publicPath: "/api/agents",
+        testerPath: "/agents",
+        auth: "sessao",
+      },
+      {
+        key: "agents-create",
+        method: "POST",
+        module: "Equipe",
+        title: "Criar agente",
+        summary: "Cadastra um novo usuário do painel.",
+        publicPath: "/api/agents",
+        testerPath: "/agents",
+        auth: "sessao",
+        permission: "agents.manage",
+        bodyExample: JSON.stringify({ name: "Novo agente", email: "agente@empresa.com", password: "Senha@123", role: "agent" }, null, 2),
+      },
+      {
+        key: "queues-list",
+        method: "GET",
+        module: "Filas",
+        title: "Listar filas",
+        summary: "Retorna as filas disponíveis e agentes vinculados.",
+        publicPath: "/api/queues",
+        testerPath: "/queues",
+        auth: "sessao",
+      },
+      {
+        key: "quick-replies-list",
+        method: "GET",
+        module: "Respostas rápidas",
+        title: "Listar respostas rápidas",
+        summary: "Entrega os atalhos cadastrados para o compositor.",
+        publicPath: "/api/quick-replies",
+        testerPath: "/quick-replies",
+        auth: "sessao",
+      },
+    ],
+  },
+  {
+    key: "scheduled",
+    title: "Mensagens agendadas",
+    description: "Cadastro, leitura e manutenção de envios programados.",
+    endpoints: [
+      {
+        key: "scheduled-list",
+        method: "GET",
+        module: "Agendamentos",
+        title: "Listar agendadas",
+        summary: "Consulta a fila consolidada de mensagens agendadas.",
+        publicPath: "/api/scheduled-messages",
+        testerPath: "/scheduled-messages?status=pending,processing,failed,sent,canceled",
+        auth: "sessao",
+      },
+      {
+        key: "scheduled-ticket-list",
+        method: "GET",
+        module: "Agendamentos",
+        title: "Agendadas por ticket",
+        summary: "Lista as mensagens agendadas vinculadas a um ticket.",
+        publicPath: "/api/tickets/:ticketId/scheduled-messages",
+        testerPath: "/tickets/SEU_TICKET_ID/scheduled-messages",
+        auth: "sessao",
+      },
+      {
+        key: "scheduled-create",
+        method: "POST",
+        module: "Agendamentos",
+        title: "Criar agendamento",
+        summary: "Agenda um novo envio de mensagem para o ticket.",
+        publicPath: "/api/tickets/:ticketId/scheduled-messages",
+        testerPath: "/tickets/SEU_TICKET_ID/scheduled-messages",
+        auth: "sessao",
+        bodyExample: JSON.stringify({ body: "Mensagem agendada", sendAt: new Date().toISOString() }, null, 2),
+      },
+      {
+        key: "scheduled-update",
+        method: "PATCH",
+        module: "Agendamentos",
+        title: "Editar agendamento",
+        summary: "Atualiza conteúdo e horário de uma mensagem agendada.",
+        publicPath: "/api/scheduled-messages/:scheduledMessageId",
+        testerPath: "/scheduled-messages/SUA_AGENDADA_ID",
+        auth: "sessao",
+        bodyExample: JSON.stringify({ body: "Texto atualizado" }, null, 2),
+      },
+      {
+        key: "scheduled-delete",
+        method: "DELETE",
+        module: "Agendamentos",
+        title: "Cancelar agendamento",
+        summary: "Cancela uma mensagem agendada pelo identificador global.",
+        publicPath: "/api/scheduled-messages/:scheduledMessageId",
+        testerPath: "/scheduled-messages/SUA_AGENDADA_ID",
+        auth: "sessao",
+      },
+    ],
+  },
+  {
+    key: "whatsapp",
+    title: "WhatsApp e Evolution",
+    description: "Instâncias, webhook público e endpoints de integração com a Evolution.",
+    endpoints: [
+      {
+        key: "health",
+        method: "GET",
+        module: "Infraestrutura",
+        title: "Healthcheck",
+        summary: "Verificação rápida do backend para monitoramento e deploy.",
+        publicPath: "/api/health",
+        testerPath: "/health",
+        auth: "publica",
+      },
+      {
+        key: "instances-list",
+        method: "GET",
+        module: "WhatsApp",
+        title: "Listar instâncias",
+        summary: "Retorna as conexões cadastradas com a Evolution.",
+        publicPath: "/api/whatsapp/instances",
+        testerPath: "/whatsapp/instances",
+        auth: "sessao",
+      },
+      {
+        key: "instances-create",
+        method: "POST",
+        module: "WhatsApp",
+        title: "Criar instância",
+        summary: "Cadastra uma nova instância Evolution no painel.",
+        publicPath: "/api/whatsapp/instances",
+        testerPath: "/whatsapp/instances",
+        auth: "sessao",
+        permission: "instances.manage",
+        bodyExample: JSON.stringify({ name: "Instância teste", evolutionInstanceName: "chatflow-001", baseUrl: "https://apiflow.exemplo.com", apiKey: "SUA_CHAVE" }, null, 2),
+      },
+      {
+        key: "webhook-evolution",
+        method: "POST",
+        module: "WhatsApp",
+        title: "Webhook Evolution",
+        summary: "Entrada pública para eventos enviados pela Evolution.",
+        publicPath: "/api/webhooks/evolution",
+        testerPath: "/webhooks/evolution",
+        auth: "publica",
+        notes: ["Use este endpoint no painel da Evolution. Para testes reais, envie um payload compatível com os eventos recebidos."],
+      },
+    ],
+  },
+];
+
+const CHATFLOW_API_REFERENCE_MODULES: ApiModuleDoc[] = [
+  {
+    key: "external",
+    title: "API Externa do ChatFlow",
+    description: "A integração externa fala com o ChatFlow usando Bearer token. Evolution continua apenas como gateway interno de WhatsApp.",
+    endpoints: [
+      {
+        key: "external-send-message",
+        method: "POST",
+        module: "Mensagens externas",
+        title: "Enviar mensagem operacional",
+        summary: "Cria um ticket novo quando não existir atendimento aberto para o número informado. Se já existir ticket open ou pending na mesma instância, retorna 409 informando que já existe ticket aberto.",
+        publicPath: "/api/external/messages/send",
+        testerPath: "/external/messages/send",
+        auth: "bearer",
+        bodyExample: JSON.stringify(
+          {
+            phone: "5511999999999",
+            body: "Mensagem enviada pela API do ChatFlow",
+            whatsappInstanceId: "SUA_INSTANCIA_ID",
+            queueId: "SUA_FILA_ID",
+            agentId: "SEU_AGENTE_ID",
+            customerName: "Contato da integração",
+          },
+          null,
+          2,
+        ),
+        successExample: JSON.stringify(
+          {
+            created: true,
+            ticket: {
+              id: "UUID_DO_TICKET",
+              status: "open",
+              customerName: "Contato da integração",
+            },
+            message: {
+              id: "UUID_DA_MENSAGEM",
+              body: "Mensagem enviada pela API do ChatFlow",
+            },
+          },
+          null,
+          2,
+        ),
+        notes: [
+          "Use Authorization: Bearer SEU_TOKEN.",
+          "Fila, agente e instância são definidos na própria chamada.",
+          "Se já existir ticket aberto ou pendente, a API responde 409 com code=ticket_open_exists.",
+        ],
+      },
+    ],
+  },
+  {
+    key: "tokens",
+    title: "Tokens de integração",
+    description: "Gestão dos tokens usados pelas integrações externas.",
+    endpoints: [
+      {
+        key: "api-access-list",
+        method: "GET",
+        module: "Tokens",
+        title: "Listar tokens",
+        summary: "Lista os tokens de API já criados. O valor bruto do token não é exibido novamente.",
+        publicPath: "/api/api-access/tokens",
+        testerPath: "/api-access/tokens",
+        auth: "session",
+        permission: "api.manage",
+      },
+      {
+        key: "api-access-create",
+        method: "POST",
+        module: "Tokens",
+        title: "Criar token",
+        summary: "Cria um novo token e devolve o valor bruto apenas uma única vez.",
+        publicPath: "/api/api-access/tokens",
+        testerPath: "/api-access/tokens",
+        auth: "session",
+        permission: "api.manage",
+        bodyExample: JSON.stringify({ name: "ERP Financeiro" }, null, 2),
+        notes: ["Guarde o token retornado no momento da criação. Depois disso só o prefixo permanece visível."],
+      },
+      {
+        key: "api-access-delete",
+        method: "DELETE",
+        module: "Tokens",
+        title: "Revogar token",
+        summary: "Remove um token existente e invalida futuras chamadas externas com ele.",
+        publicPath: "/api/api-access/tokens/:tokenId",
+        testerPath: "/api-access/tokens/SEU_TOKEN_ID",
+        auth: "session",
+        permission: "api.manage",
+      },
+    ],
+  },
+];
+
+const API_REFERENCE_ENDPOINTS = CHATFLOW_API_REFERENCE_MODULES.flatMap((module) => module.endpoints);
+
+function apiMethodTone(method: ApiDocMethod): "default" | "success" | "warning" | "danger" {
+  if (method === "GET") return "success";
+  if (method === "DELETE") return "danger";
+  if (method === "PATCH") return "warning";
+  return "default";
+}
+
+function normalizeApiTesterPath(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("/api/")) return trimmed.slice(4);
+  if (trimmed.startsWith("/")) return trimmed;
+  return `/${trimmed}`;
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -815,6 +1468,21 @@ export default function HomePage() {
   const [conversationLoading, setConversationLoading] = React.useState(false);
   const [sharedContactLoadingKey, setSharedContactLoadingKey] = React.useState<string | null>(null);
   const [dashboardLoading, setDashboardLoading] = React.useState(false);
+  const [selectedApiEndpointKey, setSelectedApiEndpointKey] = React.useState<string>(API_REFERENCE_ENDPOINTS[0]?.key ?? "");
+  const [apiTesterMethod, setApiTesterMethod] = React.useState<ApiDocMethod>(API_REFERENCE_ENDPOINTS[0]?.method ?? "GET");
+  const [apiTesterPath, setApiTesterPath] = React.useState<string>(API_REFERENCE_ENDPOINTS[0]?.testerPath ?? "/health");
+  const [apiTesterBody, setApiTesterBody] = React.useState<string>(API_REFERENCE_ENDPOINTS[0]?.bodyExample ?? "");
+  const [apiTesterLoading, setApiTesterLoading] = React.useState(false);
+  const [apiTesterResult, setApiTesterResult] = React.useState<ApiTesterResult | null>(null);
+  const [apiTesterError, setApiTesterError] = React.useState<string | null>(null);
+  const [apiTokens, setApiTokens] = React.useState<ApiAccessTokenItem[]>([]);
+  const [apiTokensLoading, setApiTokensLoading] = React.useState(false);
+  const [apiTokenNameInput, setApiTokenNameInput] = React.useState("");
+  const [apiNewTokenValue, setApiNewTokenValue] = React.useState<string | null>(null);
+  const [apiSelectedAuthMode, setApiSelectedAuthMode] = React.useState<ApiTesterAuthMode>(
+    API_REFERENCE_ENDPOINTS[0]?.auth === "bearer" ? "bearer" : "session",
+  );
+  const [apiBearerToken, setApiBearerToken] = React.useState("");
   const [groupNameSaving, setGroupNameSaving] = React.useState(false);
   const [assignmentLoading, setAssignmentLoading] = React.useState<string | null>(null);
   const [editingInstanceId, setEditingInstanceId] = React.useState<string | null>(null);
@@ -973,6 +1641,11 @@ export default function HomePage() {
   const audioStreamRef = React.useRef<MediaStream | null>(null);
   const audioChunksRef = React.useRef<BlobPart[]>([]);
 
+  const selectedApiEndpoint = React.useMemo(
+    () => API_REFERENCE_ENDPOINTS.find((endpoint) => endpoint.key === selectedApiEndpointKey) ?? API_REFERENCE_ENDPOINTS[0] ?? null,
+    [selectedApiEndpointKey],
+  );
+
   const selectedTicket = React.useMemo(
     () => tickets.find((ticket) => ticket.id === selectedTicketId) ?? null,
     [tickets, selectedTicketId],
@@ -1030,6 +1703,189 @@ export default function HomePage() {
       })
       .slice(0, 8);
   }, [customers, forwardSearch]);
+  const filteredApiModules = React.useMemo(() => {
+    return CHATFLOW_API_REFERENCE_MODULES
+      .map((module) => {
+        const endpoints = module.endpoints.filter((endpoint) => {
+          if (!managementSearch) return true;
+          return [
+            endpoint.method,
+            endpoint.title,
+            endpoint.summary,
+            endpoint.publicPath,
+            endpoint.module,
+            endpoint.permission ?? "",
+            endpoint.auth,
+            ...(endpoint.notes ?? []),
+          ]
+            .join(" ")
+            .toLowerCase()
+            .includes(managementSearch);
+        });
+
+        return {
+          ...module,
+          endpoints,
+        };
+      })
+      .filter((module) => module.endpoints.length > 0);
+  }, [managementSearch]);
+  const filteredApiEndpointCount = React.useMemo(
+    () => filteredApiModules.reduce((total, module) => total + module.endpoints.length, 0),
+    [filteredApiModules],
+  );
+  const handleCopyApiValue = React.useCallback(async (value: string, successMessage: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setPanelMessage(successMessage);
+    } catch {
+      setPanelMessage("Nao foi possivel copiar o valor.");
+    }
+  }, []);
+  const handleSelectApiEndpoint = React.useCallback((endpoint: ApiEndpointDoc) => {
+    setSelectedApiEndpointKey(endpoint.key);
+    setApiTesterMethod(endpoint.method);
+    setApiTesterPath(endpoint.testerPath);
+    setApiTesterBody(endpoint.bodyExample ?? "");
+    setApiSelectedAuthMode(endpoint.auth === "bearer" ? "bearer" : "session");
+    setApiTesterError(null);
+    setApiTesterResult(null);
+  }, []);
+  const handleResetApiTester = React.useCallback(() => {
+    if (!selectedApiEndpoint) return;
+    setApiTesterMethod(selectedApiEndpoint.method);
+    setApiTesterPath(selectedApiEndpoint.testerPath);
+    setApiTesterBody(selectedApiEndpoint.bodyExample ?? "");
+    setApiSelectedAuthMode(selectedApiEndpoint.auth === "bearer" ? "bearer" : "session");
+    setApiTesterError(null);
+    setApiTesterResult(null);
+  }, [selectedApiEndpoint]);
+  const handleRunApiTester = React.useCallback(async () => {
+    const normalizedPath = normalizeApiTesterPath(apiTesterPath);
+    if (!normalizedPath) {
+      setApiTesterError("Informe uma rota valida para executar o teste.");
+      setApiTesterResult(null);
+      return;
+    }
+
+    setApiTesterLoading(true);
+    setApiTesterError(null);
+    setApiTesterResult(null);
+
+    const startedAt = performance.now();
+
+    try {
+      const headers = new Headers();
+      let body: string | undefined;
+
+      if (apiSelectedAuthMode === "bearer") {
+        if (!apiBearerToken.trim()) {
+          setApiTesterError("Informe um Bearer token para executar esta rota.");
+          setApiTesterResult(null);
+          return;
+        }
+
+        headers.set("Authorization", `Bearer ${apiBearerToken.trim()}`);
+      }
+
+      if (apiTesterMethod !== "GET" && apiTesterMethod !== "DELETE" && apiTesterBody.trim()) {
+        headers.set("Content-Type", "application/json");
+        body = apiTesterBody;
+      }
+
+      const response = await fetch(`${API_URL}${normalizedPath}`, {
+        method: apiTesterMethod,
+        credentials: apiSelectedAuthMode === "session" ? "include" : "omit",
+        cache: "no-store",
+        headers,
+        body,
+      });
+
+      const durationMs = Math.round(performance.now() - startedAt);
+      const rawResponse = await response.text();
+      let formattedBody = rawResponse;
+
+      try {
+        formattedBody = rawResponse ? JSON.stringify(JSON.parse(rawResponse), null, 2) : "";
+      } catch {
+        formattedBody = rawResponse;
+      }
+
+      setApiTesterResult({
+        method: apiTesterMethod,
+        requestedPath: normalizedPath,
+        status: response.status,
+        ok: response.ok,
+        durationMs,
+        contentType: response.headers.get("content-type"),
+        headers: Array.from(response.headers.entries()).map(([key, value]) => ({ key, value })),
+        body: formattedBody || "(sem corpo de resposta)",
+      });
+    } catch (error) {
+      setApiTesterError(error instanceof Error ? error.message : "Falha ao executar o teste.");
+    } finally {
+      setApiTesterLoading(false);
+    }
+  }, [apiBearerToken, apiSelectedAuthMode, apiTesterBody, apiTesterMethod, apiTesterPath]);
+  const refreshApiTokens = React.useCallback(async () => {
+    if (!canManageApiTokens) return;
+    setApiTokensLoading(true);
+    try {
+      const payload = await apiFetch<{ items: ApiAccessTokenItem[] }>("/api-access/tokens", { method: "GET" });
+      setApiTokens(payload.items);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Nao foi possivel carregar os tokens da API.");
+    } finally {
+      setApiTokensLoading(false);
+    }
+  }, [canManageApiTokens]);
+  const handleCreateApiToken = React.useCallback(async () => {
+    const name = apiTokenNameInput.trim();
+    if (!name) {
+      setPanelMessage("Informe um nome para a integracao.");
+      return;
+    }
+
+    setApiTokensLoading(true);
+    try {
+      const payload = await apiFetch<ApiAccessTokenCreateResponse>("/api-access/tokens", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+      setApiTokens((current) => [payload.item, ...current]);
+      setApiTokenNameInput("");
+      setApiNewTokenValue(payload.token);
+      setApiBearerToken(payload.token);
+      setPanelMessage("Token criado. Copie o valor agora: ele nao sera exibido novamente.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Nao foi possivel criar o token.");
+    } finally {
+      setApiTokensLoading(false);
+    }
+  }, [apiTokenNameInput]);
+  const handleDeleteApiToken = React.useCallback(async (tokenId: string) => {
+    setApiTokensLoading(true);
+    try {
+      await apiFetch<{ message: string }>(`/api-access/tokens/${tokenId}`, { method: "DELETE" });
+      setApiTokens((current) => current.filter((item) => item.id !== tokenId));
+      setPanelMessage("Token removido.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Nao foi possivel remover o token.");
+    } finally {
+      setApiTokensLoading(false);
+    }
+  }, []);
+  React.useEffect(() => {
+    if (activeWorkspace !== "api") return;
+    if (selectedApiEndpoint) return;
+    if (API_REFERENCE_ENDPOINTS[0]) {
+      handleSelectApiEndpoint(API_REFERENCE_ENDPOINTS[0]);
+    }
+  }, [activeWorkspace, handleSelectApiEndpoint, selectedApiEndpoint]);
+  React.useEffect(() => {
+    if (activeWorkspace !== "api" || !canManageApiTokens) return;
+    void refreshApiTokens();
+  }, [activeWorkspace, canManageApiTokens, refreshApiTokens]);
   const forwardDestinations = React.useMemo(() => {
     const items: ForwardDestination[] = [];
     const seen = new Set<string>();
@@ -1122,6 +1978,7 @@ export default function HomePage() {
   const canManageInstances = currentUser.permissions["channels.manage"];
   const canManageQuickReplies = currentUser.permissions["quickReplies.manage"];
   const canManageAgents = currentUser.permissions["agents.manage"];
+  const canManageApiTokens = currentUser.permissions["api.manage"];
   const canDeleteAgents = currentUser.permissions["agents.delete"];
   const canManageAgentPasswords = currentUser.permissions["agents.password.manage"];
   const canManageQueues = currentUser.permissions["queues.manage"];
@@ -1604,7 +2461,11 @@ export default function HomePage() {
           deduped.set(ticket.id, ticket);
         });
 
-        items = Array.from(deduped.values()).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        items = Array.from(deduped.values()).sort((a, b) => {
+          const aTime = new Date(a.lastMessageAt ?? a.updatedAt).getTime();
+          const bTime = new Date(b.lastMessageAt ?? b.updatedAt).getTime();
+          return bTime - aTime;
+        });
       }
 
       setTickets(items);
@@ -4143,6 +5004,353 @@ export default function HomePage() {
       );
     }
 
+    if (activeWorkspace === "api") {
+      return (
+        <div className="flex h-full flex-col gap-4 p-6">
+          <WorkspaceSection title="API do ChatFlow" description="Integrações externas devem falar com o ChatFlow usando Bearer token. Evolution não é a API pública do sistema.">
+            <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+              <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff,#f8fafc)] p-5 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#eef2ff] text-[#1A1C32]">
+                    <Code2 className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <h4 className="text-base font-semibold text-slate-900">API própria para produção</h4>
+                    <p className="mt-1 text-sm text-slate-500">Use token próprio por integração, sem depender da sessão do painel e sem consumir a Evolution diretamente.</p>
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <InfoRow title="Autenticação" subtitle="Bearer token" meta="Authorization: Bearer SEU_TOKEN" />
+                  <InfoRow title="Comportamento" subtitle="409 se já existir ticket aberto" meta="Cria ticket novo apenas quando não houver ticket open ou pending" />
+                  <InfoRow title="Orquestração" subtitle="Instância, fila e agente no ChatFlow" meta="Evolution fica apenas como gateway de WhatsApp" />
+                </div>
+              </div>
+
+              <div className="grid gap-3">
+                <div className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Base pública</div>
+                  <div className="mt-2 flex items-start justify-between gap-3">
+                    <div className="break-all text-sm font-medium text-slate-800">{publicUrls.apiBaseUrl}</div>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyApiValue(publicUrls.apiBaseUrl, "Base da API copiada.")}
+                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+                <div className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Fluxo de envio</div>
+                  <div className="mt-2 text-sm text-slate-700">
+                    A integração chama o ChatFlow, informa token, telefone, instância, fila, agente e mensagem. O ChatFlow valida se já existe ticket aberto antes de enviar.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </WorkspaceSection>
+
+          {canManageApiTokens ? (
+            <WorkspaceSection title="Tokens de acesso" description="Crie um token por integração. O valor completo só aparece no momento da criação.">
+              <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+                <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                  <label className="block text-sm font-medium text-slate-600">
+                    Nome da integração
+                    <input
+                      value={apiTokenNameInput}
+                      onChange={(event) => setApiTokenNameInput(event.target.value)}
+                      placeholder="Ex.: ERP financeiro"
+                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                    />
+                  </label>
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void handleCreateApiToken()}
+                      disabled={apiTokensLoading}
+                      className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Criar token
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void refreshApiTokens()}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                    >
+                      Atualizar lista
+                    </button>
+                  </div>
+
+                  {apiNewTokenValue ? (
+                    <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+                      <div className="font-semibold uppercase tracking-[0.08em]">Token gerado</div>
+                      <div className="mt-2 break-all rounded-xl bg-white px-3 py-3 font-mono text-xs text-slate-800">{apiNewTokenValue}</div>
+                      <div className="mt-2 text-xs text-amber-800">Copie agora. O valor completo não será exibido novamente.</div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <h4 className="text-base font-semibold text-slate-900">Integrações cadastradas</h4>
+                    <StatusChip tone="default">{apiTokens.length}</StatusChip>
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {apiTokensLoading ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">Carregando tokens...</div>
+                    ) : apiTokens.length === 0 ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">Nenhum token criado ainda.</div>
+                    ) : (
+                      apiTokens.map((token) => (
+                        <div key={token.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0">
+                              <div className="text-sm font-semibold text-slate-900">{token.name}</div>
+                              <div className="mt-1 font-mono text-xs text-slate-500">{token.tokenPrefix}...</div>
+                              <div className="mt-2 text-xs text-slate-500">
+                                Criado em {formatDateTime(token.createdAt)}{token.lastUsedAt ? ` • Último uso ${formatDateTime(token.lastUsedAt)}` : " • Ainda não utilizado"}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteApiToken(token.id)}
+                              className="inline-flex h-10 items-center justify-center rounded-2xl border border-rose-200 px-4 text-sm font-semibold text-rose-600 transition hover:border-rose-300 hover:text-rose-700"
+                            >
+                              Excluir
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            </WorkspaceSection>
+          ) : null}
+
+          <WorkspaceSection title="Documentação da API" description="Rotas públicas do ChatFlow para integrações externas e administração de tokens.">
+            <ModuleToolbar
+              title="Referência da API"
+              count={filteredApiEndpointCount}
+              searchValue={searchQuery}
+              searchPlaceholder="Pesquisar rota, módulo, permissão ou uso"
+              onSearchChange={setSearchQuery}
+            />
+            <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+              <div className="space-y-4">
+                {filteredApiModules.length === 0 ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-8 text-sm text-slate-500">Nenhuma rota encontrada para a busca atual.</div>
+                ) : (
+                  filteredApiModules.map((module) => (
+                    <section key={module.key} className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="mb-3">
+                        <h4 className="text-base font-semibold text-slate-900">{module.title}</h4>
+                        <p className="mt-1 text-sm text-slate-500">{module.description}</p>
+                      </div>
+                      <div className="space-y-2">
+                        {module.endpoints.map((endpoint) => {
+                          const selected = endpoint.key === selectedApiEndpoint?.key;
+                          return (
+                            <button
+                              key={endpoint.key}
+                              type="button"
+                              onClick={() => handleSelectApiEndpoint(endpoint)}
+                              className={`flex w-full items-start justify-between gap-4 rounded-2xl border px-4 py-4 text-left transition ${selected ? "border-[#1A1C32] bg-[#f8fafc] shadow-sm" : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"}`}
+                            >
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <StatusChip tone={apiMethodTone(endpoint.method)}>{endpoint.method}</StatusChip>
+                                  <span className="text-sm font-semibold text-slate-900">{endpoint.title}</span>
+                                  <span className="text-xs uppercase tracking-[0.08em] text-slate-400">{endpoint.module}</span>
+                                </div>
+                                <div className="mt-2 break-all font-mono text-xs text-slate-500">{endpoint.publicPath}</div>
+                                <p className="mt-2 text-sm text-slate-600">{endpoint.summary}</p>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))
+                )}
+              </div>
+
+              <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                {selectedApiEndpoint ? (
+                  <div className="space-y-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <StatusChip tone={apiMethodTone(selectedApiEndpoint.method)}>{selectedApiEndpoint.method}</StatusChip>
+                          <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">{selectedApiEndpoint.module}</span>
+                        </div>
+                        <h4 className="mt-3 text-xl font-semibold text-slate-900">{selectedApiEndpoint.title}</h4>
+                        <p className="mt-2 text-sm leading-6 text-slate-500">{selectedApiEndpoint.summary}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyApiValue(`${publicUrls.apiBaseUrl}${selectedApiEndpoint.publicPath}`, "Rota pública copiada.")}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                      >
+                        <Copy className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <div className="grid gap-3">
+                      <InfoRow title="Rota pública" subtitle={selectedApiEndpoint.publicPath} meta="Base externa do ChatFlow" />
+                      <InfoRow title="Autenticação" subtitle={selectedApiEndpoint.auth === "bearer" ? "Bearer token" : "Sessão do painel"} meta={selectedApiEndpoint.permission ? `Permissão: ${selectedApiEndpoint.permission}` : "Sem permissão adicional"} />
+                      <InfoRow title="Preset do testador" subtitle={selectedApiEndpoint.testerPath} meta="Pronto para validar no console abaixo" />
+                    </div>
+                    {selectedApiEndpoint.bodyExample ? (
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">Exemplo de corpo</div>
+                        <pre className="mt-3 overflow-auto rounded-2xl border border-slate-200 bg-[#0f172a] p-4 text-xs leading-6 text-slate-100">{selectedApiEndpoint.bodyExample}</pre>
+                      </div>
+                    ) : null}
+                    {selectedApiEndpoint.notes?.length ? (
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800">
+                        <div className="font-semibold uppercase tracking-[0.08em]">Observações</div>
+                        <ul className="mt-2 list-disc space-y-1 pl-5">
+                          {selectedApiEndpoint.notes.map((note) => (
+                            <li key={note}>{note}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-8 text-sm text-slate-500">Selecione uma rota na lista para ver a documentação detalhada.</div>
+                )}
+              </div>
+            </div>
+          </WorkspaceSection>
+
+          <WorkspaceSection title="Console de teste" description="Valide rotas do ChatFlow usando token Bearer ou, quando necessário, a sessão administrativa do painel.">
+            <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+              <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="text-sm font-medium text-slate-600">
+                    Autenticação
+                    <select
+                      value={apiSelectedAuthMode}
+                      onChange={(event) => setApiSelectedAuthMode(event.target.value as ApiTesterAuthMode)}
+                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                    >
+                      <option value="bearer">Bearer token</option>
+                      <option value="session">Sessão do painel</option>
+                    </select>
+                  </label>
+                  <label className="text-sm font-medium text-slate-600">
+                    Método
+                    <select
+                      value={apiTesterMethod}
+                      onChange={(event) => setApiTesterMethod(event.target.value as ApiDocMethod)}
+                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                    >
+                      {(["GET", "POST", "PUT", "PATCH", "DELETE"] as ApiDocMethod[]).map((method) => (
+                        <option key={method} value={method}>{method}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                {apiSelectedAuthMode === "bearer" ? (
+                  <label className="mt-4 block text-sm font-medium text-slate-600">
+                    Bearer token
+                    <input
+                      value={apiBearerToken}
+                      onChange={(event) => setApiBearerToken(event.target.value)}
+                      placeholder="Cole aqui o token da integração"
+                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                    />
+                  </label>
+                ) : null}
+                <label className="mt-4 block text-sm font-medium text-slate-600">
+                  Caminho
+                  <input
+                    value={apiTesterPath}
+                    onChange={(event) => setApiTesterPath(event.target.value)}
+                    placeholder="/external/messages/send"
+                    className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                  />
+                </label>
+                <label className="mt-4 block text-sm font-medium text-slate-600">
+                  Corpo JSON
+                  <textarea
+                    value={apiTesterBody}
+                    onChange={(event) => setApiTesterBody(event.target.value)}
+                    rows={14}
+                    placeholder='{"phone":"5511999999999","body":"Mensagem de teste","whatsappInstanceId":"..."}'
+                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 font-mono text-xs leading-6 text-slate-700 outline-none transition focus:border-slate-300"
+                  />
+                </label>
+                {apiTesterError ? (
+                  <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{apiTesterError}</div>
+                ) : null}
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void handleRunApiTester()}
+                    disabled={apiTesterLoading}
+                    className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    <Play className="h-4 w-4" />
+                    {apiTesterLoading ? "Executando..." : "Rodar teste"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetApiTester}
+                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                  >
+                    Restaurar preset
+                  </button>
+                </div>
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                  Use <span className="font-semibold text-slate-700">Bearer token</span> para integrações externas. Use <span className="font-semibold text-slate-700">Sessão do painel</span> apenas para administrar tokens.
+                </div>
+              </div>
+
+              <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="text-base font-semibold text-slate-900">Resposta</h4>
+                  {apiTesterResult ? (
+                    <StatusChip tone={apiTesterResult.ok ? "success" : "danger"}>
+                      {apiTesterResult.status} · {apiTesterResult.durationMs} ms
+                    </StatusChip>
+                  ) : null}
+                </div>
+                {apiTesterResult ? (
+                  <div className="mt-4 space-y-4">
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <InfoRow title="Método" subtitle={apiTesterResult.method} meta="Execução atual" />
+                      <InfoRow title="Caminho" subtitle={apiTesterResult.requestedPath} meta={apiTesterResult.contentType ?? "sem content-type"} />
+                      <InfoRow title="Status" subtitle={String(apiTesterResult.status)} meta={apiTesterResult.ok ? "Resposta bem-sucedida" : "Resposta com erro"} />
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">Cabeçalhos principais</div>
+                      <div className="mt-3 grid gap-2">
+                        {apiTesterResult.headers.slice(0, 8).map((header) => (
+                          <div key={header.key} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                            <div className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">{header.key}</div>
+                            <div className="mt-1 break-all text-slate-700">{header.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">Corpo da resposta</div>
+                      <pre className="mt-3 max-h-[520px] overflow-auto rounded-2xl border border-slate-200 bg-[#0f172a] p-4 text-xs leading-6 text-slate-100">{apiTesterResult.body}</pre>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-sm text-slate-500">Selecione uma rota e rode um teste para inspecionar status, headers e corpo da resposta.</div>
+                )}
+              </div>
+            </div>
+          </WorkspaceSection>
+        </div>
+      );
+    }
+
     if (activeWorkspace === "team") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
@@ -4265,67 +5473,298 @@ export default function HomePage() {
       );
     }
 
-    if (activeWorkspace === "api") {
-      const apiRows = [
-        ["GET", "/api/health", "Saúde do backend", "Usado no monitoramento e verificação de deploy"],
-        ["POST", "/api/auth/login", "Entrar no painel", "Autenticação com cookie seguro"],
-        ["GET", "/api/tickets", "Listar atendimentos", "Base da caixa de entrada do módulo Atendimento"],
-        ["POST", "/api/tickets/:ticketId/messages", "Enviar resposta", "Usa a instância vinculada ao ticket"],
-        ["GET", "/api/quick-replies", "Listar respostas rápidas", "Base usada pelos atalhos com barra no atendimento"],
-        ["POST", "/api/quick-replies", "Criar resposta rápida", "Cadastro administrativo de atalhos"],
-        ["POST", "/api/webhooks/evolution", "Receber eventos", "Webhook público da Evolution"],
-      ].filter((row) => row.join(" ").toLowerCase().includes(managementSearch || row.join(" ").toLowerCase()));
-
+    if (false && activeWorkspace === "api") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="API própria" description="Consulta rápida dos endpoints operacionais e parâmetros principais.">
+          <WorkspaceSection title="API ChatFlow" description="Documentação operacional da API e console de teste usando a sessão atual do painel.">
+            <div className="grid gap-4 xl:grid-cols-[1.35fr_0.95fr]">
+              <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff,#f8fafc)] p-5 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#eef2ff] text-[#1A1C32]">
+                    <Code2 className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <h4 className="text-base font-semibold text-slate-900">Referencia pronta para producao</h4>
+                    <p className="mt-1 text-sm text-slate-500">Cada rota abaixo traz autenticacao, permissao esperada, exemplo de corpo e preset direto no testador.</p>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <InfoRow title="Autenticacao" subtitle="Cookie de sessao" meta="As rotas internas usam a sessao ja aberta no painel" />
+                  <InfoRow title="Webhook" subtitle="/api/webhooks/evolution" meta="Entrada publica para eventos da Evolution" />
+                  <InfoRow title="Teste local" subtitle="No proprio painel" meta="Sem Postman para validar o fluxo principal" />
+                </div>
+              </div>
+
+              <div className="grid gap-3">
+                {[
+                  ["Base publica da API", publicUrls.apiBaseUrl],
+                  ["Webhook Evolution", publicUrls.webhookUrl],
+                  ["Frontend publicado", publicUrls.webBaseUrl],
+                  ["Tempo real", SOCKET_URL ?? "NEXT_PUBLIC_SOCKET_URL nao configurada"],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">{label}</div>
+                    <div className="mt-2 flex items-start justify-between gap-3">
+                      <div className="break-all text-sm font-medium text-slate-800">{value}</div>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyApiValue(value, `${label} copiado.`)}
+                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                        title={`Copiar ${label}`}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </WorkspaceSection>
+
+          <WorkspaceSection title="Catalogo da API" description="Rotas organizadas por dominio, com detalhes de uso e acesso.">
             <ModuleToolbar
-              title="Referência da API"
-              count={apiRows.length}
+              title="Referencia da API"
+              count={filteredApiEndpointCount}
               searchValue={searchQuery}
-              searchPlaceholder="Pesquisar rota, método ou uso"
+              searchPlaceholder="Pesquisar rota, modulo, permissao ou uso"
               onSearchChange={setSearchQuery}
             />
 
-            <DataTable columns={["Método", "Rota", "Uso", "Observação"]} emptyMessage="Nenhum endpoint disponível.">
-              {apiRows.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-5 py-8 text-sm text-slate-500">
-                    Nenhum endpoint disponível.
-                  </td>
-                </tr>
-              ) : (
-                apiRows.map(([method, route, usage, note]) => (
-                  <DataRow key={route}>
-                    <DataCell>
-                      <StatusChip tone={method === "GET" ? "success" : "default"}>{method}</StatusChip>
-                    </DataCell>
-                    <DataCell subtle>{route}</DataCell>
-                    <DataCell>{usage}</DataCell>
-                    <DataCell subtle>{note}</DataCell>
-                  </DataRow>
-                ))
-              )}
-            </DataTable>
+            <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+              <div className="space-y-4">
+                {filteredApiModules.length === 0 ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-8 text-sm text-slate-500">
+                    Nenhuma rota encontrada para a busca atual.
+                  </div>
+                ) : (
+                  filteredApiModules.map((module) => (
+                    <section key={module.key} className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="mb-3">
+                        <h4 className="text-base font-semibold text-slate-900">{module.title}</h4>
+                        <p className="mt-1 text-sm text-slate-500">{module.description}</p>
+                      </div>
+                      <div className="space-y-2">
+                        {module.endpoints.map((endpoint) => {
+                          const selected = endpoint.key === selectedApiEndpoint?.key;
+                          return (
+                            <button
+                              key={endpoint.key}
+                              type="button"
+                              onClick={() => handleSelectApiEndpoint(endpoint)}
+                              className={`flex w-full items-start justify-between gap-4 rounded-2xl border px-4 py-4 text-left transition ${selected ? "border-[#1A1C32] bg-[#f8fafc] shadow-sm" : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"}`}
+                            >
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <StatusChip tone={apiMethodTone(endpoint.method)}>{endpoint.method}</StatusChip>
+                                  <span className="text-sm font-semibold text-slate-900">{endpoint.title}</span>
+                                  <span className="text-xs uppercase tracking-[0.08em] text-slate-400">{endpoint.module}</span>
+                                </div>
+                                <div className="mt-2 break-all font-mono text-xs text-slate-500">{endpoint.publicPath}</div>
+                                <p className="mt-2 text-sm text-slate-600">{endpoint.summary}</p>
+                              </div>
+                              <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-600">
+                                Usar
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))
+                )}
+              </div>
 
-            <DataTable columns={["Item", "Valor"]} emptyMessage="Sem dados de ambiente.">
-              <DataRow>
-                <DataCell>Base pública da API</DataCell>
-                <DataCell subtle>{publicUrls.apiBaseUrl}</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Webhook Evolution</DataCell>
-                <DataCell subtle>{publicUrls.webhookUrl}</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Frontend publicado</DataCell>
-                <DataCell subtle>{publicUrls.webBaseUrl}</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Tempo real</DataCell>
-                <DataCell subtle>{SOCKET_URL ?? "NEXT_PUBLIC_SOCKET_URL não configurada"}</DataCell>
-              </DataRow>
-            </DataTable>
+              <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                {selectedApiEndpoint ? (
+                  <div className="space-y-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <StatusChip tone={apiMethodTone(selectedApiEndpoint.method)}>{selectedApiEndpoint.method}</StatusChip>
+                          <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">{selectedApiEndpoint.module}</span>
+                        </div>
+                        <h4 className="mt-3 text-xl font-semibold text-slate-900">{selectedApiEndpoint.title}</h4>
+                        <p className="mt-2 text-sm leading-6 text-slate-500">{selectedApiEndpoint.summary}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyApiValue(`${publicUrls.apiBaseUrl}${selectedApiEndpoint.publicPath}`, "Rota publica copiada.")}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                        title="Copiar rota publica"
+                      >
+                        <Copy className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    <div className="grid gap-3">
+                      <InfoRow title="Rota publica" subtitle={selectedApiEndpoint.publicPath} meta="Consumir externamente com a base publica da API" />
+                      <InfoRow title="Preset do testador" subtitle={selectedApiEndpoint.testerPath} meta="Executa pela sessao autenticada do painel" />
+                      <InfoRow title="Autenticacao" subtitle={selectedApiEndpoint.auth === "sessao" ? "Sessao autenticada" : "Publica"} meta={selectedApiEndpoint.permission ? `Permissao: ${selectedApiEndpoint.permission}` : "Sem permissao adicional declarada"} />
+                    </div>
+
+                    {selectedApiEndpoint.query?.length ? (
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">Parametros de consulta</div>
+                        <div className="mt-3 space-y-2">
+                          {selectedApiEndpoint.query.map((item) => (
+                            <div key={item.name} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                              <div className="font-mono text-xs font-semibold text-slate-700">{item.name}</div>
+                              <div className="mt-1 text-sm text-slate-500">{item.description}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {selectedApiEndpoint.bodyExample ? (
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">Exemplo de corpo</div>
+                        <pre className="mt-3 overflow-auto rounded-2xl border border-slate-200 bg-[#0f172a] p-4 text-xs leading-6 text-slate-100">{selectedApiEndpoint.bodyExample}</pre>
+                      </div>
+                    ) : null}
+
+                    {selectedApiEndpoint.notes?.length ? (
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800">
+                        <div className="font-semibold uppercase tracking-[0.08em]">Observacoes</div>
+                        <ul className="mt-2 list-disc space-y-1 pl-5">
+                          {selectedApiEndpoint.notes.map((note) => (
+                            <li key={note}>{note}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-8 text-sm text-slate-500">
+                    Selecione uma rota na lista para ver a documentacao detalhada.
+                  </div>
+                )}
+              </div>
+            </div>
+          </WorkspaceSection>
+
+          <WorkspaceSection title="Console de teste" description="Execute chamadas da API usando a mesma sessao autenticada do painel.">
+            <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+              <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="grid gap-3 md:grid-cols-[140px_1fr]">
+                  <label className="text-sm font-medium text-slate-600">
+                    Metodo
+                    <select
+                      value={apiTesterMethod}
+                      onChange={(event) => setApiTesterMethod(event.target.value as ApiDocMethod)}
+                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                    >
+                      {(["GET", "POST", "PUT", "PATCH", "DELETE"] as ApiDocMethod[]).map((method) => (
+                        <option key={method} value={method}>{method}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="text-sm font-medium text-slate-600">
+                    Caminho
+                    <input
+                      value={apiTesterPath}
+                      onChange={(event) => setApiTesterPath(event.target.value)}
+                      placeholder="/tickets?status=open&isGroup=false"
+                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                    />
+                  </label>
+                </div>
+
+                <label className="mt-4 block text-sm font-medium text-slate-600">
+                  Corpo JSON
+                  <textarea
+                    value={apiTesterBody}
+                    onChange={(event) => setApiTesterBody(event.target.value)}
+                    rows={14}
+                    placeholder='{"body":"Mensagem de teste"}'
+                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 font-mono text-xs leading-6 text-slate-700 outline-none transition focus:border-slate-300"
+                  />
+                </label>
+
+                {apiTesterError ? (
+                  <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                    {apiTesterError}
+                  </div>
+                ) : null}
+
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void handleRunApiTester()}
+                    disabled={apiTesterLoading}
+                    className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    <Play className="h-4 w-4" />
+                    {apiTesterLoading ? "Executando..." : "Rodar teste"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetApiTester}
+                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                  >
+                    Restaurar preset
+                  </button>
+                  {selectedApiEndpoint ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyApiValue(`${publicUrls.apiBaseUrl}${selectedApiEndpoint.publicPath}`, "Rota publica copiada.")}
+                      className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                    >
+                      <Copy className="h-4 w-4" />
+                      Copiar rota publica
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                  O console usa a sessao autenticada do painel e envia a chamada pelo mesmo proxy interno usado pela aplicacao.
+                </div>
+              </div>
+
+              <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="text-base font-semibold text-slate-900">Resposta</h4>
+                  {apiTesterResult ? (
+                    <StatusChip tone={apiTesterResult.ok ? "success" : "danger"}>
+                      {apiTesterResult.status} · {apiTesterResult.durationMs} ms
+                    </StatusChip>
+                  ) : null}
+                </div>
+
+                {apiTesterResult ? (
+                  <div className="mt-4 space-y-4">
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <InfoRow title="Metodo" subtitle={apiTesterResult.method} meta="Execucao atual" />
+                      <InfoRow title="Caminho" subtitle={apiTesterResult.requestedPath} meta={apiTesterResult.contentType ?? "sem content-type"} />
+                      <InfoRow title="Status" subtitle={String(apiTesterResult.status)} meta={apiTesterResult.ok ? "Resposta bem-sucedida" : "Resposta com erro"} />
+                    </div>
+
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">Cabecalhos principais</div>
+                      <div className="mt-3 grid gap-2">
+                        {apiTesterResult.headers.slice(0, 8).map((header) => (
+                          <div key={header.key} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                            <div className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">{header.key}</div>
+                            <div className="mt-1 break-all text-slate-700">{header.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">Corpo da resposta</div>
+                      <pre className="mt-3 max-h-[520px] overflow-auto rounded-2xl border border-slate-200 bg-[#0f172a] p-4 text-xs leading-6 text-slate-100">{apiTesterResult.body}</pre>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-sm text-slate-500">
+                    Selecione uma rota e rode um teste para inspecionar status, headers e corpo da resposta.
+                  </div>
+                )}
+              </div>
+            </div>
           </WorkspaceSection>
         </div>
       );
@@ -7066,7 +8505,7 @@ export default function HomePage() {
                                     {formatContactIdentity(ticket.externalContactId ?? ticket.externalChatId)}
                                   </p>
                                 </div>
-                              <span className="whitespace-nowrap text-[11px] font-medium text-slate-400">{formatHour(ticket.updatedAt)}</span>
+                              <span className="whitespace-nowrap text-[11px] font-medium text-slate-400">{formatHour(ticket.lastMessageAt ?? ticket.updatedAt)}</span>
                             </div>
 
                             <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
@@ -7092,7 +8531,6 @@ export default function HomePage() {
                                     {ticket.unreadCount}
                                   </span>
                                 ) : null}
-                                <ArrowRightLeft className="h-4 w-4 text-slate-400 transition group-hover:text-slate-700" />
                               </div>
                             </div>
                           </div>

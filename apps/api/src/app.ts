@@ -21,6 +21,8 @@ import { ticketRoutes } from './modules/tickets/routes.js';
 import { messageRoutes } from './modules/messages/routes.js';
 import { scheduledMessageRoutes } from './modules/scheduled-messages/routes.js';
 import { whatsappRoutes } from './modules/whatsapp/routes.js';
+import { apiAccessRoutes } from './modules/api-access/routes.js';
+import { externalRoutes } from './modules/external/routes.js';
 
 export async function buildApp() {
   const env = loadEnv();
@@ -61,6 +63,8 @@ export async function buildApp() {
   await app.register(messageRoutes, { prefix: '/api' });
   await app.register(scheduledMessageRoutes, { prefix: '/api' });
   await app.register(whatsappRoutes, { prefix: '/api' });
+  await app.register(apiAccessRoutes, { prefix: '/api' });
+  await app.register(externalRoutes, { prefix: '/api' });
 
   return app;
 }

@@ -119,6 +119,23 @@ const operationalStatements = [
       ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb;
   `,
   `
+    CREATE TABLE IF NOT EXISTS api_access_tokens (
+      id UUID PRIMARY KEY,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      token_prefix TEXT NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      last_used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `,
+  `
+    CREATE UNIQUE INDEX IF NOT EXISTS api_access_tokens_token_hash_key
+      ON api_access_tokens(token_hash);
+  `,
+  `
     CREATE TABLE IF NOT EXISTS agents (
       id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
@@ -220,6 +237,7 @@ const operationalStatements = [
       unread_count INTEGER NOT NULL DEFAULT 0,
       is_group BOOLEAN NOT NULL DEFAULT FALSE,
       last_message_preview TEXT,
+      last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       closed_reason TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -227,13 +245,26 @@ const operationalStatements = [
     );
   `,
   `
-    CREATE INDEX IF NOT EXISTS tickets_status_updated_at_idx ON tickets(status, updated_at DESC);
+    ALTER TABLE tickets
+      ADD COLUMN IF NOT EXISTS last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
   `,
   `
-    CREATE INDEX IF NOT EXISTS tickets_current_agent_id_idx ON tickets(current_agent_id, updated_at DESC);
+    UPDATE tickets
+    SET last_message_at = COALESCE((
+      SELECT MAX(tm.created_at)
+      FROM ticket_messages tm
+      WHERE tm.ticket_id = tickets.id
+    ), tickets.last_message_at, tickets.created_at)
+    WHERE last_message_at IS NULL OR last_message_at = created_at OR last_message_at = updated_at;
   `,
   `
-    CREATE INDEX IF NOT EXISTS tickets_current_queue_id_idx ON tickets(current_queue_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS tickets_status_last_message_at_idx ON tickets(status, last_message_at DESC);
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS tickets_current_agent_id_last_message_at_idx ON tickets(current_agent_id, last_message_at DESC);
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS tickets_current_queue_id_last_message_at_idx ON tickets(current_queue_id, last_message_at DESC);
   `,
   `
     CREATE UNIQUE INDEX IF NOT EXISTS tickets_open_contact_instance_idx

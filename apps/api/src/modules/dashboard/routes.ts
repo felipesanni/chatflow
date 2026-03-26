@@ -233,6 +233,28 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       orderBy: { createdAt: 'asc' },
     });
 
+    const periodNonGroupMessages = await app.prisma.ticketMessage.findMany({
+      where: {
+        createdAt: { gte: range.from, lte: range.to },
+        ticket: {
+          AND: [
+            visibleTicketWhere,
+            dashboardScopedTicketConstraint,
+            selectedAgentConstraint,
+            { isGroup: false },
+          ],
+        },
+      },
+      select: {
+        id: true,
+        ticketId: true,
+        direction: true,
+        senderAgentId: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
     const createdTicketMessages = createdTicketIds.length > 0
       ? await app.prisma.ticketMessage.findMany({
           where: {
@@ -290,6 +312,10 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     }
 
     for (const ticket of periodTickets) {
+      if (ticket.isGroup) {
+        continue;
+      }
+
       const createdKey = ticket.createdAt.toISOString().slice(0, 10);
       if (daySeriesMap.has(createdKey)) {
         daySeriesMap.get(createdKey)!.created += 1;
@@ -303,7 +329,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    for (const message of periodMessages) {
+    for (const message of periodNonGroupMessages) {
       const key = message.createdAt.toISOString().slice(0, 10);
       if (!daySeriesMap.has(key)) continue;
       if (message.direction === 'inbound') {
@@ -314,8 +340,10 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
+    const nonGroupDashboardTickets = uniqueTicketsById([...activeTickets, ...periodTickets].filter((ticket) => !ticket.isGroup));
+
     const queueStats = new Map<string, { id: string; name: string; color: string | null; open: number; pending: number; closed: number }>();
-    for (const ticket of uniqueTicketsById([...activeTickets, ...periodTickets])) {
+    for (const ticket of nonGroupDashboardTickets) {
       const queueId = ticket.currentQueue?.id ?? 'without-queue';
       const current = queueStats.get(queueId) ?? {
         id: queueId,
@@ -333,7 +361,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const agentStats = new Map<string, { id: string; name: string; open: number; pending: number; closed: number }>();
-    for (const ticket of uniqueTicketsById([...activeTickets, ...periodTickets])) {
+    for (const ticket of nonGroupDashboardTickets) {
       const agentId = ticket.currentAgent?.id ?? 'without-agent';
       const current = agentStats.get(agentId) ?? {
         id: agentId,
@@ -349,7 +377,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       agentStats.set(agentId, current);
     }
 
-    const pendingActiveTickets = activeTickets.filter((ticket) => ticket.status === 'pending');
+    const pendingActiveTickets = activeTickets.filter((ticket) => ticket.status === 'pending' && !ticket.isGroup);
     const pendingInboundMessages = pendingActiveTickets.length > 0
       ? await app.prisma.ticketMessage.findMany({
           where: {
@@ -394,9 +422,9 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         openTickets: activeTickets.filter((ticket) => ticket.status === 'open' && !ticket.isGroup).length,
         pendingTickets: activeTickets.filter((ticket) => ticket.status === 'pending' && !ticket.isGroup).length,
         groupTickets: activeTickets.filter((ticket) => ticket.isGroup).length,
-        closedInPeriod: periodTickets.filter((ticket) => ticket.closedAt && ticket.closedAt >= range.from && ticket.closedAt <= range.to).length,
-        unassignedTickets: activeTickets.filter((ticket) => !ticket.currentAgent).length,
-        withoutQueueTickets: activeTickets.filter((ticket) => !ticket.currentQueue).length,
+        closedInPeriod: periodTickets.filter((ticket) => !ticket.isGroup && ticket.closedAt && ticket.closedAt >= range.from && ticket.closedAt <= range.to).length,
+        unassignedTickets: activeTickets.filter((ticket) => !ticket.currentAgent && !ticket.isGroup).length,
+        withoutQueueTickets: activeTickets.filter((ticket) => !ticket.currentQueue && !ticket.isGroup).length,
         inboundMessages: periodMessages.filter((message) => message.direction === 'inbound').length,
         outboundMessages: periodMessages.filter((message) => message.direction === 'outbound').length,
         averageFirstResponseMinutes: average(firstResponseMinutes),
@@ -408,7 +436,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       dailySeries: Array.from(daySeriesMap.values()),
       alerts: {
         stalePending,
-        withoutQueue: activeTickets.filter((ticket) => !ticket.currentQueue).slice(0, 8).map((ticket) => ({
+        withoutQueue: activeTickets.filter((ticket) => !ticket.currentQueue && !ticket.isGroup).slice(0, 8).map((ticket) => ({
           id: ticket.id,
           customerName: resolveDashboardTicketName(ticket),
           status: ticket.status,
