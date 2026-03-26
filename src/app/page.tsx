@@ -1193,24 +1193,10 @@ export default function HomePage() {
       .slice(0, 6);
   }, [canViewQuickReplies, quickReplies, quickReplyCommand]);
 
-  const visibleTickets = React.useMemo(() => {
+  const scopedTickets = React.useMemo(() => {
     const search = searchQuery.trim().toLowerCase();
 
     return tickets.filter((ticket) => {
-      const matchesActiveTab = activeTab === "grupos"
-        ? ticket.isGroup
-        : activeTab === "aguardando"
-          ? ticket.status === "pending" && !ticket.isGroup
-          : ticket.status === "open" && !ticket.isGroup;
-      const matchesArchivedAddon = !ticket.isGroup && ticket.status === "closed";
-      const matchesTab = isClosedTicketsWorkspace
-        ? matchesArchivedAddon
-        : matchesActiveTab || (showArchivedTickets && matchesArchivedAddon);
-
-      if (!matchesTab) {
-        return false;
-      }
-
       if (
         !isClosedTicketsWorkspace
         && (!showAllTickets || !canViewOtherTickets)
@@ -1242,29 +1228,38 @@ export default function HomePage() {
         ticket.lastMessagePreview ?? "",
         ticket.currentAgent?.name ?? "",
         ticket.currentQueue?.name ?? "",
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(search);
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(search);
     });
-  }, [activeTab, canViewOtherTickets, isClosedTicketsWorkspace, searchQuery, selectedQueueFilter, showAllTickets, showArchivedTickets, showOnlyUnread, tickets, user?.id]);
+  }, [canViewOtherTickets, isClosedTicketsWorkspace, searchQuery, selectedQueueFilter, showAllTickets, showOnlyUnread, tickets, user?.id]);
 
-  const counters = React.useMemo(() => {
-    const scopedTickets = tickets.filter((ticket) => {
-      if (showAllTickets && canViewOtherTickets) {
-        return true;
+  const visibleTickets = React.useMemo(() => {
+    return scopedTickets.filter((ticket) => {
+      const matchesActiveTab = activeTab === "grupos"
+        ? ticket.isGroup
+        : activeTab === "aguardando"
+          ? ticket.status === "pending" && !ticket.isGroup
+          : ticket.status === "open" && !ticket.isGroup;
+      const matchesArchivedAddon = !ticket.isGroup && ticket.status === "closed";
+
+      if (isClosedTicketsWorkspace) {
+        return matchesArchivedAddon;
       }
 
-      return !ticket.currentAgent || ticket.currentAgent.id === user?.id;
+      return matchesActiveTab || (showArchivedTickets && matchesArchivedAddon);
     });
+  }, [activeTab, isClosedTicketsWorkspace, scopedTickets, showArchivedTickets]);
 
+  const counters = React.useMemo(() => {
     return {
       atendendo: scopedTickets.filter((ticket) => ticket.status === "open" && !ticket.isGroup).length,
       aguardando: scopedTickets.filter((ticket) => ticket.status === "pending" && !ticket.isGroup).length,
       fechados: scopedTickets.filter((ticket) => ticket.status === "closed" && !ticket.isGroup).length,
       grupos: scopedTickets.filter((ticket) => ticket.isGroup).length,
     };
-  }, [canViewOtherTickets, showAllTickets, tickets, user?.id]);
+  }, [scopedTickets]);
 
   const managementSearch = searchQuery.trim().toLowerCase();
 
