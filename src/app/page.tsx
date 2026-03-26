@@ -5725,8 +5725,8 @@ export default function HomePage() {
                 <div className="flex items-center justify-between gap-3">
                   <h4 className="text-base font-semibold text-slate-900">Resposta</h4>
                   {apiTesterResult ? (
-                    <StatusChip tone={apiTesterResult.ok ? "success" : "danger"}>
-                      {apiTesterResult.status} · {apiTesterResult.durationMs} ms
+                    <StatusChip tone={apiTesterResult!.ok ? "success" : "danger"}>
+                      {apiTesterResult!.status} · {apiTesterResult!.durationMs} ms
                     </StatusChip>
                   ) : null}
                 </div>
@@ -5734,15 +5734,15 @@ export default function HomePage() {
                 {apiTesterResult ? (
                   <div className="mt-4 space-y-4">
                     <div className="grid gap-3 md:grid-cols-3">
-                      <InfoRow title="Metodo" subtitle={apiTesterResult.method} meta="Execucao atual" />
-                      <InfoRow title="Caminho" subtitle={apiTesterResult.requestedPath} meta={apiTesterResult.contentType ?? "sem content-type"} />
-                      <InfoRow title="Status" subtitle={String(apiTesterResult.status)} meta={apiTesterResult.ok ? "Resposta bem-sucedida" : "Resposta com erro"} />
+                      <InfoRow title="Metodo" subtitle={apiTesterResult!.method} meta="Execucao atual" />
+                      <InfoRow title="Caminho" subtitle={apiTesterResult!.requestedPath} meta={apiTesterResult!.contentType ?? "sem content-type"} />
+                      <InfoRow title="Status" subtitle={String(apiTesterResult!.status)} meta={apiTesterResult!.ok ? "Resposta bem-sucedida" : "Resposta com erro"} />
                     </div>
 
                     <div>
                       <div className="text-sm font-semibold text-slate-900">Cabecalhos principais</div>
                       <div className="mt-3 grid gap-2">
-                        {apiTesterResult.headers.slice(0, 8).map((header) => (
+                        {apiTesterResult!.headers.slice(0, 8).map((header) => (
                           <div key={header.key} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
                             <div className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">{header.key}</div>
                             <div className="mt-1 break-all text-slate-700">{header.value}</div>
@@ -5753,7 +5753,7 @@ export default function HomePage() {
 
                     <div>
                       <div className="text-sm font-semibold text-slate-900">Corpo da resposta</div>
-                      <pre className="mt-3 max-h-[520px] overflow-auto rounded-2xl border border-slate-200 bg-[#0f172a] p-4 text-xs leading-6 text-slate-100">{apiTesterResult.body}</pre>
+                      <pre className="mt-3 max-h-[520px] overflow-auto rounded-2xl border border-slate-200 bg-[#0f172a] p-4 text-xs leading-6 text-slate-100">{apiTesterResult!.body}</pre>
                     </div>
                   </div>
                 ) : (
