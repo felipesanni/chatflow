@@ -15,6 +15,23 @@ export async function processScheduledMessage(app: FastifyInstance, scheduledMes
     return scheduledMessage;
   }
 
+  const now = Date.now();
+  const sendAtMs = scheduledMessage.sendAt.getTime();
+
+  if (sendAtMs > now + 1_000) {
+    if (app.jobs.enabled) {
+      await app.jobs.enqueueScheduledMessage(
+        { scheduledMessageId },
+        {
+          delayMs: Math.max(0, sendAtMs - now),
+          jobId: `scheduled-message-${scheduledMessageId}-${sendAtMs}`,
+        },
+      );
+    }
+
+    return scheduledMessage;
+  }
+
   await app.prisma.scheduledMessage.update({
     where: { id: scheduledMessageId },
     data: {

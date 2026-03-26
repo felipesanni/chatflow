@@ -4,7 +4,6 @@ import * as React from "react";
 import { io, type Socket } from "socket.io-client";
 import { PhotoProvider, PhotoView } from "react-photo-view";
 import {
-  Activity,
   Archive,
   ArrowRightLeft,
   Calendar,
@@ -160,6 +159,16 @@ type ScheduledMessageItem = {
   createdBy: {
     id: string;
     name: string;
+  };
+  ticket?: {
+    id: string;
+    status: "open" | "pending" | "closed";
+    customerName: string;
+    manualGroupName?: string | null;
+    isGroup: boolean;
+    currentQueue: { id: string; name: string; color?: string | null } | null;
+    currentAgent: { id: string; name: string } | null;
+    whatsappInstance: { id: string; name: string };
   };
 };
 
@@ -351,7 +360,7 @@ const permissionDefinitions = [
 
 type PermissionKey = (typeof permissionDefinitions)[number]["key"];
 type PermissionMap = Record<PermissionKey, boolean>;
-type WorkspaceKey = "dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings";
+type WorkspaceKey = "dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "calendar" | "automations" | "settings";
 
 const permissionKeys = permissionDefinitions.map((item) => item.key) as PermissionKey[];
 
@@ -365,7 +374,6 @@ const workspacePermissions: Record<WorkspaceKey, PermissionKey> = {
   api: "api.view",
   contacts: "contacts.view",
   profile: "profile.view",
-  activity: "activity.view",
   calendar: "calendar.view",
   automations: "automations.view",
   settings: "settings.view",
@@ -538,6 +546,10 @@ function formatHour(value: string) {
   } catch {
     return value;
   }
+}
+
+function formatScheduledMessagePreview(item: Pick<ScheduledMessageItem, "body" | "attachment">) {
+  return item.body?.trim() || (item.attachment ? `[${item.attachment.kind}] ${item.attachment.fileName}` : "Mensagem agendada");
 }
 
 function toDateTimeLocalValue(date: Date) {
@@ -790,7 +802,7 @@ export default function HomePage() {
   const [groupNameInput, setGroupNameInput] = React.useState("");
   const [searchQuery, setSearchQuery] = React.useState("");
   const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "grupos">("atendendo");
-  const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "activity" | "calendar" | "automations" | "settings">("tickets");
+  const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "calendar" | "automations" | "settings">("tickets");
   const [adminSection, setAdminSection] = React.useState<"branding" | "instances" | "agents" | "queues">("instances");
   const [showRail, setShowRail] = React.useState(false);
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
@@ -811,7 +823,18 @@ export default function HomePage() {
   const [brandText, setBrandText] = React.useState("CHATFLOW");
   const [composerAttachment, setComposerAttachment] = React.useState<ComposerAttachment | null>(null);
   const [scheduledMessages, setScheduledMessages] = React.useState<ScheduledMessageItem[]>([]);
+  const [scheduledMessageOverview, setScheduledMessageOverview] = React.useState<ScheduledMessageItem[]>([]);
   const [scheduleLoading, setScheduleLoading] = React.useState(false);
+  const [scheduledMessageOverviewLoading, setScheduledMessageOverviewLoading] = React.useState(false);
+  const [scheduledMessageStatusFilter, setScheduledMessageStatusFilter] = React.useState<"pending" | "processing" | "failed" | "sent" | "canceled" | "all">("pending");
+  const [scheduledMessageEditor, setScheduledMessageEditor] = React.useState<null | {
+    id: string;
+    ticketId: string;
+    title: string;
+    body: string;
+    sendAt: string;
+    attachmentLabel: string | null;
+  }>(null);
   const [forwardLoading, setForwardLoading] = React.useState(false);
   const [forwardMessageId, setForwardMessageId] = React.useState<string | null>(null);
   const [forwardSearch, setForwardSearch] = React.useState("");
@@ -1291,30 +1314,30 @@ export default function HomePage() {
     );
   }, [managementSearch, quickReplies]);
 
-  const agendaItems = React.useMemo(() => {
-    return tickets
-      .filter((ticket) => ticket.status !== "closed")
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-      .map((ticket) => ({
-        id: ticket.id,
-        contato: ticket.customerName,
-        fila: ticket.currentQueue?.name ?? "Sem fila",
-        responsavel: ticket.currentAgent?.name ?? "Sem agente",
-        status: traduzirStatusTicket(ticket.status),
-        proximaAcao:
-          ticket.status === "pending"
-            ? "Assumir atendimento"
-            : ticket.unreadCount > 0
-              ? "Responder cliente"
-              : "Acompanhar conversa",
-        atualizadoEm: ticket.updatedAt,
-      }))
-      .filter((item) =>
-        !managementSearch
-          ? true
-          : [item.contato, item.fila, item.responsavel, item.status, item.proximaAcao].join(" ").toLowerCase().includes(managementSearch),
-      );
-  }, [managementSearch, tickets]);
+  const filteredScheduledMessageOverview = React.useMemo(() => {
+    return scheduledMessageOverview.filter((item) => {
+      if (scheduledMessageStatusFilter !== "all" && item.status !== scheduledMessageStatusFilter) {
+        return false;
+      }
+
+      if (!managementSearch) {
+        return true;
+      }
+
+      return [
+        item.ticket?.customerName ?? "",
+        item.ticket?.currentQueue?.name ?? "",
+        item.ticket?.currentAgent?.name ?? "",
+        item.createdBy.name,
+        traduzirStatusMensagemAgendada(item.status),
+        formatScheduledMessagePreview(item),
+        item.ticket?.whatsappInstance?.name ?? "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(managementSearch);
+    });
+  }, [managementSearch, scheduledMessageOverview, scheduledMessageStatusFilter]);
 
   React.useEffect(() => {
     if (tickets.length === 0) {
@@ -1404,7 +1427,6 @@ export default function HomePage() {
       "api",
       "contacts",
       "profile",
-      "activity",
       "calendar",
       "automations",
       "settings",
@@ -1551,6 +1573,20 @@ export default function HomePage() {
     }
   }, [user]);
 
+  const refreshScheduledMessageOverview = React.useCallback(async () => {
+    if (!user || !normalizePermissions(user.role, user.permissions)["calendar.view"]) return;
+
+    setScheduledMessageOverviewLoading(true);
+    try {
+      const payload = await apiFetch<{ items: ScheduledMessageItem[] }>("/scheduled-messages?status=pending,processing,failed,sent,canceled", { method: "GET" });
+      setScheduledMessageOverview(payload.items);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar o módulo de agendamentos.");
+    } finally {
+      setScheduledMessageOverviewLoading(false);
+    }
+  }, [user]);
+
   const refreshInstances = React.useCallback(async () => {
     if (!user || !normalizePermissions(user.role, user.permissions)["channels.view"]) return;
     try {
@@ -1628,12 +1664,13 @@ export default function HomePage() {
       await refreshMessages(selectedTicketId);
       await refreshScheduledMessages(selectedTicketId);
     }
+    await refreshScheduledMessageOverview();
     await refreshInstances();
     await refreshAgents();
     await refreshQueues();
     await refreshCustomers();
     await refreshQuickReplies();
-  }, [refreshAgents, refreshCustomers, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshQuickReplies, refreshScheduledMessages, refreshTickets, selectedTicketId]);
+  }, [refreshAgents, refreshCustomers, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId]);
 
   React.useEffect(() => {
     void refreshAuth();
@@ -1648,6 +1685,7 @@ export default function HomePage() {
       setQueues([]);
       setCustomers([]);
       setQuickReplies([]);
+      setScheduledMessageOverview([]);
       setDashboardOverview(null);
       setSelectedTicketId(null);
       return;
@@ -1668,7 +1706,10 @@ export default function HomePage() {
     if (canViewQuickReplies) {
       void refreshQuickReplies();
     }
-  }, [canTransferTickets, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshCustomers, refreshDashboard, refreshInstances, refreshQueues, refreshQuickReplies, refreshTickets, user]);
+    if (normalizePermissions(user.role, user.permissions)["calendar.view"]) {
+      void refreshScheduledMessageOverview();
+    }
+  }, [canTransferTickets, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshCustomers, refreshDashboard, refreshInstances, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshTickets, user]);
 
   React.useEffect(() => {
     if (!selectedTicketId || !user) {
@@ -1775,6 +1816,7 @@ export default function HomePage() {
       socket.on("connect", () => {
         void refreshDashboard();
         void refreshTickets();
+        void refreshScheduledMessageOverview();
         if (selectedTicketId) {
           void refreshMessages(selectedTicketId, { silent: true });
           void refreshScheduledMessages(selectedTicketId);
@@ -1795,7 +1837,7 @@ export default function HomePage() {
       socket.disconnect();
       socketRef.current = null;
     };
-    }, [refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
+    }, [refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!user) return;
@@ -1807,6 +1849,7 @@ export default function HomePage() {
 
         void refreshDashboard();
         void refreshTickets();
+        void refreshScheduledMessageOverview();
         if (selectedTicketId) {
           void refreshMessages(selectedTicketId, { silent: true });
           void refreshScheduledMessages(selectedTicketId);
@@ -1820,7 +1863,7 @@ export default function HomePage() {
     }, 5000);
 
     return () => clearInterval(interval);
-    }, [refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
+    }, [refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!user) return;
@@ -1828,6 +1871,7 @@ export default function HomePage() {
       const handleVisibilityOrFocus = () => {
         void refreshDashboard();
         void refreshTickets();
+        void refreshScheduledMessageOverview();
         if (selectedTicketId) {
           void refreshMessages(selectedTicketId, { silent: true });
           void refreshScheduledMessages(selectedTicketId);
@@ -1850,7 +1894,7 @@ export default function HomePage() {
         document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
       }
     };
-    }, [refreshDashboard, refreshMessages, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
+    }, [refreshDashboard, refreshMessages, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!messagesViewportRef.current || !shouldStickMessagesToBottomRef.current) {
@@ -2444,6 +2488,7 @@ export default function HomePage() {
       setComposerAttachment(null);
       setShowScheduleModal(false);
       await refreshScheduledMessages(selectedTicketId);
+      await refreshScheduledMessageOverview();
       setPanelMessage("Mensagem agendada com sucesso.");
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao agendar mensagem.");
@@ -2473,9 +2518,78 @@ export default function HomePage() {
         method: "DELETE",
       });
       await refreshScheduledMessages(selectedTicketId);
+      await refreshScheduledMessageOverview();
       setPanelMessage("Mensagem agendada cancelada.");
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao cancelar mensagem agendada.");
+    } finally {
+      setScheduleLoading(false);
+    }
+  }
+
+  function handleOpenScheduledMessageEditor(item: ScheduledMessageItem) {
+    setScheduledMessageEditor({
+      id: item.id,
+      ticketId: item.ticketId,
+      title: item.ticket?.customerName ?? "Mensagem agendada",
+      body: item.body ?? "",
+      sendAt: toDateTimeLocalValue(new Date(item.sendAt)),
+      attachmentLabel: item.attachment ? `[${item.attachment.kind}] ${item.attachment.fileName}` : null,
+    });
+  }
+
+  async function handleSaveScheduledMessageEdit() {
+    if (!scheduledMessageEditor) return;
+
+    setScheduleLoading(true);
+    try {
+      await apiFetch(`/scheduled-messages/${scheduledMessageEditor.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          body: scheduledMessageEditor.body,
+          sendAt: new Date(scheduledMessageEditor.sendAt).toISOString(),
+        }),
+      });
+
+      if (selectedTicketId === scheduledMessageEditor.ticketId) {
+        await refreshScheduledMessages(scheduledMessageEditor.ticketId);
+      }
+      await refreshScheduledMessageOverview();
+      setScheduledMessageEditor(null);
+      setPanelMessage("Mensagem agendada atualizada.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao atualizar mensagem agendada.");
+    } finally {
+      setScheduleLoading(false);
+    }
+  }
+
+  async function handleDeleteScheduledMessageFromAgenda(item: ScheduledMessageItem) {
+    const confirmed = await openConfirmDialog({
+      title: "Excluir mensagem agendada",
+      description: "Essa mensagem não será mais enviada automaticamente.",
+      confirmLabel: "Excluir agendamento",
+      cancelLabel: "Voltar",
+      tone: "danger",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    setScheduleLoading(true);
+    try {
+      await apiFetch(`/scheduled-messages/${item.id}`, {
+        method: "DELETE",
+      });
+
+      if (selectedTicketId === item.ticketId) {
+        await refreshScheduledMessages(item.ticketId);
+      }
+      await refreshScheduledMessageOverview();
+      setPanelMessage("Mensagem agendada excluída.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao excluir mensagem agendada.");
     } finally {
       setScheduleLoading(false);
     }
@@ -3571,9 +3685,7 @@ export default function HomePage() {
               ? "Contatos"
             : activeWorkspace === "profile"
               ? "Perfil"
-              : activeWorkspace === "activity"
-                ? "Atividade operacional"
-                : activeWorkspace === "calendar"
+              : activeWorkspace === "calendar"
                   ? "Agendamentos"
                   : activeWorkspace === "automations"
                     ? "Automações"
@@ -3602,9 +3714,7 @@ export default function HomePage() {
               ? "Base de contatos atendidos e últimos vínculos com tickets."
             : activeWorkspace === "profile"
               ? "Dados da sessão e atalhos pessoais."
-              : activeWorkspace === "activity"
-                ? "Leitura operacional do volume e das pendências."
-                : activeWorkspace === "calendar"
+              : activeWorkspace === "calendar"
                   ? "Lista operacional de acompanhamentos e próximos passos."
                   : activeWorkspace === "automations"
                     ? "Webhook, tempo real e fluxo da integração."
@@ -4205,57 +4315,101 @@ export default function HomePage() {
       );
     }
 
-    if (activeWorkspace === "activity") {
-      return (
-        <div className="flex h-full flex-col gap-4 p-6">
-          <div className="grid gap-4">
-            <WorkspaceStatCard title="Tickets visíveis" value={String(visibleTickets.length)} accent="slate" description="Resultado da busca e dos filtros atuais." />
-            <WorkspaceStatCard title="Não lidos" value={String(tickets.filter((ticket) => ticket.unreadCount > 0).length)} accent="emerald" description="Conversas pedindo resposta rápida." />
-            <WorkspaceStatCard title="Com agente" value={String(tickets.filter((ticket) => ticket.currentAgent).length)} accent="blue" description="Atendimentos já distribuídos." />
-            <WorkspaceStatCard title="Sem fila" value={String(tickets.filter((ticket) => !ticket.currentQueue).length)} accent="amber" description="Conversas ainda sem classificação." />
-          </div>
-          <WorkspaceSection title="Leitura operacional" description="Últimos movimentos do atendimento.">
-            <DataTable columns={["Cliente", "Status", "Responsável", "Atualização"]} emptyMessage="Nenhum movimento recente.">
-              {tickets.slice(0, 8).map((ticket) => (
-                <DataRow key={ticket.id}>
-                  <DataCell>{ticket.customerName}</DataCell>
-                  <DataCell>
-                    <StatusChip tone={ticket.status === "open" ? "success" : ticket.status === "pending" ? "warning" : "default"}>
-                      {traduzirStatusTicket(ticket.status)}
-                    </StatusChip>
-                  </DataCell>
-                  <DataCell subtle>{ticket.currentAgent?.name ?? "Sem agente"}</DataCell>
-                  <DataCell subtle>{formatDateTime(ticket.updatedAt)}</DataCell>
-                </DataRow>
-              ))}
-            </DataTable>
-          </WorkspaceSection>
-        </div>
-      );
-    }
-
     if (activeWorkspace === "calendar") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Agendamentos" description="Lista operacional de acompanhamentos e proximas acoes do dia.">
+          <WorkspaceSection title="Mensagens agendadas" description="Acompanhe, edite e exclua mensagens programadas para envio.">
             <ModuleToolbar
-              title="Agendamentos"
-              count={agendaItems.length}
+              title="Mensagens agendadas"
+              count={filteredScheduledMessageOverview.length}
               searchValue={searchQuery}
-              searchPlaceholder="Pesquisar contato, fila ou responsavel"
+              searchPlaceholder="Pesquisar contato, fila, responsável ou mensagem"
               onSearchChange={setSearchQuery}
             />
-            <DataTable columns={["Contato", "Fila", "Responsavel", "Status", "Proxima acao", "Atualizado em"]} emptyMessage="Nenhum agendamento operacional encontrado.">
-              {agendaItems.map((item) => (
+            <div className="mb-4 flex flex-wrap gap-2">
+              {[
+                { key: "pending", label: "Agendadas" },
+                { key: "processing", label: "Processando" },
+                { key: "failed", label: "Falhas" },
+                { key: "sent", label: "Enviadas" },
+                { key: "canceled", label: "Canceladas" },
+                { key: "all", label: "Todas" },
+              ].map((filter) => (
+                <button
+                  key={filter.key}
+                  type="button"
+                  onClick={() => setScheduledMessageStatusFilter(filter.key as typeof scheduledMessageStatusFilter)}
+                  className={`inline-flex h-9 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
+                    scheduledMessageStatusFilter === filter.key
+                      ? "border-[#1A1C32] bg-[#1A1C32] text-white"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+            <DataTable columns={["Destino", "Mensagem", "Agendado para", "Status", "Ações"]} emptyMessage={scheduledMessageOverviewLoading ? "Carregando mensagens agendadas..." : "Nenhuma mensagem agendada encontrada."}>
+              {filteredScheduledMessageOverview.map((item) => (
                 <DataRow key={item.id}>
-                  <DataCell>{item.contato}</DataCell>
-                  <DataCell subtle>{item.fila}</DataCell>
-                  <DataCell subtle>{item.responsavel}</DataCell>
                   <DataCell>
-                    <StatusChip tone={item.status === "Atendendo" ? "success" : "warning"}>{item.status}</StatusChip>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await refreshTickets();
+                        setSelectedTicketId(item.ticketId);
+                        setActiveWorkspace("tickets");
+                      }}
+                      className="text-left"
+                    >
+                      <div className="font-semibold text-slate-900">{item.ticket?.customerName ?? "Ticket"}</div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {item.ticket?.currentQueue?.name ?? "Sem fila"} • {item.ticket?.whatsappInstance.name ?? "Sem instância"}
+                      </div>
+                    </button>
                   </DataCell>
-                  <DataCell subtle>{item.proximaAcao}</DataCell>
-                  <DataCell subtle>{formatDateTime(item.atualizadoEm)}</DataCell>
+                  <DataCell>
+                    <div className="max-w-[340px] truncate text-sm text-slate-700">{formatScheduledMessagePreview(item)}</div>
+                    <div className="mt-1 text-xs text-slate-500">{item.createdBy.name}</div>
+                  </DataCell>
+                  <DataCell subtle>{formatDateTime(item.sendAt)}</DataCell>
+                  <DataCell>
+                    <StatusChip tone={tomMensagemAgendada(item.status)}>{traduzirStatusMensagemAgendada(item.status)}</StatusChip>
+                    {item.errorMessage ? <div className="mt-1 max-w-[260px] text-xs text-red-500">{item.errorMessage}</div> : null}
+                  </DataCell>
+                  <DataCell>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void refreshTickets();
+                          setSelectedTicketId(item.ticketId);
+                          setActiveWorkspace("tickets");
+                        }}
+                        className="inline-flex h-8 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                      >
+                        Ver ticket
+                      </button>
+                      {item.status !== "sent" && item.status !== "canceled" ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenScheduledMessageEditor(item)}
+                            className="inline-flex h-8 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteScheduledMessageFromAgenda(item)}
+                            className="inline-flex h-8 items-center justify-center rounded-xl border border-red-200 bg-red-50 px-3 text-[11px] font-semibold text-red-600 transition hover:bg-red-100"
+                          >
+                            Excluir
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  </DataCell>
                 </DataRow>
               ))}
             </DataTable>
@@ -5527,6 +5681,67 @@ export default function HomePage() {
                 </div>
               </div>
             ) : null}
+            {scheduledMessageEditor ? (
+              <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+                <div className="my-auto flex w-full max-w-xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Editar agendamento</div>
+                      <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{scheduledMessageEditor.title}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setScheduledMessageEditor(null)}
+                      className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="space-y-4 px-6 py-6">
+                    {scheduledMessageEditor.attachmentLabel ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                        Anexo mantido: {scheduledMessageEditor.attachmentLabel}
+                      </div>
+                    ) : null}
+                    <label className="block text-sm font-medium text-slate-600">
+                      Mensagem
+                      <textarea
+                        value={scheduledMessageEditor.body}
+                        onChange={(event) => setScheduledMessageEditor((current) => current ? { ...current, body: event.target.value } : current)}
+                        rows={4}
+                        className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                      />
+                    </label>
+                    <label className="block text-sm font-medium text-slate-600">
+                      Enviar em
+                      <input
+                        type="datetime-local"
+                        value={scheduledMessageEditor.sendAt}
+                        onChange={(event) => setScheduledMessageEditor((current) => current ? { ...current, sendAt: event.target.value } : current)}
+                        className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                      />
+                    </label>
+                  </div>
+                  <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
+                    <button
+                      type="button"
+                      onClick={() => setScheduledMessageEditor(null)}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveScheduledMessageEdit()}
+                      disabled={scheduleLoading}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      {scheduleLoading ? "Salvando..." : "Salvar alterações"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
             {showForwardModal && forwardSourceMessage ? (
               <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-4 backdrop-blur-[2px] sm:py-6">
                 <div className="my-auto flex w-full max-w-xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
@@ -6395,7 +6610,6 @@ export default function HomePage() {
               {currentUser.permissions["quickReplies.view"] ? <RailButton icon={Zap} label="Respostas rápidas" expanded={showRail} active={activeWorkspace === "quickReplies"} onClick={() => setActiveWorkspace("quickReplies")} /> : null}
               {currentUser.permissions["api.view"] ? <RailButton icon={Code2} label="API" expanded={showRail} active={activeWorkspace === "api"} onClick={() => setActiveWorkspace("api")} /> : null}
               {currentUser.permissions["contacts.view"] ? <RailButton icon={Users} label="Contatos" expanded={showRail} active={activeWorkspace === "contacts"} onClick={() => setActiveWorkspace("contacts")} /> : null}
-              {currentUser.permissions["activity.view"] ? <RailButton icon={Activity} label="Atividade operacional" expanded={showRail} active={activeWorkspace === "activity"} onClick={() => setActiveWorkspace("activity")} /> : null}
               {currentUser.permissions["calendar.view"] ? <RailButton icon={Calendar} label="Agendamentos" expanded={showRail} active={activeWorkspace === "calendar"} onClick={() => setActiveWorkspace("calendar")} /> : null}
               {currentUser.permissions["automations.view"] ? <RailButton icon={Workflow} label="Automações" expanded={showRail} active={activeWorkspace === "automations"} onClick={() => setActiveWorkspace("automations")} /> : null}
             </div>
@@ -6697,6 +6911,36 @@ export default function HomePage() {
       ) : null}
     </main>
   );
+}
+
+function traduzirStatusMensagemAgendada(status: ScheduledMessageItem["status"]) {
+  switch (status) {
+    case "pending":
+      return "Agendada";
+    case "processing":
+      return "Processando";
+    case "failed":
+      return "Falhou";
+    case "sent":
+      return "Enviada";
+    case "canceled":
+      return "Cancelada";
+    default:
+      return status;
+  }
+}
+
+function tomMensagemAgendada(status: ScheduledMessageItem["status"]): "default" | "success" | "warning" | "danger" {
+  switch (status) {
+    case "sent":
+      return "success";
+    case "failed":
+      return "danger";
+    case "canceled":
+      return "default";
+    default:
+      return "warning";
+  }
 }
 
 function AuthField(props: {

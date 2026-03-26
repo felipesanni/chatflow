@@ -36,6 +36,72 @@ const createScheduledMessageBodySchema = z.object({
   }
 });
 
+const updateScheduledMessageBodySchema = z.object({
+  body: z.string().trim().optional(),
+  sendAt: z.string().min(1, 'Informe quando a mensagem deve ser enviada.').optional(),
+});
+
+function mapScheduledMessage(item: {
+  id: string;
+  ticketId: string;
+  body: string | null;
+  contentType: unknown;
+  internalNote: boolean;
+  attachmentPayload: unknown;
+  replyToMessageId: string | null;
+  sendAt: Date;
+  status: string;
+  errorMessage: string | null;
+  sentAt: Date | null;
+  createdAt: Date;
+  createdByUser: {
+    id: string;
+    email: string;
+    agent: { name: string } | null;
+  };
+  ticket?: {
+    id: string;
+    status: string;
+    customerNameSnapshot: string;
+    title: string | null;
+    isGroup: boolean;
+    currentQueue: { id: string; name: string; color: string | null } | null;
+    currentAgent: { id: string; name: string } | null;
+    whatsappInstance: { id: string; name: string };
+  };
+}) {
+  return {
+    id: item.id,
+    ticketId: item.ticketId,
+    body: item.body,
+    contentType: item.contentType,
+    internalNote: item.internalNote,
+    attachment: item.attachmentPayload,
+    replyToMessageId: item.replyToMessageId,
+    sendAt: item.sendAt,
+    status: item.status,
+    errorMessage: item.errorMessage,
+    sentAt: item.sentAt,
+    createdAt: item.createdAt,
+    createdBy: {
+      id: item.createdByUser.id,
+      name: item.createdByUser.agent?.name ?? item.createdByUser.email,
+    },
+    ticket: item.ticket
+      ? {
+          id: item.ticket.id,
+          status: item.ticket.status,
+          customerName: item.ticket.title?.trim() || item.ticket.customerNameSnapshot,
+          manualGroupName: item.ticket.title,
+          isGroup: item.ticket.isGroup,
+          currentQueue: item.ticket.currentQueue,
+          currentAgent: item.ticket.currentAgent,
+          whatsappInstance: item.ticket.whatsappInstance,
+        }
+      : undefined,
+  };
+}
+
 function canReplyToTicket(
   viewerId: string,
   permissions: Record<string, boolean>,
@@ -83,6 +149,77 @@ function canViewTicket(
 }
 
 export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
+  app.get('/scheduled-messages', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'calendar.view');
+    if (!access) return;
+    const session = access.session;
+
+    const query = z.object({
+      status: z.string().trim().optional(),
+    }).parse(request.query ?? {});
+
+    const requestedStatuses = (query.status ?? 'pending,processing,failed')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean) as Array<'pending' | 'processing' | 'sent' | 'failed' | 'canceled'>;
+
+    const items = await app.prisma.scheduledMessage.findMany({
+      where: requestedStatuses.length > 0
+        ? {
+            status: {
+              in: requestedStatuses,
+            },
+          }
+        : undefined,
+      orderBy: [
+        { sendAt: 'asc' },
+        { createdAt: 'desc' },
+      ],
+      include: {
+        createdByUser: {
+          select: {
+            id: true,
+            email: true,
+            agent: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        ticket: {
+          include: {
+            currentQueue: {
+              select: {
+                id: true,
+                name: true,
+                color: true,
+              },
+            },
+            currentAgent: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            whatsappInstance: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return {
+      items: items
+        .filter((item) => canViewTicket(session.userId, access.permissions, access.queueIds, item.ticket))
+        .map((item) => mapScheduledMessage(item)),
+    };
+  });
+
   app.get('/tickets/:ticketId/scheduled-messages', async (request, reply) => {
     const access = await requirePermission(app, request, reply, 'tickets.view');
     if (!access) return;
@@ -131,24 +268,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return {
-      items: items.map((item) => ({
-        id: item.id,
-        ticketId: item.ticketId,
-        body: item.body,
-        contentType: item.contentType,
-        internalNote: item.internalNote,
-        attachment: item.attachmentPayload,
-        replyToMessageId: item.replyToMessageId,
-        sendAt: item.sendAt,
-        status: item.status,
-        errorMessage: item.errorMessage,
-        sentAt: item.sentAt,
-        createdAt: item.createdAt,
-        createdBy: {
-          id: item.createdByUser.id,
-          name: item.createdByUser.agent?.name ?? item.createdByUser.email,
-        },
-      })),
+      items: items.map((item) => mapScheduledMessage(item)),
     };
   });
 
@@ -221,6 +341,181 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return reply.code(201).send({ item });
+  });
+
+  app.patch('/scheduled-messages/:scheduledMessageId', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.reply');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({
+      scheduledMessageId: z.string().uuid(),
+    }).parse(request.params);
+    const body = updateScheduledMessageBodySchema.parse(request.body);
+
+    const scheduled = await app.prisma.scheduledMessage.findUnique({
+      where: {
+        id: params.scheduledMessageId,
+      },
+      include: {
+        ticket: {
+          include: {
+            currentAgent: true,
+          },
+        },
+        createdByUser: {
+          select: {
+            id: true,
+            email: true,
+            agent: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!scheduled) {
+      return reply.notFound('Mensagem agendada nao encontrada.');
+    }
+
+    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, scheduled.ticket)) {
+      return reply.forbidden('Apenas o agente responsavel pode editar mensagens agendadas neste ticket.');
+    }
+
+    if (scheduled.status === 'sent' || scheduled.status === 'canceled') {
+      return reply.badRequest('A mensagem agendada nao pode mais ser editada.');
+    }
+
+    const nextSendAt = body.sendAt ? new Date(body.sendAt) : scheduled.sendAt;
+    if (Number.isNaN(nextSendAt.getTime())) {
+      return reply.badRequest('Data de agendamento invalida.');
+    }
+
+    if (nextSendAt.getTime() <= Date.now() + 5_000) {
+      return reply.badRequest('Escolha um horario pelo menos 5 segundos no futuro.');
+    }
+
+    const nextBody = body.body !== undefined ? body.body.trim() : (scheduled.body ?? '');
+    const hasAttachment = Boolean(scheduled.attachmentPayload);
+
+    if (!nextBody && !hasAttachment) {
+      return reply.badRequest('Informe uma mensagem ou mantenha um anexo para o agendamento.');
+    }
+
+    const updated = await app.prisma.scheduledMessage.update({
+      where: { id: scheduled.id },
+      data: {
+        body: nextBody || null,
+        sendAt: nextSendAt,
+        status: 'pending',
+        errorMessage: null,
+      },
+      include: {
+        createdByUser: {
+          select: {
+            id: true,
+            email: true,
+            agent: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        ticket: {
+          include: {
+            currentQueue: {
+              select: {
+                id: true,
+                name: true,
+                color: true,
+              },
+            },
+            currentAgent: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            whatsappInstance: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (app.jobs.enabled) {
+      await app.jobs.enqueueScheduledMessage(
+        { scheduledMessageId: updated.id },
+        {
+          delayMs: Math.max(0, nextSendAt.getTime() - Date.now()),
+          jobId: `scheduled-message-${updated.id}-${nextSendAt.getTime()}`,
+        },
+      );
+    }
+
+    app.io.emit('ticket.updated', {
+      ticketId: updated.ticketId,
+      scheduledMessageId: updated.id,
+    });
+
+    return { item: mapScheduledMessage(updated) };
+  });
+
+  app.delete('/scheduled-messages/:scheduledMessageId', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.reply');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({
+      scheduledMessageId: z.string().uuid(),
+    }).parse(request.params);
+
+    const scheduled = await app.prisma.scheduledMessage.findUnique({
+      where: {
+        id: params.scheduledMessageId,
+      },
+      include: {
+        ticket: {
+          include: {
+            currentAgent: true,
+          },
+        },
+      },
+    });
+
+    if (!scheduled) {
+      return reply.notFound('Mensagem agendada nao encontrada.');
+    }
+
+    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, scheduled.ticket)) {
+      return reply.forbidden('Apenas o agente responsavel pode cancelar mensagens agendadas neste ticket.');
+    }
+
+    if (scheduled.status === 'sent') {
+      return reply.badRequest('A mensagem agendada ja foi enviada.');
+    }
+
+    await app.prisma.scheduledMessage.update({
+      where: { id: scheduled.id },
+      data: {
+        status: 'canceled',
+      },
+    });
+
+    app.io.emit('ticket.updated', {
+      ticketId: scheduled.ticketId,
+      canceledScheduledMessageId: scheduled.id,
+    });
+
+    return reply.code(200).send({ ok: true });
   });
 
   app.delete('/tickets/:ticketId/scheduled-messages/:scheduledMessageId', async (request, reply) => {
