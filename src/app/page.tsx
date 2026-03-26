@@ -1552,10 +1552,29 @@ export default function HomePage() {
     if (!user) return;
     setTicketLoading(true);
     try {
-      const payload = await apiFetch<{ items: TicketItem[] }>("/tickets", { method: "GET" });
-      setTickets(payload.items);
+      let items: TicketItem[] = [];
+
+      if (activeWorkspace === "closedTickets") {
+        const payload = await apiFetch<{ items: TicketItem[] }>("/tickets?status=closed", { method: "GET" });
+        items = payload.items;
+      } else {
+        const [openPayload, pendingPayload, groupsPayload] = await Promise.all([
+          apiFetch<{ items: TicketItem[] }>("/tickets?status=open&isGroup=false", { method: "GET" }),
+          apiFetch<{ items: TicketItem[] }>("/tickets?status=pending&isGroup=false", { method: "GET" }),
+          apiFetch<{ items: TicketItem[] }>("/tickets?isGroup=true", { method: "GET" }),
+        ]);
+
+        const deduped = new Map<string, TicketItem>();
+        [...openPayload.items, ...pendingPayload.items, ...groupsPayload.items].forEach((ticket) => {
+          deduped.set(ticket.id, ticket);
+        });
+
+        items = Array.from(deduped.values()).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      }
+
+      setTickets(items);
       setSelectedTicketId((current) => {
-        if (current && payload.items.some((ticket) => ticket.id === current)) {
+        if (current && items.some((ticket) => ticket.id === current)) {
           return current;
         }
         return null;
@@ -1565,7 +1584,7 @@ export default function HomePage() {
     } finally {
       setTicketLoading(false);
     }
-  }, [user]);
+  }, [activeWorkspace, user]);
 
   const refreshMessages = React.useCallback(async (ticketId: string, options?: { silent?: boolean }) => {
     if (!user) return;

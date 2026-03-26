@@ -15,10 +15,11 @@ import {
 
 const ticketListQuerySchema = z.object({
   status: z.enum(['open', 'pending', 'closed']).optional(),
+  isGroup: z.coerce.boolean().optional(),
   agentId: z.string().uuid().optional(),
   queueId: z.string().uuid().optional(),
   search: z.string().min(1).optional(),
-  limit: z.coerce.number().int().positive().max(100).default(20),
+  limit: z.coerce.number().int().positive().optional(),
 });
 
 const createTicketBodySchema = z.object({
@@ -378,6 +379,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
 
     const where = {
       status: query.status,
+      isGroup: query.isGroup,
       currentAgentId: access.permissions['tickets.viewAll']
         ? query.agentId
         : access.permissions['tickets.viewOthers']
@@ -420,7 +422,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       orderBy: {
         updatedAt: 'desc',
       },
-      take: query.limit,
+      ...(typeof query.limit === 'number' ? { take: query.limit } : {}),
     });
 
     return {
