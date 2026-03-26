@@ -3719,8 +3719,9 @@ export default function HomePage() {
 
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Visão geral da operação" description="Indicadores reais de atendimento, resposta e distribuição da equipe.">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-end">
+          <section className="rounded-[28px] border border-slate-200 bg-white px-6 py-4 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <h3 className="text-lg font-semibold text-slate-900">Visão geral da operação</h3>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <label className="block text-sm font-medium text-slate-600">
                   <span className="sr-only">Escopo do dashboard</span>
@@ -3750,7 +3751,7 @@ export default function HomePage() {
                 </label>
               </div>
             </div>
-          </WorkspaceSection>
+          </section>
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <WorkspaceStatCard title="Tickets abertos" value={String(dashboardOverview?.overview.openTickets ?? 0)} accent="emerald" description="Conversas individuais em atendimento agora." />
