@@ -42,6 +42,10 @@ function minutesBetween(from: Date, to: Date) {
   return Math.max(0, Math.round((to.getTime() - from.getTime()) / 60000));
 }
 
+function uniqueTicketsById<T extends { id: string }>(tickets: T[]) {
+  return Array.from(new Map(tickets.map((ticket) => [ticket.id, ticket])).values());
+}
+
 function buildVisibilityFilters(
   permissions: PermissionMap,
   queueIds: string[],
@@ -131,9 +135,6 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const selectedAgentConstraint = selectedAgentId ? { currentAgentId: selectedAgentId } : {};
-    const closedVisibilityConstraint = access.permissions['tickets.closedView']
-      ? {}
-      : { status: { in: ['open', 'pending'] as TicketStatus[] } };
 
     const activeTickets = await app.prisma.ticket.findMany({
       where: {
@@ -154,7 +155,6 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
           visibleTicketWhere,
           dashboardScopedTicketConstraint,
           selectedAgentConstraint,
-          closedVisibilityConstraint,
           {
             OR: [
               { createdAt: { gte: range.from, lte: range.to } },
@@ -167,7 +167,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     });
 
     const createdTicketIds = periodTickets
-      .filter((ticket) => ticket.createdAt >= range.from && ticket.createdAt <= range.to)
+      .filter((ticket) => !ticket.isGroup && ticket.createdAt >= range.from && ticket.createdAt <= range.to)
       .map((ticket) => ticket.id);
 
     const periodMessages = await app.prisma.ticketMessage.findMany({
@@ -178,7 +178,6 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
             visibleTicketWhere,
             dashboardScopedTicketConstraint,
             selectedAgentConstraint,
-            closedVisibilityConstraint,
           ],
         },
       },
@@ -207,25 +206,11 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         })
       : [];
 
-    const acceptedEvents = createdTicketIds.length > 0
-      ? await app.prisma.ticketEvent.findMany({
-          where: {
-            ticketId: { in: createdTicketIds },
-            eventType: 'accepted',
-          },
-          select: {
-            ticketId: true,
-            createdAt: true,
-          },
-          orderBy: { createdAt: 'asc' },
-        })
-      : [];
-
     const firstResponseMinutes: number[] = [];
     const acceptanceMinutes: number[] = [];
     const handleMinutes: number[] = [];
 
-    const createdTicketMap = new Map(periodTickets.map((ticket) => [ticket.id, ticket]));
+    const createdTicketMap = new Map(periodTickets.filter((ticket) => !ticket.isGroup).map((ticket) => [ticket.id, ticket]));
     const messagesByTicket = new Map<string, typeof createdTicketMessages>();
 
     for (const message of createdTicketMessages) {
@@ -234,35 +219,22 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       messagesByTicket.set(message.ticketId, current);
     }
 
-    const acceptedByTicket = new Map<string, Date>();
-    for (const event of acceptedEvents) {
-      if (!acceptedByTicket.has(event.ticketId)) {
-        acceptedByTicket.set(event.ticketId, event.createdAt);
-      }
-    }
-
     for (const ticketId of createdTicketIds) {
       const ticket = createdTicketMap.get(ticketId);
       if (!ticket) continue;
 
-      const acceptedAt = acceptedByTicket.get(ticketId);
-      if (acceptedAt) {
-        acceptanceMinutes.push(minutesBetween(ticket.createdAt, acceptedAt));
-      }
-
       const ticketMessages = messagesByTicket.get(ticketId) ?? [];
-      const firstInbound = ticketMessages.find((message) => message.direction === 'inbound');
-      const firstOutbound = firstInbound
-        ? ticketMessages.find((message) => message.direction === 'outbound' && message.createdAt >= firstInbound.createdAt)
-        : null;
+      const firstOutbound = ticketMessages.find((message) => message.direction === 'outbound' && message.createdAt >= ticket.createdAt);
 
-      if (firstInbound && firstOutbound) {
-        firstResponseMinutes.push(minutesBetween(firstInbound.createdAt, firstOutbound.createdAt));
+      if (firstOutbound) {
+        const responseMinutes = minutesBetween(ticket.createdAt, firstOutbound.createdAt);
+        firstResponseMinutes.push(responseMinutes);
+        acceptanceMinutes.push(responseMinutes);
       }
     }
 
     for (const ticket of periodTickets) {
-      if (ticket.closedAt) {
+      if (!ticket.isGroup && ticket.closedAt) {
         handleMinutes.push(minutesBetween(ticket.createdAt, ticket.closedAt));
       }
     }
@@ -301,7 +273,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const queueStats = new Map<string, { id: string; name: string; color: string | null; open: number; pending: number; closed: number }>();
-    for (const ticket of [...activeTickets, ...periodTickets]) {
+    for (const ticket of uniqueTicketsById([...activeTickets, ...periodTickets])) {
       const queueId = ticket.currentQueue?.id ?? 'without-queue';
       const current = queueStats.get(queueId) ?? {
         id: queueId,
@@ -319,7 +291,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const agentStats = new Map<string, { id: string; name: string; open: number; pending: number; closed: number }>();
-    for (const ticket of [...activeTickets, ...periodTickets]) {
+    for (const ticket of uniqueTicketsById([...activeTickets, ...periodTickets])) {
       const agentId = ticket.currentAgent?.id ?? 'without-agent';
       const current = agentStats.get(agentId) ?? {
         id: agentId,
@@ -335,12 +307,33 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       agentStats.set(agentId, current);
     }
 
-    const stalePending = activeTickets
-      .filter((ticket) => ticket.status === 'pending')
+    const pendingActiveTickets = activeTickets.filter((ticket) => ticket.status === 'pending');
+    const pendingInboundMessages = pendingActiveTickets.length > 0
+      ? await app.prisma.ticketMessage.findMany({
+          where: {
+            ticketId: { in: pendingActiveTickets.map((ticket) => ticket.id) },
+            direction: 'inbound',
+          },
+          select: {
+            ticketId: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'desc' },
+        })
+      : [];
+
+    const lastInboundByTicket = new Map<string, Date>();
+    for (const message of pendingInboundMessages) {
+      if (!lastInboundByTicket.has(message.ticketId)) {
+        lastInboundByTicket.set(message.ticketId, message.createdAt);
+      }
+    }
+
+    const stalePending = pendingActiveTickets
       .map((ticket) => ({
         id: ticket.id,
         customerName: (ticket.isGroup && typeof ticket.title === 'string' && ticket.title.trim().length > 0) ? ticket.title.trim() : ticket.customerNameSnapshot,
-        waitingMinutes: minutesBetween(ticket.createdAt, new Date()),
+        waitingMinutes: minutesBetween(lastInboundByTicket.get(ticket.id) ?? ticket.createdAt, new Date()),
         queueName: ticket.currentQueue?.name ?? 'Sem fila',
         agentName: ticket.currentAgent?.name ?? 'Sem agente',
       }))
