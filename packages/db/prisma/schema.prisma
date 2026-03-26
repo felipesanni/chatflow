@@ -95,6 +95,7 @@ model User {
   assignmentActions TicketAssignment[] @relation("assignment_created_by")
   ticketEvents TicketEvent[]
   scheduledMessages ScheduledMessage[] @relation("scheduled_message_created_by")
+  dashboardExcludedCustomers Customer[] @relation("dashboard_excluded_by_user")
 
   @@map("users")
 }
@@ -126,8 +127,11 @@ model Customer {
   companyName    String?  @map("company_name")
   notes          String?
   isNameManuallySet Boolean @default(false) @map("is_name_manually_set")
+  dashboardExcludedAt DateTime? @map("dashboard_excluded_at")
+  dashboardExcludedByUserId String? @map("dashboard_excluded_by_user_id") @db.Uuid
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
+  dashboardExcludedByUser User? @relation("dashboard_excluded_by_user", fields: [dashboardExcludedByUserId], references: [id], onDelete: SetNull)
   tickets        Ticket[]
 
   @@map("customers")

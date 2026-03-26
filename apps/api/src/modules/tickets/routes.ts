@@ -557,6 +557,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
+
   app.post('/tickets', async (request, reply) => {
     const access = await requirePermission(app, request, reply, 'tickets.reply');
     if (!access) return;

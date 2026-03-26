@@ -89,6 +89,19 @@ function buildVisibleTicketWhere(
   };
 }
 
+const dashboardScopedTicketConstraint = {
+  OR: [
+    { customerId: null },
+    {
+      customer: {
+        is: {
+          dashboardExcludedAt: null,
+        },
+      },
+    },
+  ],
+} as const;
+
 export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   app.get('/dashboard/overview', async (request, reply) => {
     const access = await requirePermission(app, request, reply, 'dashboard.view');
@@ -112,6 +125,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       where: {
         AND: [
           visibleTicketWhere,
+          dashboardScopedTicketConstraint,
           selectedAgentConstraint,
           { status: { in: ['open', 'pending'] as TicketStatus[] } },
         ],
@@ -136,6 +150,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       where: {
         AND: [
           visibleTicketWhere,
+          dashboardScopedTicketConstraint,
           selectedAgentConstraint,
           closedVisibilityConstraint,
           {
@@ -167,6 +182,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         ticket: {
           AND: [
             visibleTicketWhere,
+            dashboardScopedTicketConstraint,
             selectedAgentConstraint,
             closedVisibilityConstraint,
           ],

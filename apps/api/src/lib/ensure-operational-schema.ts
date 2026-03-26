@@ -131,6 +131,8 @@ const operationalStatements = [
       company_name TEXT,
       notes TEXT,
       is_name_manually_set BOOLEAN NOT NULL DEFAULT FALSE,
+      dashboard_excluded_at TIMESTAMPTZ,
+      dashboard_excluded_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -142,6 +144,14 @@ const operationalStatements = [
   `
     ALTER TABLE customers
       ADD COLUMN IF NOT EXISTS is_name_manually_set BOOLEAN NOT NULL DEFAULT FALSE;
+  `,
+  `
+    ALTER TABLE customers
+      ADD COLUMN IF NOT EXISTS dashboard_excluded_at TIMESTAMPTZ;
+  `,
+  `
+    ALTER TABLE customers
+      ADD COLUMN IF NOT EXISTS dashboard_excluded_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
   `,
   `
     CREATE UNIQUE INDEX IF NOT EXISTS customers_phone_e164_key

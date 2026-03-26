@@ -10,6 +10,10 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
     email: z.string().trim().email('Informe um e-mail valido.').optional().or(z.literal('')).nullable(),
     companyName: z.string().trim().optional().or(z.literal('')).nullable(),
     notes: z.string().trim().optional().or(z.literal('')).nullable(),
+    dashboardExcluded: z.boolean().optional().default(false),
+  });
+  const customerDashboardVisibilitySchema = z.object({
+    ignored: z.boolean(),
   });
 
   function normalizePhone(value: string | null | undefined) {
@@ -56,6 +60,7 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         companyName: customer.companyName,
         notes: customer.notes,
         isNameManuallySet: customer.isNameManuallySet,
+        dashboardExcluded: Boolean(customer.dashboardExcludedAt),
         createdAt: customer.createdAt,
         updatedAt: customer.updatedAt,
         lastTicket: customer.tickets[0]
@@ -71,7 +76,8 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/customers', async (request, reply) => {
-    if (!(await requirePermission(app, request, reply, 'contacts.manage'))) return;
+    const access = await requirePermission(app, request, reply, 'contacts.manage');
+    if (!access) return;
 
     const body = customerBodySchema.parse(request.body ?? {});
     const phone = normalizePhone(body.phone);
@@ -109,6 +115,8 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         companyName: body.companyName?.trim() || null,
         notes: body.notes?.trim() || null,
         isNameManuallySet: true,
+        dashboardExcludedAt: body.dashboardExcluded ? new Date() : null,
+        dashboardExcludedByUserId: body.dashboardExcluded ? access.session.userId : null,
       },
     });
 
@@ -122,6 +130,7 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         companyName: customer.companyName,
         notes: customer.notes,
         isNameManuallySet: customer.isNameManuallySet,
+        dashboardExcluded: Boolean(customer.dashboardExcludedAt),
         createdAt: customer.createdAt,
         updatedAt: customer.updatedAt,
         lastTicket: null,
@@ -130,7 +139,8 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.put('/customers/:customerId', async (request, reply) => {
-    if (!(await requirePermission(app, request, reply, 'contacts.manage'))) return;
+    const access = await requirePermission(app, request, reply, 'contacts.manage');
+    if (!access) return;
 
     const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
     const body = customerBodySchema.parse(request.body ?? {});
@@ -183,6 +193,8 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         companyName: body.companyName?.trim() || null,
         notes: body.notes?.trim() || null,
         isNameManuallySet: true,
+        dashboardExcludedAt: body.dashboardExcluded ? new Date() : null,
+        dashboardExcludedByUserId: body.dashboardExcluded ? access.session.userId : null,
       },
     });
 
@@ -224,14 +236,58 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         companyName: customer.companyName,
         notes: customer.notes,
         isNameManuallySet: customer.isNameManuallySet,
+        dashboardExcluded: Boolean(customer.dashboardExcludedAt),
         createdAt: customer.createdAt,
         updatedAt: customer.updatedAt,
       },
     });
   });
 
+  app.patch('/customers/:customerId/dashboard-visibility', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'contacts.manage');
+    if (!access) return;
+
+    const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
+    const body = customerDashboardVisibilitySchema.parse(request.body ?? {});
+
+    const existing = await app.prisma.customer.findUnique({
+      where: { id: params.customerId },
+    });
+
+    if (!existing) {
+      return reply.notFound('Contato nao encontrado.');
+    }
+
+    const customer = await app.prisma.customer.update({
+      where: { id: params.customerId },
+      data: {
+        dashboardExcludedAt: body.ignored ? new Date() : null,
+        dashboardExcludedByUserId: body.ignored ? access.session.userId : null,
+      },
+    });
+
+    return reply.send({
+      item: {
+        id: customer.id,
+        name: customer.name,
+        phone: customer.phoneE164,
+        avatarUrl: customer.avatarUrl,
+        email: customer.email,
+        companyName: customer.companyName,
+        notes: customer.notes,
+        isNameManuallySet: customer.isNameManuallySet,
+        dashboardExcluded: Boolean(customer.dashboardExcludedAt),
+        createdAt: customer.createdAt,
+        updatedAt: customer.updatedAt,
+        lastTicket: null,
+      },
+    });
+  });
+
   app.delete('/customers/:customerId', async (request, reply) => {
-    if (!(await requirePermission(app, request, reply, 'contacts.manage'))) return;
+    const access = await requirePermission(app, request, reply, 'contacts.manage');
+    if (!access) return;
+    void access;
 
     const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
 

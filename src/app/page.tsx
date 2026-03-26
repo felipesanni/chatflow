@@ -217,6 +217,7 @@ type CustomerItem = {
   email: string | null;
   companyName: string | null;
   notes: string | null;
+  dashboardExcluded?: boolean;
   createdAt: string;
   updatedAt: string;
   lastTicket: {
@@ -922,6 +923,7 @@ export default function HomePage() {
     email: "",
     companyName: "",
     notes: "",
+    dashboardExcluded: false,
   });
   const [transferForm, setTransferForm] = React.useState({
     agentId: "",
@@ -3143,6 +3145,7 @@ export default function HomePage() {
       email: "",
       companyName: "",
       notes: "",
+      dashboardExcluded: false,
     });
   }
 
@@ -3236,6 +3239,7 @@ export default function HomePage() {
       email: customer.email ?? "",
       companyName: customer.companyName ?? "",
       notes: customer.notes ?? "",
+      dashboardExcluded: Boolean(customer.dashboardExcluded),
     });
     if (!options?.preserveWorkspace) {
       setActiveWorkspace("contacts");
@@ -3330,6 +3334,7 @@ export default function HomePage() {
       email: "",
       companyName: "",
       notes: "",
+      dashboardExcluded: false,
     });
     setConversationForm({
       phone: "",
@@ -3573,6 +3578,25 @@ export default function HomePage() {
     }
   }
 
+  async function handleToggleCustomerDashboardVisibility(customer: CustomerItem, ignored: boolean) {
+    if (!canManageContacts) return;
+
+    try {
+      setCustomerLoading(true);
+      await apiFetch(`/customers/${customer.id}/dashboard-visibility`, {
+        method: "PATCH",
+        body: JSON.stringify({ ignored }),
+      });
+      setPanelMessage(ignored ? "Contato ignorado no Painel Geral." : "Contato voltou a ser contabilizado no Painel Geral.");
+      await refreshCustomers();
+      await refreshDashboard();
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao atualizar a visibilidade do contato no dashboard.");
+    } finally {
+      setCustomerLoading(false);
+    }
+  }
+
   async function handleDeleteQuickReply(quickReplyId: string) {
     if (!canManageQuickReplies) return;
 
@@ -3713,9 +3737,7 @@ export default function HomePage() {
 
   const workspacePanel = (() => {
     if (activeWorkspace === "dashboard") {
-      const periodLabel = dashboardOverview?.period.label ?? "Carregando";
       const maxDailyVolume = Math.max(...(dashboardOverview?.dailySeries.map((item) => Math.max(item.created, item.closed, item.inbound, item.outbound)) ?? [1]));
-      const selectedDashboardAgentLabel = dashboardAgentOptions.find((option) => option.id === dashboardAgentId)?.name ?? "Visão geral";
 
       return (
         <div className="flex h-full flex-col gap-4 p-6">
@@ -5424,7 +5446,24 @@ export default function HomePage() {
                           </div>
                           {!selectedTicket.isGroup ? (
                             <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                              <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Empresa</div>
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Empresa</div>
+                                {selectedCustomer && canManageContacts ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleToggleCustomerDashboardVisibility(selectedCustomer, !selectedCustomer.dashboardExcluded)}
+                                    disabled={customerLoading}
+                                    className={`inline-flex h-7 items-center justify-center rounded-full border px-3 text-[10px] font-bold uppercase tracking-[0.12em] transition ${
+                                      selectedCustomer.dashboardExcluded
+                                        ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                                        : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+                                    }`}
+                                    title={selectedCustomer.dashboardExcluded ? "Voltar para o dashboard" : "Ignorar no dashboard"}
+                                  >
+                                    {selectedCustomer.dashboardExcluded ? "Voltar ao dashboard" : "Ignorar no dashboard"}
+                                  </button>
+                                ) : null}
+                              </div>
                               <div className="mt-1 text-sm font-semibold text-slate-800">{selectedCustomer?.companyName ?? "Sem empresa"}</div>
                             </div>
                           ) : null}
@@ -5450,6 +5489,19 @@ export default function HomePage() {
                       <InfoRow title="Responsável" subtitle={selectedTicket.currentAgent?.name ?? "Sem agente"} meta={selectedTicket.isGroup ? "participação compartilhada" : "atendimento individual"} />
                       <InfoRow title={selectedTicket.isGroup ? "Instância" : "Contato"} subtitle={selectedTicket.isGroup ? selectedTicket.whatsappInstance.name : formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)} meta={selectedTicket.isGroup ? formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId) : selectedTicket.whatsappInstance.name} />
                       <InfoRow title="Atualizado em" subtitle={formatDateTime(selectedTicket.updatedAt)} meta={selectedTicket.status === "closed" ? "ticket encerrado" : "ticket ativo"} />
+                      {!selectedTicket.isGroup && selectedCustomer ? (
+                        <div className={`rounded-2xl border px-4 py-3 ${selectedCustomer.dashboardExcluded ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+                          <div className={`text-[11px] font-bold uppercase tracking-[0.14em] ${selectedCustomer.dashboardExcluded ? "text-amber-600" : "text-emerald-600"}`}>
+                            Painel geral
+                          </div>
+                          <div className={`mt-1 text-sm font-semibold ${selectedCustomer.dashboardExcluded ? "text-amber-900" : "text-emerald-900"}`}>
+                            {selectedCustomer.dashboardExcluded ? "Contato ignorado no dashboard" : "Contato contabilizado no dashboard"}
+                          </div>
+                          <div className={`mt-1 text-xs ${selectedCustomer.dashboardExcluded ? "text-amber-700" : "text-emerald-700"}`}>
+                            {selectedCustomer.dashboardExcluded ? "Os tickets deste contato não entram nos números do Painel Geral." : "Os tickets deste contato entram normalmente nos números do Painel Geral."}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 </aside>
@@ -5971,6 +6023,21 @@ export default function HomePage() {
                 placeholder="Anotações internas sobre o contato."
                 className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
               />
+            </label>
+
+            <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+              <input
+                type="checkbox"
+                checked={customerForm.dashboardExcluded}
+                onChange={(event) => setCustomerForm((current) => ({ ...current, dashboardExcluded: event.target.checked }))}
+                className="mt-1 h-4 w-4 rounded border-slate-300 text-[#1A1C32] focus:ring-[#1A1C32]"
+              />
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Ignorar este contato no Painel Geral</div>
+                <div className="mt-1 text-sm text-slate-500">
+                  Todos os tickets vinculados a este contato deixam de entrar nos números e alertas do dashboard, sem afetar o atendimento.
+                </div>
+              </div>
             </label>
 
             <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
