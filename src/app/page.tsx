@@ -3720,12 +3720,7 @@ export default function HomePage() {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
           <WorkspaceSection title="Visão geral da operação" description="Indicadores reais de atendimento, resposta e distribuição da equipe.">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <div className="text-sm font-semibold text-slate-900">Período analisado</div>
-                <div className="mt-1 text-sm text-slate-500">{periodLabel}</div>
-                <div className="mt-1 text-sm text-slate-500">Escopo: {selectedDashboardAgentLabel}</div>
-              </div>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-end">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <label className="block text-sm font-medium text-slate-600">
                   <span className="sr-only">Escopo do dashboard</span>
