@@ -5663,153 +5663,6 @@ export default function HomePage() {
                 </div>
               </div>
             ) : null}
-            {scheduledMessageEditor ? (
-              <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
-                <div className="my-auto flex w-full max-w-xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
-                  <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
-                    <div>
-                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Editar agendamento</div>
-                      <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{scheduledMessageEditor.title}</div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setScheduledMessageEditor(null)}
-                      className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="space-y-4 px-6 py-6">
-                    {scheduledMessageEditor.attachmentLabel ? (
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                        Anexo mantido: {scheduledMessageEditor.attachmentLabel}
-                      </div>
-                    ) : null}
-                    <label className="block text-sm font-medium text-slate-600">
-                      Mensagem
-                      <textarea
-                        value={scheduledMessageEditor.body}
-                        onChange={(event) => setScheduledMessageEditor((current) => current ? { ...current, body: event.target.value } : current)}
-                        rows={4}
-                        className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-                      />
-                    </label>
-                    <label className="block text-sm font-medium text-slate-600">
-                      Enviar em
-                      <input
-                        type="datetime-local"
-                        value={scheduledMessageEditor.sendAt}
-                        onChange={(event) => setScheduledMessageEditor((current) => current ? { ...current, sendAt: event.target.value } : current)}
-                        className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-                      />
-                    </label>
-                  </div>
-                  <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
-                    <button
-                      type="button"
-                      onClick={() => setScheduledMessageEditor(null)}
-                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveScheduledMessageEdit()}
-                      disabled={scheduleLoading}
-                      className="inline-flex h-11 items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
-                    >
-                      {scheduleLoading ? "Salvando..." : "Salvar alterações"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-            {scheduledMessageViewer ? (
-              <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
-                <div className="my-auto flex w-full max-w-2xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
-                  <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
-                    <div>
-                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Ticket vinculado</div>
-                      <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{scheduledMessageViewer.ticket?.customerName ?? "Ticket"}</div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setScheduledMessageViewer(null)}
-                      className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="grid gap-4 px-6 py-6 md:grid-cols-2">
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Destino</div>
-                      <div className="mt-2 text-base font-semibold text-slate-900">{scheduledMessageViewer.ticket?.customerName ?? "Ticket"}</div>
-                      <div className="mt-1 text-sm text-slate-500">
-                        {(scheduledMessageViewer.ticket?.currentQueue?.name ?? "Sem fila")} • {(scheduledMessageViewer.ticket?.whatsappInstance.name ?? "Sem instância")}
-                      </div>
-                      <div className="mt-1 text-sm text-slate-500">
-                        {scheduledMessageViewer.ticket?.currentAgent?.name ?? "Sem agente responsável"}
-                      </div>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Agendamento</div>
-                      <div className="mt-2 text-sm text-slate-700">{formatScheduledMessagePreview(scheduledMessageViewer)}</div>
-                      <div className="mt-2 text-sm text-slate-500">Agendado para {formatDateTime(scheduledMessageViewer.sendAt)}</div>
-                      <div className="mt-1 text-sm text-slate-500">Criado por {scheduledMessageViewer.createdBy.name}</div>
-                      {scheduledMessageViewer.errorMessage ? <div className="mt-2 text-xs text-red-500">{scheduledMessageViewer.errorMessage}</div> : null}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-end border-t border-slate-200 px-6 py-5">
-                    <button
-                      type="button"
-                      onClick={() => setScheduledMessageViewer(null)}
-                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
-                    >
-                      Fechar
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-            {scheduledMessageDeleteTarget ? (
-              <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
-                <div className="my-auto flex w-full max-w-lg flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
-                  <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
-                    <div>
-                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-red-500">Confirmação</div>
-                      <div className="mt-1 text-lg font-semibold text-[#1A1C32]">Excluir mensagem agendada</div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setScheduledMessageDeleteTarget(null)}
-                      className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="px-6 py-6 text-sm leading-7 text-slate-600">
-                    A mensagem agendada para <strong>{scheduledMessageDeleteTarget.ticket?.customerName ?? "este ticket"}</strong> não será mais enviada automaticamente.
-                  </div>
-                  <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
-                    <button
-                      type="button"
-                      onClick={() => setScheduledMessageDeleteTarget(null)}
-                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleDeleteScheduledMessageFromAgenda(scheduledMessageDeleteTarget)}
-                      disabled={scheduleLoading}
-                      className="inline-flex h-11 items-center justify-center rounded-2xl bg-red-600 px-5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                    >
-                      {scheduleLoading ? "Excluindo..." : "Excluir"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
             {showForwardModal && forwardSourceMessage ? (
               <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-4 backdrop-blur-[2px] sm:py-6">
                 <div className="my-auto flex w-full max-w-xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
@@ -6950,6 +6803,156 @@ export default function HomePage() {
           </section>
         </div>
       </div>
+
+      {scheduledMessageEditor ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+          <div className="my-auto flex w-full max-w-xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Editar agendamento</div>
+                <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{scheduledMessageEditor.title}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setScheduledMessageEditor(null)}
+                className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-4 px-6 py-6">
+              {scheduledMessageEditor.attachmentLabel ? (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  Anexo mantido: {scheduledMessageEditor.attachmentLabel}
+                </div>
+              ) : null}
+              <label className="block text-sm font-medium text-slate-600">
+                Mensagem
+                <textarea
+                  value={scheduledMessageEditor.body}
+                  onChange={(event) => setScheduledMessageEditor((current) => current ? { ...current, body: event.target.value } : current)}
+                  rows={4}
+                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-600">
+                Enviar em
+                <input
+                  type="datetime-local"
+                  value={scheduledMessageEditor.sendAt}
+                  onChange={(event) => setScheduledMessageEditor((current) => current ? { ...current, sendAt: event.target.value } : current)}
+                  className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                />
+              </label>
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
+              <button
+                type="button"
+                onClick={() => setScheduledMessageEditor(null)}
+                className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSaveScheduledMessageEdit()}
+                disabled={scheduleLoading}
+                className="inline-flex h-11 items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {scheduleLoading ? "Salvando..." : "Salvar alterações"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {scheduledMessageViewer ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+          <div className="my-auto flex w-full max-w-2xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Ticket vinculado</div>
+                <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{scheduledMessageViewer.ticket?.customerName ?? "Ticket"}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setScheduledMessageViewer(null)}
+                className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="grid gap-4 px-6 py-6 md:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Destino</div>
+                <div className="mt-2 text-base font-semibold text-slate-900">{scheduledMessageViewer.ticket?.customerName ?? "Ticket"}</div>
+                <div className="mt-1 text-sm text-slate-500">
+                  {(scheduledMessageViewer.ticket?.currentQueue?.name ?? "Sem fila")} • {(scheduledMessageViewer.ticket?.whatsappInstance.name ?? "Sem instância")}
+                </div>
+                <div className="mt-1 text-sm text-slate-500">
+                  {scheduledMessageViewer.ticket?.currentAgent?.name ?? "Sem agente responsável"}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Agendamento</div>
+                <div className="mt-2 text-sm text-slate-700">{formatScheduledMessagePreview(scheduledMessageViewer)}</div>
+                <div className="mt-2 text-sm text-slate-500">Agendado para {formatDateTime(scheduledMessageViewer.sendAt)}</div>
+                <div className="mt-1 text-sm text-slate-500">Criado por {scheduledMessageViewer.createdBy.name}</div>
+                {scheduledMessageViewer.errorMessage ? <div className="mt-2 text-xs text-red-500">{scheduledMessageViewer.errorMessage}</div> : null}
+              </div>
+            </div>
+            <div className="flex items-center justify-end border-t border-slate-200 px-6 py-5">
+              <button
+                type="button"
+                onClick={() => setScheduledMessageViewer(null)}
+                className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {scheduledMessageDeleteTarget ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+          <div className="my-auto flex w-full max-w-lg flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-red-500">Confirmação</div>
+                <div className="mt-1 text-lg font-semibold text-[#1A1C32]">Excluir mensagem agendada</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setScheduledMessageDeleteTarget(null)}
+                className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-6 py-6 text-sm leading-7 text-slate-600">
+              A mensagem agendada para <strong>{scheduledMessageDeleteTarget.ticket?.customerName ?? "este ticket"}</strong> não será mais enviada automaticamente.
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
+              <button
+                type="button"
+                onClick={() => setScheduledMessageDeleteTarget(null)}
+                className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteScheduledMessageFromAgenda(scheduledMessageDeleteTarget)}
+                disabled={scheduleLoading}
+                className="inline-flex h-11 items-center justify-center rounded-2xl bg-red-600 px-5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {scheduleLoading ? "Excluindo..." : "Excluir"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {managementModalContent ? (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/45 px-4 py-6 sm:py-8">
