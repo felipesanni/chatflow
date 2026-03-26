@@ -1761,7 +1761,7 @@ export default function HomePage() {
     setApiTesterError(null);
     setApiTesterResult(null);
   }, [selectedApiEndpoint]);
-  const canManageApiTokens = currentUser.permissions["api.manage"];
+  const canManageApiTokens = user?.permissions["api.manage"] ?? false;
   const handleRunApiTester = React.useCallback(async () => {
     const normalizedPath = normalizeApiTesterPath(apiTesterPath);
     if (!normalizedPath) {
