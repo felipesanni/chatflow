@@ -1261,6 +1261,22 @@ export default function HomePage() {
     };
   }, [scopedTickets]);
 
+  React.useEffect(() => {
+    if (!selectedTicketId) {
+      return;
+    }
+
+    if (activeWorkspace !== "tickets" && activeWorkspace !== "closedTickets") {
+      return;
+    }
+
+    if (visibleTickets.some((ticket) => ticket.id === selectedTicketId)) {
+      return;
+    }
+
+    setSelectedTicketId(null);
+  }, [activeWorkspace, selectedTicketId, visibleTickets]);
+
   const managementSearch = searchQuery.trim().toLowerCase();
 
   const filteredInstances = React.useMemo(() => {
@@ -6743,14 +6759,16 @@ export default function HomePage() {
 
                   <div className="flex-1 min-h-0 min-w-0 overflow-y-auto bg-white px-2 py-2">
                   {visibleTickets.length === 0 ? (
-                  <div className="p-10 text-center text-xs font-medium text-slate-400">
+                    <div className="p-10 text-center text-xs font-medium text-slate-400">
                       {isClosedTicketsWorkspace
                         ? "Nenhum ticket arquivado para os filtros atuais."
                         : showArchivedTickets
                           ? "Nenhum atendimento ou arquivado para os filtros atuais."
-                          : "Nenhum atendimento nesta categoria."}
-                    </div>
-                  ) : (
+                            : selectedQueueFilter !== "all"
+                              ? "Nenhum atendimento encontrado para a fila selecionada nesta categoria."
+                              : "Nenhum atendimento nesta categoria."}
+                      </div>
+                    ) : (
                     visibleTickets.map((ticket) => {
                       const selected = ticket.id === selectedTicketId;
                       const selectedForBulkDelete = selectedTicketIdsForBulkDelete.includes(ticket.id);
