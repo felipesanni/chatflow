@@ -218,6 +218,18 @@ type CustomerItem = {
   } | null;
 };
 
+type ForwardDestination = {
+  key: string;
+  kind: "ticket" | "contact" | "manual";
+  label: string;
+  meta: string;
+  avatarUrl?: string | null;
+  ticketId?: string;
+  customerId?: string;
+  phone?: string | null;
+  instanceId?: string | null;
+};
+
 type QuickReplyItem = {
   id: string;
   shortcut: string;
@@ -789,6 +801,7 @@ export default function HomePage() {
   const [showTransferPanel, setShowTransferPanel] = React.useState(false);
   const [showGroupNameModal, setShowGroupNameModal] = React.useState(false);
   const [showScheduleModal, setShowScheduleModal] = React.useState(false);
+  const [showForwardModal, setShowForwardModal] = React.useState(false);
   const [appDialog, setAppDialog] = React.useState<AppDialogState | null>(null);
   const [profileName, setProfileName] = React.useState("");
   const [profileAvatarPreview, setProfileAvatarPreview] = React.useState<string | null>(null);
@@ -798,11 +811,16 @@ export default function HomePage() {
   const [composerAttachment, setComposerAttachment] = React.useState<ComposerAttachment | null>(null);
   const [scheduledMessages, setScheduledMessages] = React.useState<ScheduledMessageItem[]>([]);
   const [scheduleLoading, setScheduleLoading] = React.useState(false);
+  const [forwardLoading, setForwardLoading] = React.useState(false);
+  const [forwardMessageId, setForwardMessageId] = React.useState<string | null>(null);
+  const [forwardSearch, setForwardSearch] = React.useState("");
+  const [selectedForwardDestinationKeys, setSelectedForwardDestinationKeys] = React.useState<string[]>([]);
   const [scheduleForm, setScheduleForm] = React.useState({
     sendAt: toDateTimeLocalValue(new Date(Date.now() + 60 * 60 * 1000)),
   });
   const [showEmojiPicker, setShowEmojiPicker] = React.useState(false);
   const [recordingAudio, setRecordingAudio] = React.useState(false);
+  const [composerDragActive, setComposerDragActive] = React.useState(false);
   const [openMessageMenuId, setOpenMessageMenuId] = React.useState<string | null>(null);
   const [messageMenuPosition, setMessageMenuPosition] = React.useState<MessageMenuPosition | null>(null);
   const [publicUrls, setPublicUrls] = React.useState(resolvePublicUrls);
@@ -890,6 +908,7 @@ export default function HomePage() {
   const messageMenuRef = React.useRef<HTMLDivElement | null>(null);
   const attachmentUploadRef = React.useRef<HTMLInputElement | null>(null);
   const messagesViewportRef = React.useRef<HTMLDivElement | null>(null);
+  const composerDragDepthRef = React.useRef(0);
   const shouldStickMessagesToBottomRef = React.useRef(true);
   const audioRecorderRef = React.useRef<MediaRecorder | null>(null);
   const audioStreamRef = React.useRef<MediaStream | null>(null);
@@ -915,6 +934,100 @@ export default function HomePage() {
     const baseName = selectedTicket.isGroup ? selectedTicket.customerName : (selectedCustomer?.name ?? selectedTicket.customerName);
     return selectedTicket.isGroup ? baseName : (selectedCustomer?.companyName ? `${baseName} - ${selectedCustomer.companyName}` : baseName);
   }, [selectedCustomer?.companyName, selectedTicket]);
+  const forwardSourceMessage = React.useMemo(
+    () => messages.find((message) => message.id === forwardMessageId) ?? null,
+    [forwardMessageId, messages],
+  );
+  const filteredForwardTickets = React.useMemo(() => {
+    const query = forwardSearch.trim().toLowerCase();
+    const digitsQuery = onlyPhoneDigits(forwardSearch);
+
+    return tickets
+      .filter((ticket) => ticket.status !== "closed" && ticket.id !== selectedTicketId)
+      .filter((ticket) => {
+        if (!query && !digitsQuery) return true;
+        const haystack = [
+          formatTicketDisplayName(ticket),
+          ticket.customerName,
+          ticket.externalContactId ?? "",
+          ticket.externalChatId,
+          ticket.currentQueue?.name ?? "",
+        ].join(" ").toLowerCase();
+        const ticketDigits = onlyPhoneDigits(ticket.externalContactId ?? ticket.externalChatId);
+        return haystack.includes(query) || (digitsQuery.length > 0 && ticketDigits.includes(digitsQuery));
+      })
+      .slice(0, 8);
+  }, [forwardSearch, selectedTicketId, tickets]);
+  const filteredForwardCustomers = React.useMemo(() => {
+    const query = forwardSearch.trim().toLowerCase();
+    const digitsQuery = onlyPhoneDigits(forwardSearch);
+    if (!query && !digitsQuery) return customers.slice(0, 8);
+
+    return customers
+      .filter((customer) => {
+        const haystack = [customer.name, customer.phone ?? "", customer.companyName ?? ""].join(" ").toLowerCase();
+        const customerDigits = onlyPhoneDigits(customer.phone ?? "");
+        return haystack.includes(query) || (digitsQuery.length > 0 && customerDigits.includes(digitsQuery));
+      })
+      .slice(0, 8);
+  }, [customers, forwardSearch]);
+  const forwardDestinations = React.useMemo(() => {
+    const items: ForwardDestination[] = [];
+    const seen = new Set<string>();
+    const digitsQuery = onlyPhoneDigits(forwardSearch);
+
+    for (const ticket of filteredForwardTickets) {
+      const key = `ticket:${ticket.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push({
+        key,
+        kind: "ticket",
+        label: formatTicketDisplayName(ticket),
+        meta: `${formatContactIdentity(ticket.externalContactId ?? ticket.externalChatId)} • ${ticket.whatsappInstance.name}`,
+        avatarUrl: ticket.customerAvatarUrl ?? null,
+        ticketId: ticket.id,
+        instanceId: ticket.whatsappInstance.id,
+      });
+    }
+
+    for (const customer of filteredForwardCustomers) {
+      const phone = onlyPhoneDigits(customer.phone ?? "");
+      const key = `contact:${customer.id}`;
+      if (seen.has(key) || !phone) continue;
+      seen.add(key);
+      items.push({
+        key,
+        kind: "contact",
+        label: customer.name,
+        meta: `${formatContactIdentity(customer.phone)}${customer.companyName ? ` • ${customer.companyName}` : ""}`,
+        avatarUrl: customer.avatarUrl ?? null,
+        customerId: customer.id,
+        phone,
+        instanceId: selectedTicket?.whatsappInstance.id ?? instances[0]?.id ?? null,
+      });
+    }
+
+    if (digitsQuery.length >= 8) {
+      const key = `manual:${digitsQuery}`;
+      if (!seen.has(key)) {
+        items.unshift({
+          key,
+          kind: "manual",
+          label: formatPhoneInput(digitsQuery),
+          meta: "Número digitado",
+          phone: digitsQuery,
+          instanceId: selectedTicket?.whatsappInstance.id ?? instances[0]?.id ?? null,
+        });
+      }
+    }
+
+    return items;
+  }, [filteredForwardCustomers, filteredForwardTickets, forwardSearch, instances, selectedTicket?.whatsappInstance.id]);
+  const selectedForwardDestinations = React.useMemo(
+    () => forwardDestinations.filter((item) => selectedForwardDestinationKeys.includes(item.key)),
+    [forwardDestinations, selectedForwardDestinationKeys],
+  );
   const editingMessage = React.useMemo(
     () => messages.find((message) => message.id === editingMessageId) ?? null,
     [editingMessageId, messages],
@@ -1309,6 +1422,7 @@ export default function HomePage() {
   React.useEffect(() => {
     setEditingMessageId(null);
     setReplyToMessageId(null);
+    resetForwardState();
   }, [selectedTicketId]);
 
   React.useEffect(() => {
@@ -1918,32 +2032,62 @@ export default function HomePage() {
     } satisfies ComposerAttachment;
   }
 
+  async function applyComposerFile(file: File, sourceLabel = "Arquivo") {
+    if (isEditingMessage) {
+      setPanelMessage("Finalize a edição atual antes de anexar um arquivo.");
+      return false;
+    }
+
+    if (composerInternalNoteMode) {
+      setPanelMessage("Observações internas não aceitam anexos.");
+      return false;
+    }
+
+    if (file.size > 12_000_000) {
+      setPanelMessage("O arquivo deve ter no máximo 12 MB.");
+      return false;
+    }
+
+    const attachment = await buildComposerAttachmentFromFile(file);
+    setComposerAttachment(attachment);
+    setShowEmojiPicker(false);
+    setReplyToMessageId(null);
+
+    setPanelMessage(
+      sourceLabel === "Área de transferência"
+        ? attachment.kind === "image"
+          ? "Print colado e pronto para envio."
+          : "Arquivo colado e pronto para envio."
+        : sourceLabel === "Arrastar e soltar"
+          ? attachment.kind === "image"
+            ? "Imagem solta e pronta para envio."
+            : attachment.kind === "audio"
+              ? "Áudio solto e pronto para envio."
+              : "Arquivo solto e pronto para envio."
+          : attachment.kind === "image"
+            ? "Imagem pronta para envio."
+            : attachment.kind === "audio"
+              ? "Áudio pronto para envio."
+              : "Arquivo pronto para envio.",
+    );
+
+    return true;
+  }
+
+  function resetForwardState() {
+    setShowForwardModal(false);
+    setForwardLoading(false);
+    setForwardMessageId(null);
+    setForwardSearch("");
+    setSelectedForwardDestinationKeys([]);
+  }
+
   async function handleComposerAttachmentChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.currentTarget.value = "";
 
     if (!file) return;
-    if (isEditingMessage) {
-      setPanelMessage("Finalize a edição atual antes de anexar um arquivo.");
-      return;
-    }
-
-    if (file.size > 12_000_000) {
-      setPanelMessage("O arquivo deve ter no máximo 12 MB.");
-      return;
-    }
-
-    const attachment = await buildComposerAttachmentFromFile(file);
-
-    setComposerAttachment(attachment);
-
-    setPanelMessage(
-        attachment.kind === "image"
-          ? "Imagem pronta para envio."
-          : attachment.kind === "audio"
-            ? "Áudio pronto para envio."
-            : "Arquivo pronto para envio.",
-    );
+    await applyComposerFile(file, "Seletor de arquivos");
   }
 
   function clearComposerAttachment() {
@@ -2002,6 +2146,25 @@ export default function HomePage() {
   function cancelReplyToMessage() {
     setReplyToMessageId(null);
     setPanelMessage("Resposta cancelada.");
+  }
+
+  function handleOpenForwardModal(message: MessageItem) {
+    if (message.direction === "system" || message.internalNote || message.deleted?.isDeleted) {
+      return;
+    }
+
+    setOpenMessageMenuId(null);
+    setMessageMenuPosition(null);
+    setForwardMessageId(message.id);
+    setForwardSearch("");
+    setSelectedForwardDestinationKeys([]);
+    setShowForwardModal(true);
+  }
+
+  function toggleForwardDestinationSelection(key: string) {
+    setSelectedForwardDestinationKeys((current) =>
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key],
+    );
   }
 
   function openMessageMenuForButton(params: {
@@ -2312,6 +2475,196 @@ export default function HomePage() {
     } finally {
       setScheduleLoading(false);
     }
+  }
+
+  async function buildForwardAttachmentFromMessage(message: MessageItem) {
+    const attachment = message.attachments?.[0];
+    if (!selectedTicketId || !attachment) return null;
+
+    const response = await fetch(`${API_URL}/tickets/${selectedTicketId}/attachments/${attachment.id}/content`, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      const rawBody = await response.text();
+      throw new Error(rawBody || "Falha ao carregar o anexo para encaminhamento.");
+    }
+
+    const blob = await response.blob();
+    const mimeType = blob.type || attachment.mimeType || "application/octet-stream";
+    const extension = mimeType.split("/")[1]?.split(";")[0] ?? "bin";
+    const fileName = attachment.fileName ?? `arquivo-${Date.now()}.${extension}`;
+    const file = new File([blob], fileName, { type: mimeType });
+    return buildComposerAttachmentFromFile(file);
+  }
+
+  function buildForwardBodyFromMessage(message: MessageItem) {
+    const rawBody = (message.body ?? "").trim();
+    if (!rawBody) return "";
+
+    const normalizedBody = message.direction === "outbound" && !message.internalNote
+      ? parseMessageSignature(rawBody).body.trim()
+      : rawBody;
+
+    if (!message.attachments?.length) {
+      return normalizedBody;
+    }
+
+    if (
+      /^imagem recebida$/i.test(normalizedBody)
+      || /^audio recebido$/i.test(normalizedBody)
+      || /^video recebido$/i.test(normalizedBody)
+      || /^documento recebido$/i.test(normalizedBody)
+      || /^sticker recebido$/i.test(normalizedBody)
+      || /^\[(image|audio|document|video)\]\s/i.test(normalizedBody)
+    ) {
+      return "";
+    }
+
+    return normalizedBody;
+  }
+
+  async function resolveForwardDestinationTicketId(destination: ForwardDestination) {
+    if (destination.ticketId) {
+      return destination.ticketId;
+    }
+
+    const resolvedPhone = onlyPhoneDigits(destination.phone ?? "");
+    if (!resolvedPhone) {
+      throw new Error("Selecione um destino válido para encaminhar.");
+    }
+
+    const instanceId = destination.instanceId ?? selectedTicket?.whatsappInstance.id ?? instances[0]?.id ?? "";
+    if (!instanceId) {
+      throw new Error("Nenhuma instância disponível para encaminhar a mensagem.");
+    }
+
+    const existingTicket = tickets.find((ticket) => {
+      if (ticket.status === "closed") return false;
+      if (ticket.whatsappInstance.id !== instanceId) return false;
+      const ticketDigits = onlyPhoneDigits(ticket.externalContactId ?? ticket.externalChatId);
+      return ticketDigits === resolvedPhone;
+    });
+
+    if (existingTicket) {
+      return existingTicket.id;
+    }
+
+    const customer = destination.customerId
+      ? customers.find((item) => item.id === destination.customerId) ?? null
+      : null;
+
+    const payload = await apiFetch<CreateConversationResponse>("/tickets", {
+      method: "POST",
+      body: JSON.stringify({
+        customerName: customer?.name ?? destination.label,
+        phone: resolvedPhone,
+        whatsappInstanceId: instanceId,
+        queueId: null,
+      }),
+    });
+
+    await refreshTickets();
+    return payload.item.id;
+  }
+
+  async function handleConfirmForwardMessage() {
+    if (!forwardSourceMessage) return;
+
+    setForwardLoading(true);
+    try {
+      if ((forwardSourceMessage.attachments?.length ?? 0) > 1) {
+        throw new Error("O encaminhamento ainda aceita apenas uma anexo por mensagem.");
+      }
+      if (selectedForwardDestinations.length === 0) {
+        throw new Error("Selecione ao menos um destino para encaminhar.");
+      }
+
+      const attachment = forwardSourceMessage.attachments?.length
+        ? await buildForwardAttachmentFromMessage(forwardSourceMessage)
+        : null;
+      const body = buildForwardBodyFromMessage(forwardSourceMessage);
+
+      for (const destination of selectedForwardDestinations) {
+        const targetTicketId = await resolveForwardDestinationTicketId(destination);
+
+        await apiFetch(`/tickets/${targetTicketId}/messages`, {
+          method: "POST",
+          body: JSON.stringify({
+            body,
+            internalNote: false,
+            attachment: attachment
+              ? {
+                  kind: attachment.kind,
+                  fileName: attachment.fileName,
+                  mimeType: attachment.mimeType,
+                  sizeBytes: attachment.sizeBytes,
+                  dataUrl: attachment.dataUrl,
+                }
+              : undefined,
+          }),
+        });
+      }
+
+      resetForwardState();
+      setPanelMessage(`Mensagem encaminhada para ${selectedForwardDestinations.length} destino(s).`);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao encaminhar mensagem.");
+    } finally {
+      setForwardLoading(false);
+    }
+  }
+
+  async function handleComposerPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const file = Array.from(event.clipboardData.files ?? [])[0]
+      ?? Array.from(event.clipboardData.items ?? [])
+        .find((item) => item.kind === "file")
+        ?.getAsFile()
+      ?? null;
+
+    if (!file) {
+      return;
+    }
+
+    event.preventDefault();
+    await applyComposerFile(file, "Área de transferência");
+  }
+
+  function handleComposerDragEnter(event: React.DragEvent<HTMLDivElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    composerDragDepthRef.current += 1;
+    setComposerDragActive(true);
+  }
+
+  function handleComposerDragOver(event: React.DragEvent<HTMLDivElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    if (!composerDragActive) {
+      setComposerDragActive(true);
+    }
+  }
+
+  function handleComposerDragLeave(event: React.DragEvent<HTMLDivElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    composerDragDepthRef.current = Math.max(0, composerDragDepthRef.current - 1);
+    if (composerDragDepthRef.current === 0) {
+      setComposerDragActive(false);
+    }
+  }
+
+  async function handleComposerDrop(event: React.DragEvent<HTMLDivElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    composerDragDepthRef.current = 0;
+    setComposerDragActive(false);
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+    await applyComposerFile(file, "Arrastar e soltar");
   }
 
   async function handleAcceptTicket() {
@@ -4320,7 +4673,13 @@ export default function HomePage() {
               </div>
             </div>
 
-            <div className="flex min-h-0 flex-1 overflow-hidden">
+            <div
+              className="flex min-h-0 flex-1 overflow-hidden"
+              onDragEnter={handleComposerDragEnter}
+              onDragOver={handleComposerDragOver}
+              onDragLeave={handleComposerDragLeave}
+              onDrop={(event) => void handleComposerDrop(event)}
+            >
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <div
                 ref={messagesViewportRef}
@@ -4380,8 +4739,10 @@ export default function HomePage() {
                         const canDeleteMessage = outgoing && !isDeletedMessage;
                         const canDeleteMessageForMe = !system;
                         const canReplyToMessage = !system && !internalNote && !isEditingMessage && !isDeletedMessage;
+                        const canForwardMessage = !system && !internalNote && !isDeletedMessage;
                         const messageMenuActionCount =
                           (canReplyToMessage ? 1 : 0)
+                          + (canForwardMessage ? 1 : 0)
                           + (canEditMessage ? 1 : 0)
                           + (canDeleteMessage ? 1 : 0)
                           + (canDeleteMessageForMe ? 1 : 0);
@@ -4551,7 +4912,7 @@ export default function HomePage() {
                                 </div>
                               ) : null}
                               </div>
-                                {!messageBulkSelectionMode && (canEditMessage || canDeleteMessage || canDeleteMessageForMe || canReplyToMessage) ? (
+                                {!messageBulkSelectionMode && (canEditMessage || canDeleteMessage || canDeleteMessageForMe || canReplyToMessage || canForwardMessage) ? (
                                   <div
                                     onPointerDown={(event) => event.stopPropagation()}
                                     className="relative mt-1"
@@ -4613,6 +4974,17 @@ export default function HomePage() {
                                         >
                                           <MessageSquare className="h-4 w-4 text-slate-400" />
                                           Responder
+                                        </button>
+                                      ) : null}
+
+                                      {canForwardMessage ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenForwardModal(message)}
+                                          className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
+                                        >
+                                          <ArrowRightLeft className="h-4 w-4 text-slate-400" />
+                                          Encaminhar
                                         </button>
                                       ) : null}
 
@@ -4810,6 +5182,7 @@ export default function HomePage() {
                       rows={1}
                       placeholder={canSendToSelectedTicket ? (isEditingMessage ? "Edite a mensagem" : composerPlaceholder) : composerPlaceholder}
                       disabled={shouldDisableComposer}
+                      onPaste={(event) => void handleComposerPaste(event)}
                       className={`min-h-[44px] max-h-28 w-full resize-none rounded-[24px] border px-5 py-2.5 text-sm leading-5 text-slate-700 outline-none transition disabled:cursor-not-allowed disabled:text-slate-400 ${
                         composerInternalNoteMode
                           ? "border-[#eadc7a] bg-[#fff7b8] focus:border-[#d6c14a] focus:bg-[#fffbe0] disabled:bg-[#f5efb7]"
@@ -4946,6 +5319,15 @@ export default function HomePage() {
                 </aside>
               ) : null}
             </div>
+            {composerDragActive ? (
+              <div className="pointer-events-none fixed inset-0 z-[115] flex items-center justify-center bg-slate-950/12 backdrop-blur-[2px]">
+                <div className="rounded-[28px] border border-dashed border-sky-300 bg-white px-8 py-6 text-center shadow-[0_24px_60px_rgba(15,23,42,0.18)]">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Arrastar e soltar</div>
+                  <div className="mt-2 text-lg font-semibold text-[#1A1C32]">Solte o arquivo para anexar na conversa</div>
+                  <div className="mt-1 text-sm text-slate-500">Imagens, documentos e áudios são aceitos até 12 MB.</div>
+                </div>
+              </div>
+            ) : null}
             {showTransferPanel && canTransferSelectedTicket ? (
               <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
                 <div className="my-auto flex w-full max-w-3xl max-h-[calc(100vh-3rem)] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)] sm:max-h-[calc(100vh-5rem)]">
@@ -5137,6 +5519,101 @@ export default function HomePage() {
                     >
                       {scheduleLoading ? "Agendando..." : "Confirmar agendamento"}
                     </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {showForwardModal && forwardSourceMessage ? (
+              <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+                <div className="my-auto flex w-full max-w-2xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Encaminhar mensagem</div>
+                      <div className="mt-1 text-lg font-semibold text-[#1A1C32]">Escolha um ou mais destinos</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={resetForwardState}
+                      className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="space-y-4 px-6 py-6">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Mensagem selecionada</div>
+                      <div className="mt-2 text-sm text-slate-700">
+                        {buildForwardBodyFromMessage(forwardSourceMessage) || (forwardSourceMessage.attachments?.length ? `[${forwardSourceMessage.attachments[0]?.mimeType ?? "arquivo"}] ${forwardSourceMessage.attachments[0]?.fileName ?? "Anexo"}` : "Mensagem sem texto")}
+                      </div>
+                    </div>
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                      <input
+                        value={forwardSearch}
+                        onChange={(event) => setForwardSearch(event.target.value)}
+                        placeholder="Pesquisar nome ou número"
+                        className="h-14 w-full rounded-[22px] border border-slate-200 bg-white pl-12 pr-4 text-base text-slate-700 outline-none transition focus:border-emerald-400"
+                      />
+                    </div>
+                    <div className="max-h-[420px] overflow-y-auto rounded-[24px] border border-slate-200 bg-white">
+                      {forwardDestinations.length === 0 ? (
+                        <div className="px-5 py-8 text-sm text-slate-400">Nenhuma conversa ou contato encontrado.</div>
+                      ) : (
+                        forwardDestinations.map((destination) => {
+                          const selected = selectedForwardDestinationKeys.includes(destination.key);
+                          return (
+                            <button
+                              key={destination.key}
+                              type="button"
+                              onClick={() => toggleForwardDestinationSelection(destination.key)}
+                              className={`flex w-full items-center gap-4 border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 ${
+                                selected ? "bg-emerald-50" : "bg-white hover:bg-slate-50"
+                              }`}
+                            >
+                              <div className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border ${
+                                selected ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300 bg-white text-transparent"
+                              }`}>
+                                <CheckSquare className="h-4 w-4" />
+                              </div>
+                              <SafeAvatar
+                                src={destination.avatarUrl}
+                                name={destination.label}
+                                alt={destination.label}
+                                className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-[17px] font-semibold text-slate-900">{destination.label}</div>
+                                <div className="mt-1 truncate text-sm text-slate-500">{destination.meta}</div>
+                              </div>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-6 py-5">
+                    <div className="text-sm text-slate-500">
+                      {selectedForwardDestinationKeys.length > 0
+                        ? `${selectedForwardDestinationKeys.length} selecionado(s)`
+                        : "Selecione um ou mais destinos"}
+                    </div>
+                    <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={resetForwardState}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleConfirmForwardMessage()}
+                      disabled={forwardLoading || selectedForwardDestinationKeys.length === 0}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      {forwardLoading ? "Encaminhando..." : "Encaminhar"}
+                    </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -5964,10 +6441,21 @@ export default function HomePage() {
                             }}
                           />
                         ) : null}
+                        {canViewClosedTickets ? (
+                          <SidebarIconButton
+                            icon={Archive}
+                            label={isClosedTicketsWorkspace ? "Voltar para mensagens ativas" : "Mostrar arquivadas"}
+                            active={isClosedTicketsWorkspace}
+                            onClick={() => {
+                              setShowAllTickets(false);
+                              setActiveWorkspace(isClosedTicketsWorkspace ? "tickets" : "closedTickets");
+                            }}
+                          />
+                        ) : null}
                         {!isClosedTicketsWorkspace && canViewOtherTickets ? (
                           <SidebarIconButton
                             icon={showAllTickets ? EyeOff : Eye}
-                            label={showAllTickets ? "Voltar para meus tickets" : "Mostrar demais tickets"}
+                            label={showAllTickets ? "Voltar para minhas mensagens" : "Mostrar todas as mensagens"}
                             active={showAllTickets}
                             onClick={() => {
                               setShowAllTickets((current) => !current);
