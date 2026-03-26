@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
-import type { TicketStatus } from '@prisma/client';
+import { Prisma, type TicketStatus } from '@prisma/client';
 import { requirePermission } from '../../lib/auth-guard.js';
 import type { PermissionMap } from '../../lib/permissions.js';
 
@@ -89,7 +89,7 @@ function buildVisibleTicketWhere(
   };
 }
 
-const dashboardScopedTicketConstraint = {
+const dashboardScopedTicketConstraint: Prisma.TicketWhereInput = {
   OR: [
     { customerId: null },
     {
@@ -100,7 +100,21 @@ const dashboardScopedTicketConstraint = {
       },
     },
   ],
-} as const;
+};
+
+const dashboardTicketSelect = {
+  id: true,
+  status: true,
+  isGroup: true,
+  customerNameSnapshot: true,
+  title: true,
+  unreadCount: true,
+  createdAt: true,
+  closedAt: true,
+  updatedAt: true,
+  currentAgent: { select: { id: true, name: true } },
+  currentQueue: { select: { id: true, name: true, color: true } },
+} satisfies Prisma.TicketSelect;
 
 export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   app.get('/dashboard/overview', async (request, reply) => {
@@ -130,19 +144,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
           { status: { in: ['open', 'pending'] as TicketStatus[] } },
         ],
       },
-      select: {
-        id: true,
-        status: true,
-        isGroup: true,
-        customerNameSnapshot: true,
-        title: true,
-        unreadCount: true,
-        createdAt: true,
-        closedAt: true,
-        updatedAt: true,
-        currentAgent: { select: { id: true, name: true } },
-        currentQueue: { select: { id: true, name: true, color: true } },
-      },
+      select: dashboardTicketSelect,
       orderBy: { updatedAt: 'desc' },
     });
 
@@ -161,15 +163,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
           },
         ],
       },
-      select: {
-        id: true,
-        status: true,
-        isGroup: true,
-        createdAt: true,
-        closedAt: true,
-        currentAgent: { select: { id: true, name: true } },
-        currentQueue: { select: { id: true, name: true, color: true } },
-      },
+      select: dashboardTicketSelect,
     });
 
     const createdTicketIds = periodTickets
