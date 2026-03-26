@@ -13,9 +13,27 @@ import {
   withTicketIdentityLock,
 } from '../../lib/ticket-identity.js';
 
+const booleanQueryParam = z.preprocess((value) => {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+
+  return value;
+}, z.boolean().optional());
+
 const ticketListQuerySchema = z.object({
   status: z.enum(['open', 'pending', 'closed']).optional(),
-  isGroup: z.coerce.boolean().optional(),
+  isGroup: booleanQueryParam,
   agentId: z.string().uuid().optional(),
   queueId: z.string().uuid().optional(),
   search: z.string().min(1).optional(),
