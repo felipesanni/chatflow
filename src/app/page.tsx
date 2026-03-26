@@ -6576,14 +6576,13 @@ export default function HomePage() {
                             }}
                           />
                         ) : null}
-                        {canViewClosedTickets ? (
+                        {!isClosedTicketsWorkspace && canViewClosedTickets ? (
                           <SidebarIconButton
                             icon={Archive}
                             label={showArchivedTickets ? "Ocultar arquivadas" : "Mostrar arquivadas"}
                             active={showArchivedTickets}
                             onClick={() => {
                               setShowArchivedTickets((current) => !current);
-                              setActiveWorkspace("tickets");
                             }}
                           />
                         ) : null}
