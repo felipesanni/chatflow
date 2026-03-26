@@ -1201,8 +1201,46 @@ export default function HomePage() {
   }, [canViewQuickReplies, quickReplies, quickReplyCommand]);
 
   const scopedTickets = React.useMemo(() => {
-    return tickets;
-  }, [tickets]);
+    const search = searchQuery.trim().toLowerCase();
+
+    return tickets.filter((ticket) => {
+      if (
+        !isClosedTicketsWorkspace
+        && (!showAllTickets || !canViewOtherTickets)
+        && ticket.currentAgent
+        && ticket.currentAgent.id !== user?.id
+      ) {
+        return false;
+      }
+
+      if (showOnlyUnread && ticket.unreadCount === 0) {
+        return false;
+      }
+
+      if (selectedQueueFilter === "without-queue") {
+        if (ticket.currentQueue) {
+          return false;
+        }
+      } else if (selectedQueueFilter !== "all" && ticket.currentQueue?.id !== selectedQueueFilter) {
+        return false;
+      }
+
+      if (!search) {
+        return true;
+      }
+
+      return [
+        ticket.customerName,
+        ticket.externalChatId,
+        ticket.lastMessagePreview ?? "",
+        ticket.currentAgent?.name ?? "",
+        ticket.currentQueue?.name ?? "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(search);
+    });
+  }, [canViewOtherTickets, isClosedTicketsWorkspace, searchQuery, selectedQueueFilter, showAllTickets, showOnlyUnread, tickets, user?.id]);
 
   const visibleTickets = React.useMemo(() => {
     return scopedTickets.filter((ticket) => {
@@ -1217,9 +1255,9 @@ export default function HomePage() {
         return matchesArchivedAddon;
       }
 
-      return matchesActiveTab;
+      return matchesActiveTab || (showArchivedTickets && matchesArchivedAddon);
     });
-  }, [activeTab, isClosedTicketsWorkspace, scopedTickets]);
+  }, [activeTab, isClosedTicketsWorkspace, scopedTickets, showArchivedTickets]);
 
   const counters = React.useMemo(() => {
     return {
@@ -6684,12 +6722,19 @@ export default function HomePage() {
               {ticketWorkspaceAtivo ? (
                 <div className="flex h-full min-h-0 min-w-0 flex-col border-r border-slate-200 bg-white">
                 <div className="space-y-3 border-b border-slate-200 p-3">
-                  <div className="flex h-11 w-full items-center rounded-full border border-slate-200 bg-slate-50 px-4 text-sm text-slate-500">
-                    Visualização padrão do atendimento sem filtros adicionais.
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      aria-label="Buscar atendimentos"
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      placeholder="Buscar atendimento e mensagens"
+                      className="h-11 w-full rounded-full border border-slate-300 bg-white pl-10 pr-4 text-sm text-slate-700 outline-none transition focus:border-slate-400"
+                    />
                   </div>
 
-                    <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
-                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+                  <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                         {!isClosedTicketsWorkspace && canStartConversation ? (
                           <button
                             type="button"
@@ -6714,7 +6759,51 @@ export default function HomePage() {
                             }}
                           />
                         ) : null}
-                      </div>
+                        {!isClosedTicketsWorkspace && canViewClosedTickets ? (
+                          <SidebarIconButton
+                            icon={Archive}
+                            label={showArchivedTickets ? "Ocultar arquivadas" : "Mostrar arquivadas"}
+                            active={showArchivedTickets}
+                            onClick={() => {
+                              setShowArchivedTickets((current) => !current);
+                            }}
+                          />
+                        ) : null}
+                        {!isClosedTicketsWorkspace && canViewOtherTickets ? (
+                          <SidebarIconButton
+                            icon={showAllTickets ? EyeOff : Eye}
+                            label={showAllTickets ? "Voltar para minhas mensagens" : "Mostrar todas as mensagens"}
+                            active={showAllTickets}
+                            onClick={() => {
+                              setShowAllTickets((current) => !current);
+                              setActiveWorkspace("tickets");
+                            }}
+                          />
+                        ) : null}
+                        <SidebarIconButton
+                          icon={EyeOff}
+                          label="Mostrar apenas não lidos"
+                          active={showOnlyUnread}
+                          onClick={() => setShowOnlyUnread((current) => !current)}
+                        />
+                    </div>
+                    <div className="relative min-w-0 max-w-full">
+                      <select
+                        aria-label="Filtrar atendimentos por fila"
+                        value={selectedQueueFilter}
+                        onChange={(event) => setSelectedQueueFilter(event.target.value)}
+                        className="h-9 max-w-full appearance-none rounded-[16px] border border-slate-300 bg-white pl-3 pr-9 text-[11px] text-slate-600 outline-none transition hover:bg-slate-50"
+                      >
+                        <option value="all">Todas as filas</option>
+                        <option value="without-queue">Sem fila</option>
+                        {queues.map((queue) => (
+                          <option key={queue.id} value={queue.id}>
+                            {queue.name}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                    </div>
                   </div>
                 </div>
 
@@ -6783,7 +6872,11 @@ export default function HomePage() {
                     <div className="p-10 text-center text-xs font-medium text-slate-400">
                       {isClosedTicketsWorkspace
                         ? "Nenhum ticket arquivado para os filtros atuais."
-                        : "Nenhum atendimento nesta categoria."}
+                        : showArchivedTickets
+                          ? "Nenhum atendimento ou arquivado para os filtros atuais."
+                          : selectedQueueFilter !== "all"
+                            ? "Nenhum atendimento encontrado para a fila selecionada nesta categoria."
+                            : "Nenhum atendimento nesta categoria."}
                       </div>
                     ) : (
                     visibleTickets.map((ticket) => {
