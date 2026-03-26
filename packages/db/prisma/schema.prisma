@@ -42,6 +42,7 @@ enum MessageContentType {
   video
   document
   sticker
+  contact
   other
 }
 

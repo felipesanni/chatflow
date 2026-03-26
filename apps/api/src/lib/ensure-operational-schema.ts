@@ -44,7 +44,15 @@ const operationalStatements = [
   `
     DO $$
     BEGIN
-      CREATE TYPE "MessageContentType" AS ENUM ('text', 'image', 'audio', 'video', 'document', 'sticker', 'other');
+      CREATE TYPE "MessageContentType" AS ENUM ('text', 'image', 'audio', 'video', 'document', 'sticker', 'contact', 'other');
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `,
+  `
+    DO $$
+    BEGIN
+      ALTER TYPE "MessageContentType" ADD VALUE IF NOT EXISTS 'contact';
     EXCEPTION
       WHEN duplicate_object THEN NULL;
     END $$;
