@@ -682,7 +682,30 @@ function summarizeQuotedMessage(message: Pick<ReplyMessageItem, "body" | "conten
   if (message.contentType === "audio") return "Áudio";
   if (message.contentType === "video") return "Vídeo";
   if (message.contentType === "document") return "Documento";
+  if (message.contentType === "contact") {
+    const [contactName] = (message.body ?? "").split(/\r?\n/);
+    return contactName?.trim() || "Contato";
+  }
   return "Mensagem";
+}
+
+function parseSharedContactMessage(body: string | null | undefined) {
+  const lines = (body ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return {
+      name: "Contato compartilhado",
+      phone: null as string | null,
+    };
+  }
+
+  return {
+    name: lines[0] || "Contato compartilhado",
+    phone: lines[1] || null,
+  };
 }
 
 function resolveAttachmentUrl(ticketId: string, attachment: AttachmentItem) {
@@ -4998,6 +5021,8 @@ export default function HomePage() {
                         const hasVideoAttachment = messageAttachments.some((attachment) => attachment.mimeType.startsWith("video/"));
                         const hasStickerAttachment = message.contentType === "sticker" || messageAttachments.some((attachment) => attachment.mimeType === "image/webp");
                         const hasDocumentAttachment = messageAttachments.some((attachment) => !attachment.mimeType.startsWith("image/") && !attachment.mimeType.startsWith("audio/") && !attachment.mimeType.startsWith("video/"));
+                        const isContactCardMessage = message.contentType === "contact";
+                        const sharedContact = isContactCardMessage ? parseSharedContactMessage(message.body) : null;
                         const selectedForBulkDelete = selectedMessageIdsForBulkDelete.includes(message.id);
                         const matchesAttachmentFileName = messageAttachments.some((attachment) => {
                           const attachmentFileName = (attachment.fileName ?? "").trim().toLowerCase();
@@ -5067,6 +5092,33 @@ export default function HomePage() {
                                     </div>
                                   </div>
                                 ) : null}
+                                {isContactCardMessage ? (
+                                  <div className={`w-full overflow-hidden rounded-[20px] border ${outgoing ? "border-emerald-200 bg-white/80" : "border-slate-200 bg-white/95"}`}>
+                                    <div className="flex items-center gap-3 px-4 py-3">
+                                      <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-slate-200 text-slate-500">
+                                        <User className="h-6 w-6" />
+                                      </span>
+                                      <div className="min-w-0">
+                                        <div className="truncate text-[15px] font-semibold text-slate-800">
+                                          {sharedContact?.name ?? "Contato compartilhado"}
+                                        </div>
+                                        {sharedContact?.phone ? (
+                                          <div className="mt-1 text-sm text-slate-500">
+                                            {sharedContact.phone}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                    <div className="border-t border-slate-200 px-4 py-3">
+                                      <button
+                                        type="button"
+                                        className="w-full text-center text-sm font-semibold uppercase tracking-[0.08em] text-sky-700 transition hover:text-sky-900"
+                                      >
+                                        Conversar
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : null}
                                 {shouldRenderAttachments ? (
                                   <div className={`${message.body && !shouldHideMessageBody ? "mb-3" : ""} w-full space-y-3 ${isDeletedMessage ? "opacity-55 saturate-0" : ""}`}>
                                     {messageAttachments.map((attachment) => (
@@ -5102,7 +5154,7 @@ export default function HomePage() {
                                   ))}
                                 </div>
                               ) : null}
-                                {message.body && !shouldHideMessageBody ? (
+                                {message.body && !shouldHideMessageBody && !isContactCardMessage ? (
                                   <div className={isDeletedMessage ? "text-slate-400 line-through decoration-2" : ""}>
                                     {displayedMessageSignature ? (
                                       <div className="mb-1 font-semibold text-slate-900">
@@ -5116,7 +5168,7 @@ export default function HomePage() {
                                     ) : null}
                                   </div>
                                 ) : null}
-                                {!message.body && messageAttachments.length === 0 ? (
+                                {!message.body && messageAttachments.length === 0 && !isContactCardMessage ? (
                                   <div className={`whitespace-pre-wrap break-words text-[15px] leading-6 [overflow-wrap:anywhere] ${isDeletedMessage ? "text-slate-400 line-through decoration-2" : ""}`}>
                                     {`[${message.contentType}]`}
                                   </div>

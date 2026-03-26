@@ -46,6 +46,47 @@ function uniqueTicketsById<T extends { id: string }>(tickets: T[]) {
   return Array.from(new Map(tickets.map((ticket) => [ticket.id, ticket])).values());
 }
 
+function isOpaqueTicketIdentifier(value: string | null | undefined) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  if (normalized.includes('@')) {
+    return true;
+  }
+
+  return /^[0-9-]{10,}$/.test(normalized);
+}
+
+function resolveDashboardTicketName(ticket: {
+  isGroup: boolean;
+  title: string | null;
+  customerNameSnapshot: string;
+  customer?: { name: string } | null;
+}) {
+  const groupTitle = typeof ticket.title === 'string' ? ticket.title.trim() : '';
+  if (ticket.isGroup && groupTitle.length > 0) {
+    return groupTitle;
+  }
+
+  const customerName = ticket.customer?.name?.trim();
+  if (customerName) {
+    return customerName;
+  }
+
+  const snapshot = ticket.customerNameSnapshot?.trim();
+  if (snapshot && !isOpaqueTicketIdentifier(snapshot)) {
+    return snapshot;
+  }
+
+  return ticket.isGroup ? 'Grupo sem nome' : 'Contato sem nome';
+}
+
 function buildVisibilityFilters(
   permissions: PermissionMap,
   queueIds: string[],
@@ -112,6 +153,7 @@ const dashboardTicketSelect = {
   isGroup: true,
   customerNameSnapshot: true,
   title: true,
+  customer: { select: { name: true } },
   unreadCount: true,
   createdAt: true,
   closedAt: true,
@@ -332,7 +374,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     const stalePending = pendingActiveTickets
       .map((ticket) => ({
         id: ticket.id,
-        customerName: (ticket.isGroup && typeof ticket.title === 'string' && ticket.title.trim().length > 0) ? ticket.title.trim() : ticket.customerNameSnapshot,
+        customerName: resolveDashboardTicketName(ticket),
         waitingMinutes: minutesBetween(lastInboundByTicket.get(ticket.id) ?? ticket.createdAt, new Date()),
         queueName: ticket.currentQueue?.name ?? 'Sem fila',
         agentName: ticket.currentAgent?.name ?? 'Sem agente',
@@ -368,12 +410,12 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         stalePending,
         withoutQueue: activeTickets.filter((ticket) => !ticket.currentQueue).slice(0, 8).map((ticket) => ({
           id: ticket.id,
-          customerName: (ticket.isGroup && typeof ticket.title === 'string' && ticket.title.trim().length > 0) ? ticket.title.trim() : ticket.customerNameSnapshot,
+          customerName: resolveDashboardTicketName(ticket),
           status: ticket.status,
         })),
         withoutAgent: activeTickets.filter((ticket) => !ticket.currentAgent && !ticket.isGroup).slice(0, 8).map((ticket) => ({
           id: ticket.id,
-          customerName: ticket.customerNameSnapshot,
+          customerName: resolveDashboardTicketName(ticket),
           status: ticket.status,
         })),
       },

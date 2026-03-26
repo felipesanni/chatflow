@@ -17,7 +17,7 @@ interface EvolutionMessage {
 
 interface ParsedEvolutionContent {
   body: string;
-  contentType: 'text' | 'image' | 'audio' | 'video' | 'document' | 'sticker' | 'other';
+  contentType: 'text' | 'image' | 'audio' | 'video' | 'document' | 'sticker' | 'contact' | 'other';
   attachments: Array<{
     fileName: string | null;
     mimeType: string;
@@ -433,6 +433,50 @@ function resolveMessageContent(message: EvolutionMessage | null, payload?: Recor
   };
 }
 
+function extractPhoneFromVcard(value: unknown): string | null {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return null;
+  }
+
+  const telMatch = value.match(/TEL[^:]*:([^\r\n]+)/i);
+  if (!telMatch?.[1]) {
+    return null;
+  }
+
+  return telMatch[1].trim();
+}
+
+function formatSharedContact(contact: Record<string, any> | null) {
+  if (!contact) {
+    return null;
+  }
+
+  const displayName =
+    typeof contact.displayName === 'string' && contact.displayName.trim().length > 0
+      ? contact.displayName.trim()
+      : typeof contact.fullName === 'string' && contact.fullName.trim().length > 0
+        ? contact.fullName.trim()
+        : typeof contact.firstName === 'string' && contact.firstName.trim().length > 0
+          ? contact.firstName.trim()
+          : null;
+
+  const phoneCandidates = [
+    typeof contact.phoneNumber === 'string' ? contact.phoneNumber : null,
+    typeof contact.waId === 'string' ? contact.waId : null,
+    extractPhoneFromVcard(contact.vcard),
+  ].filter((value): value is string => Boolean(value && value.trim().length > 0));
+
+  const phone = phoneCandidates[0]?.trim() ?? null;
+  const name = displayName ?? phone ?? 'Contato compartilhado';
+  const body = [name, phone].filter(Boolean).join('\n');
+
+  return {
+    body,
+    contentType: 'contact' as const,
+    attachments: [],
+  };
+}
+
 function extractGroupName(payload: Record<string, unknown>, message: EvolutionMessage | null, remoteJid: string | null) {
   if (!remoteJid?.includes('@g.us')) {
     return null;
@@ -687,6 +731,12 @@ function extractText(message: EvolutionMessage | null, content: Record<string, a
         }),
       ],
     };
+  }
+  if (inner.contactMessage) {
+    return formatSharedContact(inner.contactMessage) ?? { body: 'Contato compartilhado', contentType: 'contact', attachments: [] };
+  }
+  if (inner.contactsArrayMessage?.contacts?.length) {
+    return formatSharedContact(inner.contactsArrayMessage.contacts[0]) ?? { body: 'Contato compartilhado', contentType: 'contact', attachments: [] };
   }
 
   return { body: 'Midia recebida', contentType: 'other', attachments: [] };
