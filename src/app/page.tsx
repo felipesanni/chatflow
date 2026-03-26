@@ -827,6 +827,7 @@ export default function HomePage() {
   const [scheduleLoading, setScheduleLoading] = React.useState(false);
   const [scheduledMessageOverviewLoading, setScheduledMessageOverviewLoading] = React.useState(false);
   const [scheduledMessageStatusFilter, setScheduledMessageStatusFilter] = React.useState<"pending" | "processing" | "failed" | "sent" | "canceled" | "all">("pending");
+  const [scheduledMessageViewer, setScheduledMessageViewer] = React.useState<ScheduledMessageItem | null>(null);
   const [scheduledMessageEditor, setScheduledMessageEditor] = React.useState<null | {
     id: string;
     ticketId: string;
@@ -835,6 +836,7 @@ export default function HomePage() {
     sendAt: string;
     attachmentLabel: string | null;
   }>(null);
+  const [scheduledMessageDeleteTarget, setScheduledMessageDeleteTarget] = React.useState<ScheduledMessageItem | null>(null);
   const [forwardLoading, setForwardLoading] = React.useState(false);
   const [forwardMessageId, setForwardMessageId] = React.useState<string | null>(null);
   const [forwardSearch, setForwardSearch] = React.useState("");
@@ -2565,18 +2567,6 @@ export default function HomePage() {
   }
 
   async function handleDeleteScheduledMessageFromAgenda(item: ScheduledMessageItem) {
-    const confirmed = await openConfirmDialog({
-      title: "Excluir mensagem agendada",
-      description: "Essa mensagem não será mais enviada automaticamente.",
-      confirmLabel: "Excluir agendamento",
-      cancelLabel: "Voltar",
-      tone: "danger",
-    });
-
-    if (!confirmed) {
-      return;
-    }
-
     setScheduleLoading(true);
     try {
       await apiFetch(`/scheduled-messages/${item.id}`, {
@@ -2587,6 +2577,7 @@ export default function HomePage() {
         await refreshScheduledMessages(item.ticketId);
       }
       await refreshScheduledMessageOverview();
+      setScheduledMessageDeleteTarget(null);
       setPanelMessage("Mensagem agendada excluída.");
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao excluir mensagem agendada.");
@@ -4349,17 +4340,13 @@ export default function HomePage() {
                 </button>
               ))}
             </div>
-            <DataTable columns={["Destino", "Mensagem", "Agendado para", "Status", "Ações"]} emptyMessage={scheduledMessageOverviewLoading ? "Carregando mensagens agendadas..." : "Nenhuma mensagem agendada encontrada."}>
+            <DataTable columns={["Destino", "Agendado para", "Status", "Ações"]} emptyMessage={scheduledMessageOverviewLoading ? "Carregando mensagens agendadas..." : "Nenhuma mensagem agendada encontrada."}>
               {filteredScheduledMessageOverview.map((item) => (
                 <DataRow key={item.id}>
                   <DataCell>
                     <button
                       type="button"
-                      onClick={async () => {
-                        await refreshTickets();
-                        setSelectedTicketId(item.ticketId);
-                        setActiveWorkspace("tickets");
-                      }}
+                      onClick={() => setScheduledMessageViewer(item)}
                       className="text-left"
                     >
                       <div className="font-semibold text-slate-900">{item.ticket?.customerName ?? "Ticket"}</div>
@@ -4369,10 +4356,9 @@ export default function HomePage() {
                     </button>
                   </DataCell>
                   <DataCell>
-                    <div className="max-w-[340px] truncate text-sm text-slate-700">{formatScheduledMessagePreview(item)}</div>
+                    <div className="text-sm text-slate-700">{formatDateTime(item.sendAt)}</div>
                     <div className="mt-1 text-xs text-slate-500">{item.createdBy.name}</div>
                   </DataCell>
-                  <DataCell subtle>{formatDateTime(item.sendAt)}</DataCell>
                   <DataCell>
                     <StatusChip tone={tomMensagemAgendada(item.status)}>{traduzirStatusMensagemAgendada(item.status)}</StatusChip>
                     {item.errorMessage ? <div className="mt-1 max-w-[260px] text-xs text-red-500">{item.errorMessage}</div> : null}
@@ -4381,11 +4367,7 @@ export default function HomePage() {
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={() => {
-                          void refreshTickets();
-                          setSelectedTicketId(item.ticketId);
-                          setActiveWorkspace("tickets");
-                        }}
+                        onClick={() => setScheduledMessageViewer(item)}
                         className="inline-flex h-8 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50"
                       >
                         Ver ticket
@@ -4401,7 +4383,7 @@ export default function HomePage() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => void handleDeleteScheduledMessageFromAgenda(item)}
+                            onClick={() => setScheduledMessageDeleteTarget(item)}
                             className="inline-flex h-8 items-center justify-center rounded-xl border border-red-200 bg-red-50 px-3 text-[11px] font-semibold text-red-600 transition hover:bg-red-100"
                           >
                             Excluir
@@ -5737,6 +5719,92 @@ export default function HomePage() {
                       className="inline-flex h-11 items-center justify-center rounded-2xl bg-[#1A1C32] px-5 text-sm font-semibold text-white transition hover:bg-[#111426] disabled:cursor-not-allowed disabled:bg-slate-300"
                     >
                       {scheduleLoading ? "Salvando..." : "Salvar alterações"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {scheduledMessageViewer ? (
+              <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+                <div className="my-auto flex w-full max-w-2xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Ticket vinculado</div>
+                      <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{scheduledMessageViewer.ticket?.customerName ?? "Ticket"}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setScheduledMessageViewer(null)}
+                      className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="grid gap-4 px-6 py-6 md:grid-cols-2">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Destino</div>
+                      <div className="mt-2 text-base font-semibold text-slate-900">{scheduledMessageViewer.ticket?.customerName ?? "Ticket"}</div>
+                      <div className="mt-1 text-sm text-slate-500">
+                        {(scheduledMessageViewer.ticket?.currentQueue?.name ?? "Sem fila")} • {(scheduledMessageViewer.ticket?.whatsappInstance.name ?? "Sem instância")}
+                      </div>
+                      <div className="mt-1 text-sm text-slate-500">
+                        {scheduledMessageViewer.ticket?.currentAgent?.name ?? "Sem agente responsável"}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Agendamento</div>
+                      <div className="mt-2 text-sm text-slate-700">{formatScheduledMessagePreview(scheduledMessageViewer)}</div>
+                      <div className="mt-2 text-sm text-slate-500">Agendado para {formatDateTime(scheduledMessageViewer.sendAt)}</div>
+                      <div className="mt-1 text-sm text-slate-500">Criado por {scheduledMessageViewer.createdBy.name}</div>
+                      {scheduledMessageViewer.errorMessage ? <div className="mt-2 text-xs text-red-500">{scheduledMessageViewer.errorMessage}</div> : null}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end border-t border-slate-200 px-6 py-5">
+                    <button
+                      type="button"
+                      onClick={() => setScheduledMessageViewer(null)}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {scheduledMessageDeleteTarget ? (
+              <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+                <div className="my-auto flex w-full max-w-lg flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+                  <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-red-500">Confirmação</div>
+                      <div className="mt-1 text-lg font-semibold text-[#1A1C32]">Excluir mensagem agendada</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setScheduledMessageDeleteTarget(null)}
+                      className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="px-6 py-6 text-sm leading-7 text-slate-600">
+                    A mensagem agendada para <strong>{scheduledMessageDeleteTarget.ticket?.customerName ?? "este ticket"}</strong> não será mais enviada automaticamente.
+                  </div>
+                  <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
+                    <button
+                      type="button"
+                      onClick={() => setScheduledMessageDeleteTarget(null)}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteScheduledMessageFromAgenda(scheduledMessageDeleteTarget)}
+                      disabled={scheduleLoading}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl bg-red-600 px-5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      {scheduleLoading ? "Excluindo..." : "Excluir"}
                     </button>
                   </div>
                 </div>
