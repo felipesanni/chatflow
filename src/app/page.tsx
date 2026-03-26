@@ -5626,7 +5626,7 @@ export default function HomePage() {
                       <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800">
                         <div className="font-semibold uppercase tracking-[0.08em]">Observacoes</div>
                         <ul className="mt-2 list-disc space-y-1 pl-5">
-                          {selectedApiEndpoint.notes.map((note) => (
+                          {(selectedApiEndpoint.notes ?? []).map((note) => (
                             <li key={note}>{note}</li>
                           ))}
                         </ul>
