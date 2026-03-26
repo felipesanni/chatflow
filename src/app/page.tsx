@@ -5605,7 +5605,7 @@ export default function HomePage() {
                       <div>
                         <div className="text-sm font-semibold text-slate-900">Parametros de consulta</div>
                         <div className="mt-3 space-y-2">
-                          {selectedApiEndpoint.query.map((item) => (
+                          {(selectedApiEndpoint.query ?? []).map((item) => (
                             <div key={item.name} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                               <div className="font-mono text-xs font-semibold text-slate-700">{item.name}</div>
                               <div className="mt-1 text-sm text-slate-500">{item.description}</div>
