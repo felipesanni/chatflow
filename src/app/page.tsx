@@ -1077,7 +1077,6 @@ export default function HomePage() {
   const canBulkDeleteMessages = currentUser.permissions["messages.bulkDelete"];
   const canViewClosedTickets = currentUser.permissions["tickets.closedView"];
   const isClosedTicketsWorkspace = activeWorkspace === "closedTickets";
-  const isArchivedTicketView = isClosedTicketsWorkspace || showArchivedTickets;
   const canDeleteSelectedTicket = Boolean(selectedTicket && canBulkDeleteTickets);
   const dashboardAgentOptions = React.useMemo(() => {
     const options = [{ id: "all", name: "Visão geral" }];
@@ -1171,20 +1170,22 @@ export default function HomePage() {
     const search = searchQuery.trim().toLowerCase();
 
     return tickets.filter((ticket) => {
-      const matchesTab = isArchivedTicketView
-        ? ticket.status === "closed" && !ticket.isGroup
-        : activeTab === "grupos"
-          ? ticket.isGroup
-          : activeTab === "aguardando"
-            ? ticket.status === "pending" && !ticket.isGroup
-            : ticket.status === "open" && !ticket.isGroup;
+      const matchesActiveTab = activeTab === "grupos"
+        ? ticket.isGroup
+        : activeTab === "aguardando"
+          ? ticket.status === "pending" && !ticket.isGroup
+          : ticket.status === "open" && !ticket.isGroup;
+      const matchesArchivedAddon = !ticket.isGroup && ticket.status === "closed";
+      const matchesTab = isClosedTicketsWorkspace
+        ? matchesArchivedAddon
+        : matchesActiveTab || (showArchivedTickets && matchesArchivedAddon);
 
       if (!matchesTab) {
         return false;
       }
 
       if (
-        !isArchivedTicketView
+        !isClosedTicketsWorkspace
         && (!showAllTickets || !canViewOtherTickets)
         && ticket.currentAgent
         && ticket.currentAgent.id !== user?.id
@@ -1219,7 +1220,7 @@ export default function HomePage() {
           .toLowerCase()
           .includes(search);
     });
-  }, [activeTab, canViewOtherTickets, isArchivedTicketView, searchQuery, selectedQueueFilter, showAllTickets, showOnlyUnread, tickets, user?.id]);
+  }, [activeTab, canViewOtherTickets, isClosedTicketsWorkspace, searchQuery, selectedQueueFilter, showAllTickets, showArchivedTickets, showOnlyUnread, tickets, user?.id]);
 
   const counters = React.useMemo(() => {
     const scopedTickets = tickets.filter((ticket) => {
@@ -6447,16 +6448,15 @@ export default function HomePage() {
                         {canViewClosedTickets ? (
                           <SidebarIconButton
                             icon={Archive}
-                            label={isArchivedTicketView ? "Voltar para mensagens ativas" : "Mostrar arquivadas"}
-                            active={isArchivedTicketView}
+                            label={showArchivedTickets ? "Ocultar arquivadas" : "Mostrar arquivadas"}
+                            active={showArchivedTickets}
                             onClick={() => {
-                              setShowAllTickets(false);
                               setShowArchivedTickets((current) => !current);
                               setActiveWorkspace("tickets");
                             }}
                           />
                         ) : null}
-                        {!isArchivedTicketView && canViewOtherTickets ? (
+                        {!isClosedTicketsWorkspace && canViewOtherTickets ? (
                           <SidebarIconButton
                             icon={showAllTickets ? EyeOff : Eye}
                             label={showAllTickets ? "Voltar para minhas mensagens" : "Mostrar todas as mensagens"}
@@ -6490,7 +6490,7 @@ export default function HomePage() {
                 </div>
 
                 <div className="border-b border-slate-200 px-3 py-2">
-                  {isArchivedTicketView ? (
+                  {isClosedTicketsWorkspace ? (
                     <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2">
                       <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
                         <Archive className="h-3.5 w-3.5" />
@@ -6502,9 +6502,9 @@ export default function HomePage() {
                     </div>
                   ) : (
                     <div className={`grid items-center gap-2 ${canViewGroups ? "grid-cols-3" : "grid-cols-2"}`}>
-                      <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => { setShowArchivedTickets(false); setActiveWorkspace("tickets"); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
-                      <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => { setShowArchivedTickets(false); setActiveWorkspace("tickets"); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
-                      {canViewGroups ? <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => { setShowArchivedTickets(false); setActiveWorkspace("tickets"); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" /> : null}
+                      <StatusTab label="ATENDENDO" count={counters.atendendo} active={activeTab === "atendendo"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("atendendo"); }} icon={<MessageSquare className="h-3 w-3" />} color="bg-red-500" />
+                      <StatusTab label="AGUARDANDO" count={counters.aguardando} active={activeTab === "aguardando"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("aguardando"); }} icon={<Clock className="h-3 w-3" />} color="bg-amber-500" />
+                      {canViewGroups ? <StatusTab label="GRUPOS" count={counters.grupos} active={activeTab === "grupos"} onClick={() => { setActiveWorkspace("tickets"); setActiveTab("grupos"); }} icon={<Users className="h-3 w-3" />} color="bg-blue-500" /> : null}
                     </div>
                   )}
                 </div>
@@ -6552,7 +6552,11 @@ export default function HomePage() {
                   <div className="flex-1 min-h-0 min-w-0 overflow-y-auto bg-white px-2 py-2">
                   {visibleTickets.length === 0 ? (
                   <div className="p-10 text-center text-xs font-medium text-slate-400">
-                      {isArchivedTicketView ? "Nenhum ticket arquivado para os filtros atuais." : "Nenhum atendimento nesta categoria."}
+                      {isClosedTicketsWorkspace
+                        ? "Nenhum ticket arquivado para os filtros atuais."
+                        : showArchivedTickets
+                          ? "Nenhum atendimento ou arquivado para os filtros atuais."
+                          : "Nenhum atendimento nesta categoria."}
                     </div>
                   ) : (
                     visibleTickets.map((ticket) => {
