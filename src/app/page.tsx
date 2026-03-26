@@ -813,6 +813,7 @@ export default function HomePage() {
   const [quickReplyLoading, setQuickReplyLoading] = React.useState(false);
   const [customerLoading, setCustomerLoading] = React.useState(false);
   const [conversationLoading, setConversationLoading] = React.useState(false);
+  const [sharedContactLoadingKey, setSharedContactLoadingKey] = React.useState<string | null>(null);
   const [dashboardLoading, setDashboardLoading] = React.useState(false);
   const [groupNameSaving, setGroupNameSaving] = React.useState(false);
   const [assignmentLoading, setAssignmentLoading] = React.useState<string | null>(null);
@@ -3760,6 +3761,57 @@ export default function HomePage() {
     }
   }
 
+  async function handleStartConversationFromSharedContact(contactName: string, contactPhone: string | null, messageId: string) {
+    const normalizedPhone = onlyPhoneDigits(contactPhone ?? "");
+    if (!normalizedPhone) {
+      setPanelMessage("Esse contato compartilhado não possui telefone utilizável.");
+      return;
+    }
+
+    const instanceId = selectedTicket?.whatsappInstance.id ?? instances[0]?.id ?? "";
+    if (!instanceId) {
+      setPanelMessage("Nenhuma instância disponível para iniciar a conversa.");
+      return;
+    }
+
+    try {
+      setSharedContactLoadingKey(messageId);
+
+      const existingTicket = tickets.find((ticket) => {
+        if (ticket.status === "closed") return false;
+        if (ticket.whatsappInstance.id !== instanceId) return false;
+        return onlyPhoneDigits(ticket.externalContactId ?? ticket.externalChatId) === normalizedPhone;
+      });
+
+      if (existingTicket) {
+        setSelectedTicketId(existingTicket.id);
+        setActiveWorkspace("tickets");
+        setPanelMessage("Ticket existente aberto para o contato compartilhado.");
+        return;
+      }
+
+      const matchedCustomer = customers.find((customer) => customer.phone && onlyPhoneDigits(customer.phone) === normalizedPhone) ?? null;
+      const payload = await apiFetch<CreateConversationResponse>("/tickets", {
+        method: "POST",
+        body: JSON.stringify({
+          customerName: matchedCustomer?.name ?? contactName,
+          phone: normalizedPhone,
+          whatsappInstanceId: instanceId,
+          queueId: selectedTicket?.currentQueue?.id ?? null,
+        }),
+      });
+
+      await refreshTickets();
+      setSelectedTicketId(payload.item.id);
+      setActiveWorkspace("tickets");
+      setPanelMessage(payload.created ? "Nova conversa criada a partir do contato compartilhado." : "Conversa existente aberta.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao abrir conversa do contato compartilhado.");
+    } finally {
+      setSharedContactLoadingKey(null);
+    }
+  }
+
   async function handleAssignQueueAgents(queueId: string, agentIds: string[]) {
     setAssignmentLoading(queueId);
     try {
@@ -5112,9 +5164,11 @@ export default function HomePage() {
                                     <div className="border-t border-slate-200 px-4 py-3">
                                       <button
                                         type="button"
-                                        className="w-full text-center text-sm font-semibold uppercase tracking-[0.08em] text-sky-700 transition hover:text-sky-900"
+                                        onClick={() => void handleStartConversationFromSharedContact(sharedContact?.name ?? "Contato compartilhado", sharedContact?.phone ?? null, message.id)}
+                                        disabled={!sharedContact?.phone || sharedContactLoadingKey === message.id}
+                                        className="w-full text-center text-sm font-semibold uppercase tracking-[0.08em] text-sky-700 transition hover:text-sky-900 disabled:cursor-not-allowed disabled:text-slate-300"
                                       >
-                                        Conversar
+                                        {sharedContactLoadingKey === message.id ? "Abrindo..." : "Conversar"}
                                       </button>
                                     </div>
                                   </div>
