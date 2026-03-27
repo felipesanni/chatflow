@@ -4957,10 +4957,20 @@ export default function HomePage() {
                   </td>
                 </tr>
               ) : (
-                filteredInstances.map((instance) => (
-                  <DataRow key={instance.id}>
-                    <DataCell>{instance.name}</DataCell>
-                    <DataCell subtle>{instance.evolutionInstanceName}</DataCell>
+                    filteredInstances.map((instance) => (
+                      <DataRow key={instance.id}>
+                        <DataCell>
+                          <div>
+                            <div>{instance.name}</div>
+                            <div className="mt-1 font-mono text-xs text-slate-400">ID: {instance.id}</div>
+                          </div>
+                        </DataCell>
+                        <DataCell subtle>
+                          <div>
+                            <div>{instance.evolutionInstanceName}</div>
+                            <div className="mt-1 font-mono text-xs text-slate-400">ID Evolution: {instance.id}</div>
+                          </div>
+                        </DataCell>
                     <DataCell>
                       <StatusChip tone={instance.status === "connected" ? "success" : instance.status === "error" ? "danger" : "warning"}>
                         {traduzirStatusInstancia(instance.status)}
@@ -5425,10 +5435,15 @@ export default function HomePage() {
                     </td>
                   </tr>
                 ) : (
-                  filteredAgents.map((agent) => (
-                    <DataRow key={agent.id}>
-                      <DataCell>{agent.name}</DataCell>
-                      <DataCell subtle>{agent.email}</DataCell>
+                    filteredAgents.map((agent) => (
+                      <DataRow key={agent.id}>
+                        <DataCell>
+                          <div>
+                            <div>{agent.name}</div>
+                            <div className="mt-1 font-mono text-xs text-slate-400">ID: {agent.id}</div>
+                          </div>
+                        </DataCell>
+                        <DataCell subtle>{agent.email}</DataCell>
                       <DataCell>
                         <StatusChip tone={agent.role === "admin" ? "default" : "success"}>{traduzirPerfil(agent.role)}</StatusChip>
                       </DataCell>
@@ -5484,9 +5499,14 @@ export default function HomePage() {
                     </td>
                   </tr>
                 ) : (
-                  filteredQueues.map((queue) => (
-                    <DataRow key={queue.id}>
-                      <DataCell>{queue.name}</DataCell>
+                    filteredQueues.map((queue) => (
+                      <DataRow key={queue.id}>
+                        <DataCell>
+                          <div>
+                            <div>{queue.name}</div>
+                            <div className="mt-1 font-mono text-xs text-slate-400">ID: {queue.id}</div>
+                          </div>
+                        </DataCell>
                       <DataCell>
                         <div className="flex items-center gap-2">
                           <span className="h-4 w-10 rounded-sm border border-slate-200" style={{ backgroundColor: queue.color ?? "#1A1C32" }} />
@@ -6223,10 +6243,20 @@ export default function HomePage() {
                     </td>
                   </tr>
                 ) : (
-                  filteredInstances.map((instance) => (
-                    <DataRow key={instance.id}>
-                      <DataCell>{instance.name}</DataCell>
-                      <DataCell subtle>{instance.evolutionInstanceName}</DataCell>
+                    filteredInstances.map((instance) => (
+                      <DataRow key={instance.id}>
+                        <DataCell>
+                          <div>
+                            <div>{instance.name}</div>
+                            <div className="mt-1 font-mono text-xs text-slate-400">ID: {instance.id}</div>
+                          </div>
+                        </DataCell>
+                        <DataCell subtle>
+                          <div>
+                            <div>{instance.evolutionInstanceName}</div>
+                            <div className="mt-1 font-mono text-xs text-slate-400">ID Evolution: {instance.id}</div>
+                          </div>
+                        </DataCell>
                       <DataCell>
                         <StatusChip tone={instance.status === "connected" ? "success" : instance.status === "error" ? "danger" : "warning"}>
                           {traduzirStatusInstancia(instance.status)}
@@ -6274,10 +6304,15 @@ export default function HomePage() {
                     </td>
                   </tr>
                 ) : (
-                  filteredAgents.map((agent) => (
-                    <DataRow key={agent.id}>
-                      <DataCell>{agent.name}</DataCell>
-                      <DataCell subtle>{agent.email}</DataCell>
+                    filteredAgents.map((agent) => (
+                      <DataRow key={agent.id}>
+                        <DataCell>
+                          <div>
+                            <div>{agent.name}</div>
+                            <div className="mt-1 font-mono text-xs text-slate-400">ID: {agent.id}</div>
+                          </div>
+                        </DataCell>
+                        <DataCell subtle>{agent.email}</DataCell>
                       <DataCell>
                         <StatusChip tone={agent.role === "admin" ? "default" : "success"}>{traduzirPerfil(agent.role)}</StatusChip>
                       </DataCell>
@@ -6333,9 +6368,14 @@ export default function HomePage() {
                     </td>
                   </tr>
                 ) : (
-                  filteredQueues.map((queue) => (
-                    <DataRow key={queue.id}>
-                      <DataCell>{queue.name}</DataCell>
+                    filteredQueues.map((queue) => (
+                      <DataRow key={queue.id}>
+                        <DataCell>
+                          <div>
+                            <div>{queue.name}</div>
+                            <div className="mt-1 font-mono text-xs text-slate-400">ID: {queue.id}</div>
+                          </div>
+                        </DataCell>
                       <DataCell>
                         <div className="flex items-center gap-2">
                           <span className="h-4 w-10 rounded-sm border border-slate-200" style={{ backgroundColor: queue.color ?? "#1A1C32" }} />
