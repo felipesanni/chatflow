@@ -36,10 +36,11 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
       orderBy: { name: 'asc' },
     });
 
-    return {
-      items: items.map((queue: any) => ({
-        id: queue.id,
-        name: queue.name,
+      return {
+        items: items.map((queue: any) => ({
+          id: queue.id,
+          publicId: queue.publicId,
+          name: queue.name,
         color: queue.color,
         isActive: queue.isActive,
         openTicketCount: queue.tickets.length,
@@ -62,7 +63,7 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
 
     app.io.emit('queue.updated', { queueId: item.id, action: 'created' });
 
-    return reply.code(201).send({ item });
+      return reply.code(201).send({ item });
   });
 
   app.put('/queues/:queueId', async (request, reply) => {
@@ -144,6 +145,7 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
       message: 'Membros da fila atualizados com sucesso.',
       item: {
         id: queue.id,
+        publicId: queue.publicId,
         name: queue.name,
         agentIds: uniqueAgentIds,
       },

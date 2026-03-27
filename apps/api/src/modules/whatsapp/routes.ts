@@ -104,6 +104,7 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
+        publicId: true,
         name: true,
         evolutionInstanceName: true,
         baseUrl: true,
@@ -175,6 +176,7 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
       },
       select: {
         id: true,
+        publicId: true,
         name: true,
         evolutionInstanceName: true,
         baseUrl: true,
@@ -263,6 +265,7 @@ export const whatsappRoutes: FastifyPluginAsync = async (app) => {
       },
       select: {
         id: true,
+        publicId: true,
         name: true,
         evolutionInstanceName: true,
         baseUrl: true,

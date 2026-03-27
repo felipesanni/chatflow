@@ -12,14 +12,61 @@ import {
   withTicketIdentityLock,
 } from '../../lib/ticket-identity.js';
 
+const externalEntityIdentifierSchema = z.preprocess((value) => {
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    if (/^\d+$/.test(normalized)) {
+      return Number(normalized);
+    }
+    return normalized;
+  }
+
+  return value;
+}, z.union([z.number().int().positive(), z.string().uuid()]));
+
+const optionalExternalEntityIdentifierSchema = z.preprocess((value) => {
+  if (value === null || value === undefined || value === '') return undefined;
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    if (!normalized) return undefined;
+    if (/^\d+$/.test(normalized)) {
+      return Number(normalized);
+    }
+    return normalized;
+  }
+
+  return value;
+}, z.union([z.number().int().positive(), z.string().uuid()]).optional().nullable());
+
 const externalSendMessageBodySchema = z.object({
   phone: z.string().trim().min(8, 'Informe um telefone valido.'),
   body: z.string().trim().min(1, 'Informe a mensagem.'),
-  whatsappInstanceId: z.string().uuid('Selecione uma instancia valida.'),
-  queueId: z.string().uuid().nullable().optional(),
-  agentId: z.string().uuid().nullable().optional(),
+  whatsappInstanceId: externalEntityIdentifierSchema,
+  queueId: optionalExternalEntityIdentifierSchema,
+  agentId: optionalExternalEntityIdentifierSchema,
   customerName: z.string().trim().min(1).max(160).nullable().optional(),
 });
+
+type ExternalTicketSnapshot = {
+  id: string;
+  status: 'open' | 'pending' | 'closed';
+  customerNameSnapshot: string;
+  customerAvatarUrl: string | null;
+  externalChatId: string;
+  externalContactId: string | null;
+  isGroup: boolean;
+  title: string | null;
+  currentAgent: { id: string; name: string } | null;
+  currentQueue: { id: string; name: string; color: string | null } | null;
+  whatsappInstance: { id: string; name: string };
+  updatedAt: Date;
+};
+
+type ExternalTicketResult = {
+  created: boolean;
+  conflict?: boolean;
+  ticket: ExternalTicketSnapshot;
+};
 
 function normalizePhone(value: string) {
   const digits = value.replace(/\D+/g, '');
@@ -106,9 +153,12 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
     });
 
     const instance = await app.prisma.whatsAppInstance.findUnique({
-      where: { id: body.whatsappInstanceId },
+      where: typeof body.whatsappInstanceId === 'number'
+        ? { publicId: body.whatsappInstanceId }
+        : { id: body.whatsappInstanceId },
       select: {
         id: true,
+        publicId: true,
         name: true,
       },
     });
@@ -119,8 +169,10 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
 
     const queue = body.queueId
       ? await app.prisma.queue.findUnique({
-          where: { id: body.queueId },
-          select: { id: true, name: true, color: true },
+          where: typeof body.queueId === 'number'
+            ? { publicId: body.queueId }
+            : { id: body.queueId },
+          select: { id: true, publicId: true, name: true, color: true },
         })
       : null;
 
@@ -130,7 +182,9 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
 
     const agent = body.agentId
       ? await app.prisma.agent.findUnique({
-          where: { id: body.agentId },
+          where: typeof body.agentId === 'number'
+            ? { publicId: body.agentId }
+            : { id: body.agentId },
           include: {
             user: {
               select: {
@@ -156,7 +210,7 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
     const ticketResult = await withTicketIdentityLock(app.prisma, {
       whatsappInstanceId: instance.id,
       canonicalChatId: identity.canonicalChatId,
-    }, async (tx) => {
+    }, async (tx): Promise<ExternalTicketResult> => {
       const existing = await tx.ticket.findFirst({
         where: buildActiveTicketIdentityWhere(instance.id, identity),
         include: {
@@ -185,6 +239,7 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       if (existing) {
         return {
           created: false,
+          conflict: true,
           ticket: existing,
         };
       }
@@ -279,7 +334,7 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       };
     });
 
-    if (!ticketResult.created) {
+    if (ticketResult.conflict || !ticketResult.created) {
       return reply.code(409).send({
         code: 'ticket_open_exists',
         message: 'Ja existe um ticket aberto para este contato.',

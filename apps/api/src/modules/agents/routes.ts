@@ -53,10 +53,11 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       orderBy: { name: 'asc' },
     });
 
-    return {
-      items: items.map((agent: any) => ({
-        id: agent.id,
-        name: agent.name,
+      return {
+        items: items.map((agent: any) => ({
+          id: agent.id,
+          publicId: agent.publicId,
+          name: agent.name,
         email: agent.user.email,
         role: agent.user.role,
         permissions: resolvePermissions(agent.user.role, agent.user.permissions),
@@ -114,9 +115,10 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     app.io.emit('agent.updated', { agentId: userId, action: 'created' });
 
     return reply.code(201).send({
-      item: {
-        id: userId,
-        name: created.agent?.name ?? body.name,
+        item: {
+          id: userId,
+          publicId: created.agent?.publicId,
+          name: created.agent?.name ?? body.name,
         email: created.email,
         role: created.role,
         permissions: resolvePermissions(created.role, created.permissions),
@@ -196,9 +198,10 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
 
     return reply.code(200).send({
       message: 'Agente atualizado com sucesso.',
-      item: {
-        id: params.agentId,
-        name: body.name,
+        item: {
+          id: params.agentId,
+          publicId: updated?.publicId,
+          name: body.name,
         email: normalizedEmail,
         role: body.role,
         permissions: resolvePermissions(body.role, body.permissions ?? defaultPermissionsForRole(body.role)),

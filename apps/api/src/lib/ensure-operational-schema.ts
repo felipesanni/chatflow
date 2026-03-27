@@ -221,9 +221,81 @@ const operationalStatements = [
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `,
-  `
-    CREATE TABLE IF NOT EXISTS tickets (
-      id UUID PRIMARY KEY,
+    `
+      CREATE SEQUENCE IF NOT EXISTS whatsapp_instances_public_id_seq;
+    `,
+    `
+      ALTER TABLE whatsapp_instances
+        ADD COLUMN IF NOT EXISTS public_id INTEGER;
+    `,
+    `
+      ALTER TABLE whatsapp_instances
+        ALTER COLUMN public_id SET DEFAULT nextval('whatsapp_instances_public_id_seq');
+    `,
+    `
+      UPDATE whatsapp_instances
+      SET public_id = nextval('whatsapp_instances_public_id_seq')
+      WHERE public_id IS NULL;
+    `,
+    `
+      CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_instances_public_id_key
+        ON whatsapp_instances(public_id);
+    `,
+    `
+      ALTER TABLE whatsapp_instances
+        ALTER COLUMN public_id SET NOT NULL;
+    `,
+    `
+      CREATE SEQUENCE IF NOT EXISTS agents_public_id_seq;
+    `,
+    `
+      ALTER TABLE agents
+        ADD COLUMN IF NOT EXISTS public_id INTEGER;
+    `,
+    `
+      ALTER TABLE agents
+        ALTER COLUMN public_id SET DEFAULT nextval('agents_public_id_seq');
+    `,
+    `
+      UPDATE agents
+      SET public_id = nextval('agents_public_id_seq')
+      WHERE public_id IS NULL;
+    `,
+    `
+      CREATE UNIQUE INDEX IF NOT EXISTS agents_public_id_key
+        ON agents(public_id);
+    `,
+    `
+      ALTER TABLE agents
+        ALTER COLUMN public_id SET NOT NULL;
+    `,
+    `
+      CREATE SEQUENCE IF NOT EXISTS queues_public_id_seq;
+    `,
+    `
+      ALTER TABLE queues
+        ADD COLUMN IF NOT EXISTS public_id INTEGER;
+    `,
+    `
+      ALTER TABLE queues
+        ALTER COLUMN public_id SET DEFAULT nextval('queues_public_id_seq');
+    `,
+    `
+      UPDATE queues
+      SET public_id = nextval('queues_public_id_seq')
+      WHERE public_id IS NULL;
+    `,
+    `
+      CREATE UNIQUE INDEX IF NOT EXISTS queues_public_id_key
+        ON queues(public_id);
+    `,
+    `
+      ALTER TABLE queues
+        ALTER COLUMN public_id SET NOT NULL;
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS tickets (
+        id UUID PRIMARY KEY,
       customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
       whatsapp_instance_id UUID NOT NULL REFERENCES whatsapp_instances(id),
       current_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,

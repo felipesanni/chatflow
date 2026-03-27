@@ -177,6 +177,7 @@ type ScheduledMessageItem = {
 
 type InstanceItem = {
   id: string;
+  publicId: number;
   name: string;
   evolutionInstanceName: string;
   baseUrl: string;
@@ -189,6 +190,7 @@ type InstanceItem = {
 
 type AgentItem = {
   id: string;
+  publicId: number;
   name: string;
   email: string;
   role: "admin" | "agent";
@@ -200,6 +202,7 @@ type AgentItem = {
 
 type QueueItem = {
   id: string;
+  publicId: number;
   name: string;
   color: string | null;
   isActive: boolean;
@@ -630,7 +633,7 @@ const API_REFERENCE_MODULES: ApiModuleDoc[] = [
         auth: "sessao",
         query: [
           { name: "range", description: "today, 7d ou 30d." },
-          { name: "agentId", description: "all, me ou um ID específico de agente." },
+          { name: "agentId", description: "all, me ou um ID numérico específico de agente." },
         ],
       },
     ],
@@ -652,7 +655,7 @@ const API_REFERENCE_MODULES: ApiModuleDoc[] = [
         query: [
           { name: "status", description: "open, pending ou closed." },
           { name: "isGroup", description: "true para grupos, false para contatos individuais." },
-          { name: "queueId", description: "Filtra por fila específica." },
+          { name: "queueId", description: "Filtra por ID numérico de fila." },
         ],
       },
       {
@@ -676,7 +679,7 @@ const API_REFERENCE_MODULES: ApiModuleDoc[] = [
         testerPath: "/tickets",
         auth: "sessao",
         permission: "tickets.manage",
-        bodyExample: JSON.stringify({ phone: "5511999999999", whatsappInstanceId: "SUA_INSTANCIA_ID" }, null, 2),
+        bodyExample: JSON.stringify({ phone: "5511999999999", whatsappInstanceId: 12 }, null, 2),
       },
       {
         key: "tickets-accept",
@@ -717,7 +720,7 @@ const API_REFERENCE_MODULES: ApiModuleDoc[] = [
         publicPath: "/api/tickets/:ticketId/transfer",
         testerPath: "/tickets/SEU_TICKET_ID/transfer",
         auth: "sessao",
-        bodyExample: JSON.stringify({ queueId: "SUA_FILA_ID", agentId: "SEU_AGENTE_ID", note: "Mudança de responsável" }, null, 2),
+        bodyExample: JSON.stringify({ queueId: 7, agentId: 14, note: "Mudança de responsável" }, null, 2),
       },
       {
         key: "tickets-group-name",
@@ -1055,9 +1058,9 @@ const CHATFLOW_API_REFERENCE_MODULES: ApiModuleDoc[] = [
           {
             phone: "5511999999999",
             body: "Mensagem enviada pela API do ChatFlow",
-            whatsappInstanceId: "SUA_INSTANCIA_ID",
-            queueId: "SUA_FILA_ID",
-            agentId: "SEU_AGENTE_ID",
+            whatsappInstanceId: 12,
+            queueId: 7,
+            agentId: 14,
             customerName: "Contato da integração",
           },
           null,
@@ -4949,28 +4952,19 @@ export default function HomePage() {
               actionIcon={Plus}
             />
 
-            <DataTable columns={["Nome", "Evolution", "Status", "Telefone", "URL base", "Criado em", "Ações"]} emptyMessage="Nenhuma instância cadastrada.">
-              {filteredInstances.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-5 py-8 text-sm text-slate-500">
-                    Nenhuma instância cadastrada.
-                  </td>
-                </tr>
-              ) : (
+                <DataTable columns={["Nome", "ID", "Evolution", "Status", "Telefone", "URL base", "Criado em", "Ações"]} emptyMessage="Nenhuma instância cadastrada.">
+                  {filteredInstances.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="px-5 py-8 text-sm text-slate-500">
+                        Nenhuma instância cadastrada.
+                      </td>
+                    </tr>
+                  ) : (
                     filteredInstances.map((instance) => (
                       <DataRow key={instance.id}>
-                        <DataCell>
-                          <div>
-                            <div>{instance.name}</div>
-                            <div className="mt-1 font-mono text-xs text-slate-400">ID: {instance.id}</div>
-                          </div>
-                        </DataCell>
-                        <DataCell subtle>
-                          <div>
-                            <div>{instance.evolutionInstanceName}</div>
-                            <div className="mt-1 font-mono text-xs text-slate-400">ID Evolution: {instance.id}</div>
-                          </div>
-                        </DataCell>
+                        <DataCell>{instance.name}</DataCell>
+                        <DataCell subtle className="font-mono text-xs">{instance.publicId}</DataCell>
+                        <DataCell subtle>{instance.evolutionInstanceName}</DataCell>
                     <DataCell>
                       <StatusChip tone={instance.status === "connected" ? "success" : instance.status === "error" ? "danger" : "warning"}>
                         {traduzirStatusInstancia(instance.status)}
@@ -5335,7 +5329,7 @@ export default function HomePage() {
                     value={apiTesterBody}
                     onChange={(event) => setApiTesterBody(event.target.value)}
                     rows={14}
-                    placeholder='{"phone":"5511999999999","body":"Mensagem de teste","whatsappInstanceId":"..."}'
+                    placeholder='{"phone":"5511999999999","body":"Mensagem de teste","whatsappInstanceId":12}'
                     className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 font-mono text-xs leading-6 text-slate-700 outline-none transition focus:border-slate-300"
                   />
                 </label>
@@ -5427,22 +5421,18 @@ export default function HomePage() {
                 actionIcon={UserPlus}
               />
 
-              <DataTable columns={["Nome", "E-mail", "Perfil", "Presença", "Filas", "Ações"]} emptyMessage="Nenhum agente cadastrado.">
-                {filteredAgents.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-5 py-8 text-sm text-slate-500">
-                      Nenhum agente cadastrado.
-                    </td>
-                  </tr>
-                ) : (
+                <DataTable columns={["Nome", "ID", "E-mail", "Perfil", "Presença", "Filas", "Ações"]} emptyMessage="Nenhum agente cadastrado.">
+                  {filteredAgents.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-5 py-8 text-sm text-slate-500">
+                        Nenhum agente cadastrado.
+                      </td>
+                    </tr>
+                  ) : (
                     filteredAgents.map((agent) => (
                       <DataRow key={agent.id}>
-                        <DataCell>
-                          <div>
-                            <div>{agent.name}</div>
-                            <div className="mt-1 font-mono text-xs text-slate-400">ID: {agent.id}</div>
-                          </div>
-                        </DataCell>
+                        <DataCell>{agent.name}</DataCell>
+                        <DataCell subtle className="font-mono text-xs">{agent.publicId}</DataCell>
                         <DataCell subtle>{agent.email}</DataCell>
                       <DataCell>
                         <StatusChip tone={agent.role === "admin" ? "default" : "success"}>{traduzirPerfil(agent.role)}</StatusChip>
@@ -5491,26 +5481,22 @@ export default function HomePage() {
                 actionIcon={Workflow}
               />
 
-              <DataTable columns={["Fila", "Cor", "Agentes", "Tickets abertos", "Ações"]} emptyMessage="Nenhuma fila cadastrada.">
-                {filteredQueues.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-5 py-8 text-sm text-slate-500">
-                      Nenhuma fila cadastrada.
-                    </td>
-                  </tr>
-                ) : (
+                <DataTable columns={["Fila", "ID", "Cor", "Agentes", "Tickets abertos", "Ações"]} emptyMessage="Nenhuma fila cadastrada.">
+                  {filteredQueues.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-5 py-8 text-sm text-slate-500">
+                        Nenhuma fila cadastrada.
+                      </td>
+                    </tr>
+                  ) : (
                     filteredQueues.map((queue) => (
                       <DataRow key={queue.id}>
+                        <DataCell>{queue.name}</DataCell>
+                        <DataCell subtle className="font-mono text-xs">{queue.publicId}</DataCell>
                         <DataCell>
-                          <div>
-                            <div>{queue.name}</div>
-                            <div className="mt-1 font-mono text-xs text-slate-400">ID: {queue.id}</div>
-                          </div>
-                        </DataCell>
-                      <DataCell>
-                        <div className="flex items-center gap-2">
-                          <span className="h-4 w-10 rounded-sm border border-slate-200" style={{ backgroundColor: queue.color ?? "#1A1C32" }} />
-                          <span className="text-sm text-slate-500">{queue.color ?? "#1A1C32"}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="h-4 w-10 rounded-sm border border-slate-200" style={{ backgroundColor: queue.color ?? "#1A1C32" }} />
+                            <span className="text-sm text-slate-500">{queue.color ?? "#1A1C32"}</span>
                         </div>
                       </DataCell>
                       <DataCell subtle>{queue.agents.map((agent) => agent.name).join(", ") || "Sem membros"}</DataCell>
@@ -6235,28 +6221,19 @@ export default function HomePage() {
                 actionIcon={Plus}
               />
 
-              <DataTable columns={["Nome", "Evolution", "Status", "Telefone", "URL base", "Criado em", "Ações"]} emptyMessage="Nenhuma instância cadastrada.">
+                <DataTable columns={["Nome", "ID", "Evolution", "Status", "Telefone", "URL base", "Criado em", "Ações"]} emptyMessage="Nenhuma instância cadastrada.">
                 {filteredInstances.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="px-5 py-8 text-sm text-slate-500">
-                      Nenhuma instância cadastrada.
-                    </td>
-                  </tr>
-                ) : (
+                    <tr>
+                      <td colSpan={8} className="px-5 py-8 text-sm text-slate-500">
+                        Nenhuma instância cadastrada.
+                      </td>
+                    </tr>
+                  ) : (
                     filteredInstances.map((instance) => (
                       <DataRow key={instance.id}>
-                        <DataCell>
-                          <div>
-                            <div>{instance.name}</div>
-                            <div className="mt-1 font-mono text-xs text-slate-400">ID: {instance.id}</div>
-                          </div>
-                        </DataCell>
-                        <DataCell subtle>
-                          <div>
-                            <div>{instance.evolutionInstanceName}</div>
-                            <div className="mt-1 font-mono text-xs text-slate-400">ID Evolution: {instance.id}</div>
-                          </div>
-                        </DataCell>
+                        <DataCell>{instance.name}</DataCell>
+                        <DataCell subtle className="font-mono text-xs">{instance.publicId}</DataCell>
+                        <DataCell subtle>{instance.evolutionInstanceName}</DataCell>
                       <DataCell>
                         <StatusChip tone={instance.status === "connected" ? "success" : instance.status === "error" ? "danger" : "warning"}>
                           {traduzirStatusInstancia(instance.status)}
@@ -6296,22 +6273,18 @@ export default function HomePage() {
                 actionIcon={UserPlus}
               />
 
-              <DataTable columns={["Nome", "E-mail", "Perfil", "Presença", "Filas", "Ações"]} emptyMessage="Nenhum agente cadastrado.">
+                <DataTable columns={["Nome", "ID", "E-mail", "Perfil", "Presença", "Filas", "Ações"]} emptyMessage="Nenhum agente cadastrado.">
                 {filteredAgents.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-5 py-8 text-sm text-slate-500">
-                      Nenhum agente cadastrado.
-                    </td>
-                  </tr>
-                ) : (
+                    <tr>
+                      <td colSpan={7} className="px-5 py-8 text-sm text-slate-500">
+                        Nenhum agente cadastrado.
+                      </td>
+                    </tr>
+                  ) : (
                     filteredAgents.map((agent) => (
                       <DataRow key={agent.id}>
-                        <DataCell>
-                          <div>
-                            <div>{agent.name}</div>
-                            <div className="mt-1 font-mono text-xs text-slate-400">ID: {agent.id}</div>
-                          </div>
-                        </DataCell>
+                        <DataCell>{agent.name}</DataCell>
+                        <DataCell subtle className="font-mono text-xs">{agent.publicId}</DataCell>
                         <DataCell subtle>{agent.email}</DataCell>
                       <DataCell>
                         <StatusChip tone={agent.role === "admin" ? "default" : "success"}>{traduzirPerfil(agent.role)}</StatusChip>
@@ -6360,24 +6333,20 @@ export default function HomePage() {
                 actionIcon={Workflow}
               />
 
-              <DataTable columns={["Fila", "Cor", "Agentes", "Tickets abertos", "Ações"]} emptyMessage="Nenhuma fila cadastrada.">
+                <DataTable columns={["Fila", "ID", "Cor", "Agentes", "Tickets abertos", "Ações"]} emptyMessage="Nenhuma fila cadastrada.">
                 {filteredQueues.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-5 py-8 text-sm text-slate-500">
-                      Nenhuma fila cadastrada.
-                    </td>
-                  </tr>
-                ) : (
+                    <tr>
+                      <td colSpan={6} className="px-5 py-8 text-sm text-slate-500">
+                        Nenhuma fila cadastrada.
+                      </td>
+                    </tr>
+                  ) : (
                     filteredQueues.map((queue) => (
                       <DataRow key={queue.id}>
+                        <DataCell>{queue.name}</DataCell>
+                        <DataCell subtle className="font-mono text-xs">{queue.publicId}</DataCell>
                         <DataCell>
-                          <div>
-                            <div>{queue.name}</div>
-                            <div className="mt-1 font-mono text-xs text-slate-400">ID: {queue.id}</div>
-                          </div>
-                        </DataCell>
-                      <DataCell>
-                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2">
                           <span className="h-4 w-10 rounded-sm border border-slate-200" style={{ backgroundColor: queue.color ?? "#1A1C32" }} />
                           <span className="text-sm text-slate-500">{queue.color ?? "#1A1C32"}</span>
                         </div>
