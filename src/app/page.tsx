@@ -4963,7 +4963,7 @@ export default function HomePage() {
                     filteredInstances.map((instance) => (
                       <DataRow key={instance.id}>
                         <DataCell>{instance.name}</DataCell>
-                        <DataCell subtle className="font-mono text-xs">{instance.publicId}</DataCell>
+                        <DataCell subtle><span className="font-mono text-xs">{instance.publicId}</span></DataCell>
                         <DataCell subtle>{instance.evolutionInstanceName}</DataCell>
                     <DataCell>
                       <StatusChip tone={instance.status === "connected" ? "success" : instance.status === "error" ? "danger" : "warning"}>
@@ -5432,7 +5432,7 @@ export default function HomePage() {
                     filteredAgents.map((agent) => (
                       <DataRow key={agent.id}>
                         <DataCell>{agent.name}</DataCell>
-                        <DataCell subtle className="font-mono text-xs">{agent.publicId}</DataCell>
+                        <DataCell subtle><span className="font-mono text-xs">{agent.publicId}</span></DataCell>
                         <DataCell subtle>{agent.email}</DataCell>
                       <DataCell>
                         <StatusChip tone={agent.role === "admin" ? "default" : "success"}>{traduzirPerfil(agent.role)}</StatusChip>
@@ -5492,7 +5492,7 @@ export default function HomePage() {
                     filteredQueues.map((queue) => (
                       <DataRow key={queue.id}>
                         <DataCell>{queue.name}</DataCell>
-                        <DataCell subtle className="font-mono text-xs">{queue.publicId}</DataCell>
+                        <DataCell subtle><span className="font-mono text-xs">{queue.publicId}</span></DataCell>
                         <DataCell>
                           <div className="flex items-center gap-2">
                             <span className="h-4 w-10 rounded-sm border border-slate-200" style={{ backgroundColor: queue.color ?? "#1A1C32" }} />
@@ -6232,7 +6232,7 @@ export default function HomePage() {
                     filteredInstances.map((instance) => (
                       <DataRow key={instance.id}>
                         <DataCell>{instance.name}</DataCell>
-                        <DataCell subtle className="font-mono text-xs">{instance.publicId}</DataCell>
+                        <DataCell subtle><span className="font-mono text-xs">{instance.publicId}</span></DataCell>
                         <DataCell subtle>{instance.evolutionInstanceName}</DataCell>
                       <DataCell>
                         <StatusChip tone={instance.status === "connected" ? "success" : instance.status === "error" ? "danger" : "warning"}>
@@ -6284,7 +6284,7 @@ export default function HomePage() {
                     filteredAgents.map((agent) => (
                       <DataRow key={agent.id}>
                         <DataCell>{agent.name}</DataCell>
-                        <DataCell subtle className="font-mono text-xs">{agent.publicId}</DataCell>
+                        <DataCell subtle><span className="font-mono text-xs">{agent.publicId}</span></DataCell>
                         <DataCell subtle>{agent.email}</DataCell>
                       <DataCell>
                         <StatusChip tone={agent.role === "admin" ? "default" : "success"}>{traduzirPerfil(agent.role)}</StatusChip>
@@ -6344,7 +6344,7 @@ export default function HomePage() {
                     filteredQueues.map((queue) => (
                       <DataRow key={queue.id}>
                         <DataCell>{queue.name}</DataCell>
-                        <DataCell subtle className="font-mono text-xs">{queue.publicId}</DataCell>
+                        <DataCell subtle><span className="font-mono text-xs">{queue.publicId}</span></DataCell>
                         <DataCell>
                           <div className="flex items-center gap-2">
                           <span className="h-4 w-10 rounded-sm border border-slate-200" style={{ backgroundColor: queue.color ?? "#1A1C32" }} />

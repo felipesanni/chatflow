@@ -64,7 +64,6 @@ type ExternalTicketSnapshot = {
 
 type ExternalTicketResult = {
   created: boolean;
-  conflict?: boolean;
   ticket: ExternalTicketSnapshot;
 };
 
@@ -239,7 +238,6 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       if (existing) {
         return {
           created: false,
-          conflict: true,
           ticket: existing,
         };
       }
@@ -334,14 +332,6 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       };
     });
 
-    if (ticketResult.conflict || !ticketResult.created) {
-      return reply.code(409).send({
-        code: 'ticket_open_exists',
-        message: 'Ja existe um ticket aberto para este contato.',
-        item: serializeExternalTicket(ticketResult.ticket),
-      });
-    }
-
     try {
       const delivered = await deliverOutboundMessage(app, {
         ticketId: ticketResult.ticket.id,
@@ -350,7 +340,7 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       });
 
       return reply.code(201).send({
-        created: true,
+        created: ticketResult.created,
         item: serializeExternalTicket(ticketResult.ticket),
         message: {
           id: delivered.message.id,

@@ -106,7 +106,7 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
 
     const queue = await app.prisma.queue.findUnique({
       where: { id: params.queueId },
-      select: { id: true, name: true },
+      select: { id: true, publicId: true, name: true },
     });
 
     if (!queue) {
