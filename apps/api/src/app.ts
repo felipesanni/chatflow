@@ -31,6 +31,7 @@ export async function buildApp() {
     logger: {
       level: env.API_LOG_LEVEL,
     },
+    bodyLimit: 50 * 1024 * 1024,
   });
 
   await app.register(sensible);
@@ -65,6 +66,54 @@ export async function buildApp() {
   await app.register(whatsappRoutes, { prefix: '/api' });
   await app.register(apiAccessRoutes, { prefix: '/api' });
   await app.register(externalRoutes, { prefix: '/api' });
+
+  app.setErrorHandler((error, request, reply) => {
+    request.log.error(error);
+
+    const statusCode = typeof (error as { statusCode?: number }).statusCode === 'number'
+      ? (error as { statusCode: number }).statusCode
+      : 500;
+
+    const message = (() => {
+      if (error.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
+        return 'O arquivo ou conteúdo enviado é grande demais para ser processado.';
+      }
+
+      if (error.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE') {
+        return 'Tipo de conteúdo não suportado para esta operação.';
+      }
+
+      if (error.message === 'Request body is too large' || /body.+too large/i.test(error.message)) {
+        return 'O arquivo ou conteúdo enviado é grande demais para ser processado.';
+      }
+
+      if (error.message === 'Unsupported Media Type') {
+        return 'Tipo de conteúdo não suportado para esta operação.';
+      }
+
+      if (error.message === 'Unauthorized') {
+        return 'Acesso não autorizado.';
+      }
+
+      if (error.message === 'Forbidden') {
+        return 'Você não possui permissão para executar esta ação.';
+      }
+
+      if (error.message === 'Not Found') {
+        return 'Recurso não encontrado.';
+      }
+
+      if (statusCode >= 500) {
+        return 'Ocorreu um erro interno ao processar a solicitação.';
+      }
+
+      return error.message || 'Não foi possível concluir a solicitação.';
+    })();
+
+    if (!reply.sent) {
+      void reply.code(statusCode).send({ message });
+    }
+  });
 
   return app;
 }

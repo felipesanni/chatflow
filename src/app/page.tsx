@@ -1178,10 +1178,58 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     : {};
 
   if (!response.ok) {
-    throw new Error(payload?.message ?? "Falha na requisição.");
+    throw new Error(normalizeNotificationMessage(payload?.message ?? "Falha na requisição."));
   }
 
   return payload as T;
+}
+
+function normalizeNotificationMessage(input: string | null | undefined) {
+  const message = (input ?? "").trim();
+
+  if (!message) {
+    return "Não foi possível concluir a solicitação.";
+  }
+
+  const normalized = message.toLowerCase();
+
+  if (normalized === "request body is too large" || /body.+too large/.test(normalized)) {
+    return "O arquivo ou conteúdo enviado é grande demais para ser processado.";
+  }
+
+  if (normalized === "failed to fetch") {
+    return "Não foi possível se comunicar com o servidor.";
+  }
+
+  if (normalized === "unauthorized") {
+    return "Acesso não autorizado.";
+  }
+
+  if (normalized === "forbidden") {
+    return "Você não possui permissão para executar esta ação.";
+  }
+
+  if (normalized === "not found") {
+    return "Recurso não encontrado.";
+  }
+
+  if (normalized === "bad request") {
+    return "A solicitação enviada é inválida.";
+  }
+
+  if (normalized === "internal server error") {
+    return "Ocorreu um erro interno ao processar a solicitação.";
+  }
+
+  if (normalized === "unsupported media type") {
+    return "Tipo de conteúdo não suportado para esta operação.";
+  }
+
+  if (normalized === "payload too large") {
+    return "O arquivo ou conteúdo enviado é grande demais para ser processado.";
+  }
+
+  return message;
 }
 
 function formatDateTime(value: string) {
