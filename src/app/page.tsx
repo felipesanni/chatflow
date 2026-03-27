@@ -2927,7 +2927,6 @@ export default function HomePage() {
         void browserNotificationRegistrationRef.current.showNotification(notificationTitle, {
           body: notificationBody,
           tag: `ticket:${matchingTicket.id}`,
-          renotify: true,
           data: {
             ticketId: matchingTicket.id,
             url: notificationUrl,
