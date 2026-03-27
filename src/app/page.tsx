@@ -6,8 +6,6 @@ import { PhotoProvider, PhotoView } from "react-photo-view";
 import {
   Archive,
   ArrowRightLeft,
-  Bell,
-  BellOff,
   Copy,
   Calendar,
   CheckSquare,
@@ -1693,6 +1691,7 @@ export default function HomePage() {
   const socketRef = React.useRef<Socket | null>(null);
   const selectedTicketIdRef = React.useRef<string | null>(null);
   const activeWorkspaceRef = React.useRef(activeWorkspace);
+  const browserNotificationRegistrationRef = React.useRef<ServiceWorkerRegistration | null>(null);
   const appDialogResolverRef = React.useRef<((value: boolean) => void) | null>(null);
   const userMenuRef = React.useRef<HTMLDivElement | null>(null);
   const mobileTicketActionsRef = React.useRef<HTMLDivElement | null>(null);
@@ -2601,27 +2600,6 @@ export default function HomePage() {
     }
   }, [isMobileViewport]);
 
-  const handleEnableBrowserNotifications = React.useCallback(async () => {
-    if (!browserNotificationsSupported) {
-      setPanelMessage("Este navegador não oferece suporte a notificações.");
-      return;
-    }
-
-    try {
-      const permission = await Notification.requestPermission();
-      setBrowserNotificationPermission(permission);
-      if (permission === "granted") {
-        setPanelMessage("Notificações do navegador ativadas.");
-      } else if (permission === "denied") {
-        setPanelMessage("As notificações do navegador foram bloqueadas neste dispositivo.");
-      } else {
-        setPanelMessage("Permissão de notificação não concedida.");
-      }
-    } catch {
-      setPanelMessage("Não foi possível ativar as notificações do navegador.");
-    }
-  }, [browserNotificationsSupported]);
-
   const refreshMessages = React.useCallback(async (ticketId: string, options?: { silent?: boolean }) => {
     if (!user) return;
     if (!options?.silent) {
@@ -2936,10 +2914,30 @@ export default function HomePage() {
         return;
       }
 
-      const notification = new Notification(formatTicketDisplayName(matchingTicket), {
-        body: matchingTicket.lastMessagePreview
-          ? formatMessagePreview(matchingTicket.lastMessagePreview)
-          : "Nova mensagem recebida.",
+      const notificationTitle = formatTicketDisplayName(matchingTicket);
+      const notificationBody = matchingTicket.lastMessagePreview
+        ? formatMessagePreview(matchingTicket.lastMessagePreview)
+        : "Nova mensagem recebida.";
+      const notificationUrl =
+        typeof window !== "undefined"
+          ? `${window.location.origin}/?ticketId=${encodeURIComponent(matchingTicket.id)}`
+          : `/?ticketId=${encodeURIComponent(matchingTicket.id)}`;
+
+      if (browserNotificationRegistrationRef.current) {
+        void browserNotificationRegistrationRef.current.showNotification(notificationTitle, {
+          body: notificationBody,
+          tag: `ticket:${matchingTicket.id}`,
+          renotify: true,
+          data: {
+            ticketId: matchingTicket.id,
+            url: notificationUrl,
+          },
+        });
+        return;
+      }
+
+      const notification = new Notification(notificationTitle, {
+        body: notificationBody,
         tag: `ticket:${matchingTicket.id}`,
       });
 
@@ -4937,6 +4935,75 @@ export default function HomePage() {
     window.addEventListener("focus", syncPermission);
     return () => window.removeEventListener("focus", syncPermission);
   }, [browserNotificationsSupported]);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) {
+      return;
+    }
+
+    let disposed = false;
+
+    void navigator.serviceWorker.register("/chatflow-sw.js").then((registration) => {
+      if (!disposed) {
+        browserNotificationRegistrationRef.current = registration;
+      }
+    }).catch(() => {
+      browserNotificationRegistrationRef.current = null;
+    });
+
+    const handleServiceWorkerMessage = (event: MessageEvent) => {
+      const payload = event.data as { type?: string; url?: string } | undefined;
+      if (payload?.type !== "chatflow-notification-open-ticket" || !payload.url) {
+        return;
+      }
+
+      const targetUrl = new URL(payload.url, window.location.origin);
+      const ticketId = targetUrl.searchParams.get("ticketId");
+      if (!ticketId) {
+        return;
+      }
+
+      const matchingTicket = tickets.find((ticket) => ticket.id === ticketId);
+      if (matchingTicket) {
+        openTicketFromNotification(matchingTicket);
+        return;
+      }
+
+      setActiveWorkspace("tickets");
+      setSelectedTicketId(ticketId);
+      if (isMobileViewport) {
+        setMobileTicketView("conversation");
+      }
+    };
+
+    navigator.serviceWorker.addEventListener("message", handleServiceWorkerMessage);
+
+    return () => {
+      disposed = true;
+      navigator.serviceWorker.removeEventListener("message", handleServiceWorkerMessage);
+    };
+  }, [isMobileViewport, openTicketFromNotification, tickets]);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const currentUrl = new URL(window.location.href);
+    const ticketId = currentUrl.searchParams.get("ticketId");
+    if (!ticketId) {
+      return;
+    }
+
+    const matchingTicket = tickets.find((ticket) => ticket.id === ticketId);
+    if (!matchingTicket) {
+      return;
+    }
+
+    openTicketFromNotification(matchingTicket);
+    currentUrl.searchParams.delete("ticketId");
+    window.history.replaceState({}, "", `${currentUrl.pathname}${currentUrl.search}`);
+  }, [openTicketFromNotification, tickets]);
 
   const workspaceTitle =
     activeWorkspace === "dashboard"
@@ -8631,21 +8698,6 @@ export default function HomePage() {
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              aria-label={browserNotificationsEnabled ? "Notificações do navegador ativas" : "Ativar notificações do navegador"}
-              title={browserNotificationsEnabled ? "Notificações do navegador ativas" : "Ativar notificações do navegador"}
-              onClick={() => void handleEnableBrowserNotifications()}
-              disabled={!browserNotificationsSupported}
-              className={`inline-flex h-10 items-center gap-2 rounded-full border px-3 text-sm transition ${
-                browserNotificationsEnabled
-                  ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                  : "border-white/10 bg-white/10 text-white hover:bg-white/15"
-              } disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-white/40`}
-            >
-              {browserNotificationsEnabled ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
-              <span className="hidden md:inline">{browserNotificationsEnabled ? "Notificações ativas" : "Ativar notificações"}</span>
-            </button>
             <button
               type="button"
               aria-label="Atualizar dados do painel"
