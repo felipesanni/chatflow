@@ -10,6 +10,7 @@ import {
   Calendar,
   CheckSquare,
   ChevronDown,
+  ChevronLeft,
   Clock,
   Code2,
   Eye,
@@ -1555,6 +1556,9 @@ export default function HomePage() {
   const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "calendar" | "automations" | "settings">("tickets");
   const [adminSection, setAdminSection] = React.useState<"branding" | "instances" | "agents" | "queues">("instances");
   const [showRail, setShowRail] = React.useState(false);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = React.useState(false);
+  const [isMobileViewport, setIsMobileViewport] = React.useState(false);
+  const [mobileTicketView, setMobileTicketView] = React.useState<"list" | "conversation">("list");
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
   const [showOnlyUnread, setShowOnlyUnread] = React.useState(false);
   const [showAllTickets, setShowAllTickets] = React.useState(false);
@@ -4740,6 +4744,50 @@ export default function HomePage() {
   }
 
   const ticketWorkspaceAtivo = activeWorkspace === "tickets" || activeWorkspace === "closedTickets";
+  const shouldShowTicketListPane = !isMobileViewport || !ticketWorkspaceAtivo || mobileTicketView === "list";
+  const shouldShowWorkspacePane = !isMobileViewport || !ticketWorkspaceAtivo || mobileTicketView === "conversation";
+
+  React.useEffect(() => {
+    const syncViewport = () => {
+      setIsMobileViewport(window.innerWidth < 768);
+    };
+
+    syncViewport();
+    window.addEventListener("resize", syncViewport);
+    return () => window.removeEventListener("resize", syncViewport);
+  }, []);
+
+  React.useEffect(() => {
+    if (!isMobileViewport) {
+      setMobileNavigationOpen(false);
+      return;
+    }
+
+    if (!ticketWorkspaceAtivo) {
+      setMobileTicketView("list");
+      return;
+    }
+
+    if (selectedTicketId) {
+      setMobileTicketView("conversation");
+    }
+  }, [isMobileViewport, selectedTicketId, ticketWorkspaceAtivo]);
+
+  React.useEffect(() => {
+    if (!isMobileViewport) {
+      return;
+    }
+
+    setMobileNavigationOpen(false);
+  }, [activeWorkspace, isMobileViewport]);
+
+  React.useEffect(() => {
+    if (!isMobileViewport || selectedTicketId || mobileTicketView !== "conversation") {
+      return;
+    }
+
+    setMobileTicketView("list");
+  }, [isMobileViewport, mobileTicketView, selectedTicketId]);
 
   const workspaceTitle =
     activeWorkspace === "dashboard"
@@ -6384,6 +6432,20 @@ export default function HomePage() {
             <div className="border-b border-slate-200 bg-white px-5 py-3">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
+                  {isMobileViewport ? (
+                    <button
+                      type="button"
+                      aria-label="Voltar para a lista de tickets"
+                      title="Voltar"
+                      onClick={() => {
+                        setShowTicketDetails(false);
+                        setMobileTicketView("list");
+                      }}
+                      className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                  ) : null}
                   <SafeAvatar
                     src={selectedTicket.customerAvatarUrl}
                     name={selectedTicket.customerName}
@@ -7074,8 +7136,20 @@ export default function HomePage() {
               </div>
             </div>
 
+              {showTicketDetails && isMobileViewport ? (
+                <div
+                  className="fixed inset-0 z-[55] bg-slate-950/18 backdrop-blur-[2px]"
+                  onClick={() => setShowTicketDetails(false)}
+                />
+              ) : null}
               {showTicketDetails ? (
-                <aside className="hidden w-[320px] shrink-0 border-l border-slate-200 bg-white xl:flex xl:flex-col">
+                <aside
+                  className={
+                    isMobileViewport
+                      ? "fixed inset-x-0 bottom-0 top-[60px] z-[60] flex flex-col border-t border-slate-200 bg-white shadow-[0_-18px_60px_rgba(15,23,42,0.18)]"
+                      : "hidden w-[320px] shrink-0 border-l border-slate-200 bg-white xl:flex xl:flex-col"
+                  }
+                >
                   <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
                     <div className="text-lg font-semibold text-[#1A1C32]">{selectedTicket.isGroup ? "Dados do grupo" : "Dados do contato"}</div>
                     <button type="button" onClick={() => setShowTicketDetails(false)} className="text-slate-400 transition hover:text-slate-700">
@@ -8238,7 +8312,20 @@ export default function HomePage() {
       <div className="flex h-screen flex-col overflow-hidden">
         <header className="z-20 flex h-[60px] shrink-0 items-center justify-between bg-[#1A1C32] px-5 text-white shadow-sm">
           <div className="flex items-center gap-6">
-            <button type="button" aria-label={showRail ? "Recolher menu lateral" : "Expandir menu lateral"} title={showRail ? "Recolher menu lateral" : "Expandir menu lateral"} onClick={() => setShowRail((current) => !current)} className="text-white/90 transition hover:text-white">
+            <button
+              type="button"
+              aria-label={isMobileViewport ? "Abrir menu" : showRail ? "Recolher menu lateral" : "Expandir menu lateral"}
+              title={isMobileViewport ? "Abrir menu" : showRail ? "Recolher menu lateral" : "Expandir menu lateral"}
+              onClick={() => {
+                if (isMobileViewport) {
+                  setMobileNavigationOpen(true);
+                  return;
+                }
+
+                setShowRail((current) => !current);
+              }}
+              className="text-white/90 transition hover:text-white"
+            >
               <Menu className="h-6 w-6" />
             </button>
             {shouldRenderBrandImage ? (
@@ -8331,6 +8418,72 @@ export default function HomePage() {
           </div>
         </header>
 
+        {isMobileViewport && mobileNavigationOpen ? (
+          <div className="fixed inset-0 z-[70] bg-slate-950/28 backdrop-blur-[2px]" onClick={() => setMobileNavigationOpen(false)}>
+            <aside
+              className="absolute inset-y-0 left-0 flex w-[280px] max-w-[86vw] flex-col justify-between border-r border-slate-200 bg-white px-3 py-4 shadow-[0_24px_60px_rgba(15,23,42,0.24)]"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="space-y-3">
+                <div className="flex items-center justify-between px-2">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">{brandTextLabel}</div>
+                    <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">{workspaceTitle}</div>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Fechar menu"
+                    title="Fechar menu"
+                    onClick={() => setMobileNavigationOpen(false)}
+                    className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="flex flex-col gap-1">
+                  {currentUser.permissions["dashboard.view"] ? <RailButton icon={LayoutGrid} label="Painel geral" expanded active={activeWorkspace === "dashboard"} onClick={() => setActiveWorkspace("dashboard")} /> : null}
+                  {currentUser.permissions["tickets.view"] ? (
+                    <RailButton
+                      icon={WhatsAppIcon}
+                      label="Atendimento"
+                      expanded
+                      active={activeWorkspace === "tickets"}
+                      onClick={() => {
+                        setShowAllTickets(false);
+                        setShowArchivedTickets(false);
+                        setActiveTab("atendendo");
+                        setActiveWorkspace("tickets");
+                        setMobileTicketView(selectedTicketId ? "conversation" : "list");
+                      }}
+                    />
+                  ) : null}
+                  {canViewClosedTickets ? (
+                    <RailButton
+                      icon={Archive}
+                      label="Tickets fechados"
+                      expanded
+                      active={activeWorkspace === "closedTickets"}
+                      onClick={() => {
+                        setShowAllTickets(false);
+                        setActiveWorkspace("closedTickets");
+                        setMobileTicketView(selectedTicketId ? "conversation" : "list");
+                      }}
+                    />
+                  ) : null}
+                  {currentUser.permissions["quickReplies.view"] ? <RailButton icon={Zap} label="Respostas rápidas" expanded active={activeWorkspace === "quickReplies"} onClick={() => setActiveWorkspace("quickReplies")} /> : null}
+                  {currentUser.permissions["api.view"] ? <RailButton icon={Code2} label="API" expanded active={activeWorkspace === "api"} onClick={() => setActiveWorkspace("api")} /> : null}
+                  {currentUser.permissions["contacts.view"] ? <RailButton icon={Users} label="Contatos" expanded active={activeWorkspace === "contacts"} onClick={() => setActiveWorkspace("contacts")} /> : null}
+                  {currentUser.permissions["calendar.view"] ? <RailButton icon={Calendar} label="Agendamentos" expanded active={activeWorkspace === "calendar"} onClick={() => setActiveWorkspace("calendar")} /> : null}
+                  {currentUser.permissions["automations.view"] ? <RailButton icon={Workflow} label="Automações" expanded active={activeWorkspace === "automations"} onClick={() => setActiveWorkspace("automations")} /> : null}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                {currentUser.permissions["settings.view"] ? <RailButton icon={Settings} label="Configurações" expanded active={activeWorkspace === "settings"} onClick={() => setActiveWorkspace("settings")} /> : null}
+              </div>
+            </aside>
+          </div>
+        ) : null}
+
         <div className="flex min-h-0 flex-1 overflow-hidden">
           <aside className={`hidden h-full shrink-0 border-r border-slate-200 bg-white transition-[width] duration-200 md:flex md:flex-col md:justify-between md:py-4 ${showRail ? "w-[220px]" : "w-14"}`}>
             <div className="flex w-full flex-col gap-1 px-2">
@@ -8349,7 +8502,7 @@ export default function HomePage() {
           </aside>
 
           <section className={`grid min-h-0 min-w-0 flex-1 overflow-hidden ${ticketWorkspaceAtivo ? "xl:grid-cols-[460px_minmax(0,1fr)]" : "xl:grid-cols-[minmax(0,1fr)]"}`}>
-              {ticketWorkspaceAtivo ? (
+              {ticketWorkspaceAtivo && shouldShowTicketListPane ? (
                 <div className="flex h-full min-h-0 min-w-0 flex-col border-r border-slate-200 bg-white">
                 <div className="space-y-3 border-b border-slate-200 p-3">
                   <div className="relative">
@@ -8526,6 +8679,9 @@ export default function HomePage() {
                             setSelectedTicketId(ticket.id);
                             setActiveWorkspace("tickets");
                             setShowTicketDetails(false);
+                            if (isMobileViewport) {
+                              setMobileTicketView("conversation");
+                            }
                           }}
                           className={`group relative mb-1.5 flex w-full min-w-0 items-start gap-2.5 rounded-[18px] border text-left transition ${selected ? "border-slate-300 bg-slate-50 shadow-sm" : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"} ${compact ? "p-2.5" : "p-3"}`}
                         >
@@ -8597,7 +8753,7 @@ export default function HomePage() {
               </div>
             ) : null}
 
-            <section className="flex min-h-0 min-w-0 flex-col overflow-y-auto bg-[linear-gradient(180deg,#edf3f7,#e1eaef)]">
+            <section className={`${shouldShowWorkspacePane ? "flex" : "hidden"} min-h-0 min-w-0 flex-col overflow-y-auto bg-[linear-gradient(180deg,#edf3f7,#e1eaef)]`}>
               {panelMessage ? (
                 <div className="flex items-start justify-between gap-3 border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-800">
                   <div>{panelMessage}</div>
