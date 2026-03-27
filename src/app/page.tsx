@@ -6,6 +6,8 @@ import { PhotoProvider, PhotoView } from "react-photo-view";
 import {
   Archive,
   ArrowRightLeft,
+  Bell,
+  BellOff,
   Copy,
   Calendar,
   CheckSquare,
@@ -1560,12 +1562,16 @@ export default function HomePage() {
   const [isMobileViewport, setIsMobileViewport] = React.useState(false);
   const [mobileTicketView, setMobileTicketView] = React.useState<"list" | "conversation">("list");
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
+  const [browserNotificationPermission, setBrowserNotificationPermission] = React.useState<NotificationPermission>(
+    typeof window !== "undefined" && "Notification" in window ? Notification.permission : "default",
+  );
   const [showOnlyUnread, setShowOnlyUnread] = React.useState(false);
   const [showAllTickets, setShowAllTickets] = React.useState(false);
   const [showArchivedTickets, setShowArchivedTickets] = React.useState(false);
   const [selectedQueueFilter, setSelectedQueueFilter] = React.useState<string>("all");
   const [showTicketDetails, setShowTicketDetails] = React.useState(false);
   const [showTransferPanel, setShowTransferPanel] = React.useState(false);
+  const [mobileTicketActionsOpen, setMobileTicketActionsOpen] = React.useState(false);
   const [showGroupNameModal, setShowGroupNameModal] = React.useState(false);
   const [showScheduleModal, setShowScheduleModal] = React.useState(false);
   const [showForwardModal, setShowForwardModal] = React.useState(false);
@@ -1685,8 +1691,11 @@ export default function HomePage() {
     note: "",
   });
   const socketRef = React.useRef<Socket | null>(null);
+  const selectedTicketIdRef = React.useRef<string | null>(null);
+  const activeWorkspaceRef = React.useRef(activeWorkspace);
   const appDialogResolverRef = React.useRef<((value: boolean) => void) | null>(null);
   const userMenuRef = React.useRef<HTMLDivElement | null>(null);
+  const mobileTicketActionsRef = React.useRef<HTMLDivElement | null>(null);
   const messageMenuRef = React.useRef<HTMLDivElement | null>(null);
   const attachmentUploadRef = React.useRef<HTMLInputElement | null>(null);
   const messagesViewportRef = React.useRef<HTMLDivElement | null>(null);
@@ -2047,6 +2056,8 @@ export default function HomePage() {
   const canBulkDeleteTickets = currentUser.permissions["tickets.bulkDelete"];
   const canBulkDeleteMessages = currentUser.permissions["messages.bulkDelete"];
   const canViewClosedTickets = currentUser.permissions["tickets.closedView"];
+  const browserNotificationsSupported = typeof window !== "undefined" && "Notification" in window;
+  const browserNotificationsEnabled = browserNotificationsSupported && browserNotificationPermission === "granted";
   const isClosedTicketsWorkspace = activeWorkspace === "closedTickets";
   const canDeleteSelectedTicket = Boolean(selectedTicket && canBulkDeleteTickets);
   const dashboardAgentOptions = React.useMemo(() => {
@@ -2337,6 +2348,40 @@ export default function HomePage() {
   }, [userMenuOpen]);
 
   React.useEffect(() => {
+    if (!mobileTicketActionsOpen) return;
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!mobileTicketActionsRef.current) return;
+      if (!mobileTicketActionsRef.current.contains(event.target as Node)) {
+        setMobileTicketActionsOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setMobileTicketActionsOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [mobileTicketActionsOpen]);
+
+  React.useEffect(() => {
+    if (!isMobileViewport) {
+      setMobileTicketActionsOpen(false);
+    }
+  }, [isMobileViewport]);
+
+  React.useEffect(() => {
+    setMobileTicketActionsOpen(false);
+  }, [selectedTicketId]);
+
+  React.useEffect(() => {
     setProfileName(user?.name ?? "");
     setProfileAvatarPreview(user?.avatarUrl ?? null);
   }, [user?.name, user?.avatarUrl]);
@@ -2483,7 +2528,7 @@ export default function HomePage() {
   }, []);
 
   const refreshTickets = React.useCallback(async () => {
-    if (!user) return;
+    if (!user) return [] as TicketItem[];
     setTicketLoading(true);
     try {
       let items: TicketItem[] = [];
@@ -2528,12 +2573,54 @@ export default function HomePage() {
         }
         return null;
       });
+      return items;
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar tickets.");
+      return [] as TicketItem[];
     } finally {
       setTicketLoading(false);
     }
   }, [activeWorkspace, showArchivedTickets, user]);
+
+  const openTicketFromNotification = React.useCallback((ticket: TicketItem) => {
+    setActiveWorkspace(ticket.status === "closed" ? "closedTickets" : "tickets");
+    if (ticket.isGroup) {
+      setActiveTab("grupos");
+    } else if (ticket.status === "pending") {
+      setActiveTab("aguardando");
+    } else {
+      setActiveTab("atendendo");
+    }
+    setShowTicketDetails(false);
+    setSelectedTicketId(ticket.id);
+    if (isMobileViewport) {
+      setMobileTicketView("conversation");
+    }
+    if (typeof window !== "undefined") {
+      window.focus();
+    }
+  }, [isMobileViewport]);
+
+  const handleEnableBrowserNotifications = React.useCallback(async () => {
+    if (!browserNotificationsSupported) {
+      setPanelMessage("Este navegador não oferece suporte a notificações.");
+      return;
+    }
+
+    try {
+      const permission = await Notification.requestPermission();
+      setBrowserNotificationPermission(permission);
+      if (permission === "granted") {
+        setPanelMessage("Notificações do navegador ativadas.");
+      } else if (permission === "denied") {
+        setPanelMessage("As notificações do navegador foram bloqueadas neste dispositivo.");
+      } else {
+        setPanelMessage("Permissão de notificação não concedida.");
+      }
+    } catch {
+      setPanelMessage("Não foi possível ativar as notificações do navegador.");
+    }
+  }, [browserNotificationsSupported]);
 
   const refreshMessages = React.useCallback(async (ticketId: string, options?: { silent?: boolean }) => {
     if (!user) return;
@@ -2817,7 +2904,50 @@ export default function HomePage() {
     });
     socket.on("ticket.updated", refreshForTicket);
     socket.on("ticket.closed", refreshForTicket);
-    socket.on("message.created", refreshForTicket);
+    socket.on("message.created", async (payload?: { ticketId?: string; direction?: "inbound" | "outbound" | "system" }) => {
+      const refreshedTickets = await refreshTickets();
+      const ticketIdToRefresh = payload?.ticketId ?? selectedTicketIdRef.current;
+
+      if (ticketIdToRefresh) {
+        void refreshMessages(ticketIdToRefresh, { silent: true });
+        void refreshScheduledMessages(ticketIdToRefresh);
+      }
+
+      if (
+        payload?.direction !== "inbound"
+        || !ticketIdToRefresh
+        || !browserNotificationsEnabled
+      ) {
+        return;
+      }
+
+      const matchingTicket = refreshedTickets.find((ticket) => ticket.id === ticketIdToRefresh);
+      if (!matchingTicket) {
+        return;
+      }
+
+      const ticketAlreadyVisible =
+        selectedTicketIdRef.current === matchingTicket.id
+        && activeWorkspaceRef.current === "tickets"
+        && typeof document !== "undefined"
+        && document.visibilityState === "visible";
+
+      if (ticketAlreadyVisible) {
+        return;
+      }
+
+      const notification = new Notification(formatTicketDisplayName(matchingTicket), {
+        body: matchingTicket.lastMessagePreview
+          ? formatMessagePreview(matchingTicket.lastMessagePreview)
+          : "Nova mensagem recebida.",
+        tag: `ticket:${matchingTicket.id}`,
+      });
+
+      notification.onclick = () => {
+        openTicketFromNotification(matchingTicket);
+        notification.close();
+      };
+    });
     socket.on("message.updated", refreshForTicket);
     socket.on("instance.updated", () => void refreshInstances());
     socket.on("agent.updated", () => void refreshAgents());
@@ -4789,6 +4919,25 @@ export default function HomePage() {
     setMobileTicketView("list");
   }, [isMobileViewport, mobileTicketView, selectedTicketId]);
 
+  React.useEffect(() => {
+    selectedTicketIdRef.current = selectedTicketId;
+  }, [selectedTicketId]);
+
+  React.useEffect(() => {
+    activeWorkspaceRef.current = activeWorkspace;
+  }, [activeWorkspace]);
+
+  React.useEffect(() => {
+    if (!browserNotificationsSupported) {
+      return;
+    }
+
+    const syncPermission = () => setBrowserNotificationPermission(Notification.permission);
+    syncPermission();
+    window.addEventListener("focus", syncPermission);
+    return () => window.removeEventListener("focus", syncPermission);
+  }, [browserNotificationsSupported]);
+
   const workspaceTitle =
     activeWorkspace === "dashboard"
       ? "Painel geral"
@@ -6429,9 +6578,9 @@ export default function HomePage() {
       <>
         {selectedTicket ? (
           <>
-            <div className="border-b border-slate-200 bg-white px-5 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-4">
+            <div className="border-b border-slate-200 bg-white px-3 py-3 md:px-5">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
+                <div className="flex items-center gap-3 md:gap-4">
                   {isMobileViewport ? (
                     <button
                       type="button"
@@ -6452,13 +6601,13 @@ export default function HomePage() {
                     alt={`Foto de ${selectedTicket.customerName}`}
                     className="grid h-12 w-12 place-items-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700"
                   />
-                  <div>
+                  <div className="min-w-0">
                     <button
                       type="button"
                       onClick={() => setShowTicketDetails(true)}
-                      className="text-left transition hover:opacity-80"
+                      className="max-w-full text-left transition hover:opacity-80"
                     >
-                      <h3 className="text-[16px] font-semibold leading-tight tracking-[-0.02em] text-[#1A1C32]">{selectedTicketDisplayName}</h3>
+                      <h3 className="truncate text-[16px] font-semibold leading-tight tracking-[-0.02em] text-[#1A1C32]">{selectedTicketDisplayName}</h3>
                     </button>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12px] text-slate-500">
                       <span>{formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)}</span>
@@ -6468,74 +6617,198 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  {canDeleteSelectedTicket ? (
+                {isMobileViewport ? (
+                  <div ref={mobileTicketActionsRef} className="relative self-start">
                     <button
                       type="button"
-                      aria-label="Apagar ticket selecionado"
-                      title="Apagar ticket"
-                      onClick={() => void handleDeleteSelectedTicket()}
-                      disabled={bulkDeleteLoading}
-                      className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-white disabled:text-slate-300"
+                      aria-label="Abrir ações do atendimento"
+                      title="Ações"
+                      aria-expanded={mobileTicketActionsOpen}
+                      onClick={() => setMobileTicketActionsOpen((current) => !current)}
+                      className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-50"
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Menu className="h-4 w-4" />
+                      Ações
+                      <ChevronDown className={`h-3.5 w-3.5 transition ${mobileTicketActionsOpen ? "rotate-180" : ""}`} />
                     </button>
-                  ) : null}
-                  {canBulkDeleteMessages ? (
-                    <button
-                      type="button"
-                      aria-label={messageBulkSelectionMode ? "Cancelar seleção de mensagens" : "Selecionar mensagens para apagar"}
-                      title={messageBulkSelectionMode ? "Cancelar seleção de mensagens" : "Selecionar mensagens para apagar"}
-                      onClick={() => {
-                        if (messageBulkSelectionMode) {
-                          cancelMessageBulkSelectionMode();
-                        } else {
-                          startMessageBulkSelectionMode();
-                        }
-                      }}
-                      className={`inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] transition ${
-                        messageBulkSelectionMode
-                          ? "border-rose-200 bg-rose-50 text-rose-700"
-                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                      }`}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      {messageBulkSelectionMode ? "Cancelar seleção" : "Apagar mensagens"}
+                    {mobileTicketActionsOpen ? (
+                      <div className="absolute left-0 top-[calc(100%+0.65rem)] z-[65] w-[min(84vw,320px)] rounded-[24px] border border-slate-200 bg-white p-2 shadow-[0_24px_60px_rgba(15,23,42,0.16)]">
+                        <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Ações do atendimento</div>
+                        <div className="space-y-1">
+                          {canDeleteSelectedTicket ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMobileTicketActionsOpen(false);
+                                void handleDeleteSelectedTicket();
+                              }}
+                              disabled={bulkDeleteLoading}
+                              className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:text-slate-300"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              <span>Apagar ticket</span>
+                            </button>
+                          ) : null}
+                          {canBulkDeleteMessages ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMobileTicketActionsOpen(false);
+                                if (messageBulkSelectionMode) {
+                                  cancelMessageBulkSelectionMode();
+                                } else {
+                                  startMessageBulkSelectionMode();
+                                }
+                              }}
+                              className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm transition ${
+                                messageBulkSelectionMode
+                                  ? "bg-rose-50 text-rose-700 hover:bg-rose-100"
+                                  : "text-slate-700 hover:bg-slate-50"
+                              }`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              <span>{messageBulkSelectionMode ? "Cancelar seleção" : "Apagar mensagens"}</span>
+                            </button>
+                          ) : null}
+                          {!selectedTicket.isGroup ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMobileTicketActionsOpen(false);
+                                void handleAcceptTicket();
+                              }}
+                              disabled={!canAcceptSelectedTicket}
+                              className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-[#385a7a] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                            >
+                              <CheckSquare className="h-4 w-4" />
+                              <span>{selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Atendimento fechado" : "Aceitar atendimento"}</span>
+                            </button>
+                          ) : null}
+                          {canTransferSelectedTicket ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMobileTicketActionsOpen(false);
+                                setShowTransferPanel(true);
+                              }}
+                              className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-slate-700 transition hover:bg-slate-50"
+                            >
+                              <ArrowRightLeft className="h-4 w-4" />
+                              <span>Transferir</span>
+                            </button>
+                          ) : null}
+                          {selectedTicket.status === "closed" ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMobileTicketActionsOpen(false);
+                                void handleReopenTicket();
+                              }}
+                              disabled={!canReopenSelectedTicket}
+                              className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-emerald-600 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                            >
+                              <RefreshCw className="h-4 w-4" />
+                              <span>Reabrir</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMobileTicketActionsOpen(false);
+                                void handleCloseTicket();
+                              }}
+                              disabled={!canCloseSelectedTicket}
+                              className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                            >
+                              <X className="h-4 w-4" />
+                              <span>Fechar</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMobileTicketActionsOpen(false);
+                              setShowTicketDetails((current) => !current);
+                            }}
+                            className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-slate-700 transition hover:bg-slate-50"
+                          >
+                            <Info className="h-4 w-4" />
+                            <span>{showTicketDetails ? "Ocultar detalhes" : "Mostrar detalhes"}</span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    {canDeleteSelectedTicket ? (
+                      <button
+                        type="button"
+                        aria-label="Apagar ticket selecionado"
+                        title="Apagar ticket"
+                        onClick={() => void handleDeleteSelectedTicket()}
+                        disabled={bulkDeleteLoading}
+                        className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-white disabled:text-slate-300"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    ) : null}
+                    {canBulkDeleteMessages ? (
+                      <button
+                        type="button"
+                        aria-label={messageBulkSelectionMode ? "Cancelar seleção de mensagens" : "Selecionar mensagens para apagar"}
+                        title={messageBulkSelectionMode ? "Cancelar seleção de mensagens" : "Selecionar mensagens para apagar"}
+                        onClick={() => {
+                          if (messageBulkSelectionMode) {
+                            cancelMessageBulkSelectionMode();
+                          } else {
+                            startMessageBulkSelectionMode();
+                          }
+                        }}
+                        className={`inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] transition ${
+                          messageBulkSelectionMode
+                            ? "border-rose-200 bg-rose-50 text-rose-700"
+                            : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        {messageBulkSelectionMode ? "Cancelar seleção" : "Apagar mensagens"}
+                      </button>
+                    ) : null}
+                    {!selectedTicket.isGroup ? (
+                      <button type="button" aria-label="Assumir atendimento selecionado" title="Assumir atendimento" onClick={() => void handleAcceptTicket()} disabled={!canAcceptSelectedTicket} className="inline-flex h-9 items-center gap-2 rounded-full bg-[#e7eff8] px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#385a7a] transition hover:bg-[#dbe7f3] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
+                        <CheckSquare className="h-4 w-4" />
+                        {selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Atendimento fechado" : "Aceitar atendimento"}
+                      </button>
+                    ) : null}
+                    {canTransferSelectedTicket ? (
+                      <button
+                        type="button"
+                        aria-label={showTransferPanel ? "Fechar popup de transferência" : "Transferir atendimento"}
+                        title="Transferir atendimento"
+                        onClick={() => setShowTransferPanel(true)}
+                        className={`inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] transition ${showTransferPanel ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+                      >
+                        <ArrowRightLeft className="h-3.5 w-3.5" />
+                        Transferir
+                      </button>
+                    ) : null}
+                    {selectedTicket.status === "closed" ? (
+                      <button type="button" aria-label="Reabrir atendimento selecionado" title="Reabrir atendimento" onClick={() => void handleReopenTicket()} disabled={!canReopenSelectedTicket} className="inline-flex h-9 items-center gap-2 rounded-full border border-emerald-200 bg-white px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-600 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
+                        <RefreshCw className="h-3.5 w-3.5" />
+                        Reabrir
+                      </button>
+                    ) : (
+                      <button type="button" aria-label="Fechar atendimento selecionado" title="Fechar atendimento" onClick={() => void handleCloseTicket()} disabled={!canCloseSelectedTicket} className="inline-flex h-9 items-center gap-2 rounded-full border border-red-200 bg-white px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
+                        <X className="h-3.5 w-3.5" />
+                        Fechar
+                      </button>
+                    )}
+                    <button type="button" aria-label={showTicketDetails ? "Ocultar detalhes do atendimento" : "Mostrar detalhes do atendimento"} title={showTicketDetails ? "Ocultar detalhes" : "Mostrar detalhes"} onClick={() => setShowTicketDetails((current) => !current)} className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700">
+                      <Info className="h-4 w-4" />
                     </button>
-                  ) : null}
-                  {!selectedTicket.isGroup ? (
-                    <button type="button" aria-label="Assumir atendimento selecionado" title="Assumir atendimento" onClick={() => void handleAcceptTicket()} disabled={!canAcceptSelectedTicket} className="inline-flex h-9 items-center gap-2 rounded-full bg-[#e7eff8] px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#385a7a] transition hover:bg-[#dbe7f3] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
-                      <CheckSquare className="h-4 w-4" />
-                      {selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Atendimento fechado" : "Aceitar atendimento"}
-                    </button>
-                  ) : null}
-                  {canTransferSelectedTicket ? (
-                    <button
-                      type="button"
-                      aria-label={showTransferPanel ? "Fechar popup de transferência" : "Transferir atendimento"}
-                      title="Transferir atendimento"
-                      onClick={() => setShowTransferPanel(true)}
-                      className={`inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] transition ${showTransferPanel ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
-                    >
-                      <ArrowRightLeft className="h-3.5 w-3.5" />
-                      Transferir
-                    </button>
-                  ) : null}
-                  {selectedTicket.status === "closed" ? (
-                    <button type="button" aria-label="Reabrir atendimento selecionado" title="Reabrir atendimento" onClick={() => void handleReopenTicket()} disabled={!canReopenSelectedTicket} className="inline-flex h-9 items-center gap-2 rounded-full border border-emerald-200 bg-white px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-600 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      Reabrir
-                    </button>
-                  ) : (
-                    <button type="button" aria-label="Fechar atendimento selecionado" title="Fechar atendimento" onClick={() => void handleCloseTicket()} disabled={!canCloseSelectedTicket} className="inline-flex h-9 items-center gap-2 rounded-full border border-red-200 bg-white px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
-                      <X className="h-3.5 w-3.5" />
-                      Fechar
-                    </button>
-                  )}
-                  <button type="button" aria-label={showTicketDetails ? "Ocultar detalhes do atendimento" : "Mostrar detalhes do atendimento"} title={showTicketDetails ? "Ocultar detalhes" : "Mostrar detalhes"} onClick={() => setShowTicketDetails((current) => !current)} className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700">
-                    <Info className="h-4 w-4" />
-                  </button>
-                </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -6967,7 +7240,7 @@ export default function HomePage() {
                     </div>
                   ) : null}
 
-                <form onSubmit={handleSendMessage} className="px-4 py-2.5 md:px-5">
+                <form onSubmit={handleSendMessage} className="px-3 py-3 pb-[calc(env(safe-area-inset-bottom)+0.9rem)] md:px-5 md:py-2.5 md:pb-2.5">
                 <input ref={attachmentUploadRef} type="file" className="hidden" onChange={(event) => void handleComposerAttachmentChange(event)} />
                 {isEditingMessage && editingMessage ? (
                   <div className="mb-3 flex items-center justify-between gap-3 rounded-[22px] border border-emerald-100 bg-emerald-50/80 px-4 py-3">
@@ -7015,8 +7288,8 @@ export default function HomePage() {
                     </button>
                   </div>
                 ) : null}
-                <div className="flex items-end gap-3">
-                  <div className="flex items-center gap-2 pb-0.5">
+                <div className="flex flex-col gap-3 md:flex-row md:items-end">
+                  <div className="order-2 flex items-center gap-2 overflow-x-auto pb-0.5 md:order-1 md:overflow-visible">
                     <div className="relative">
                       <button type="button" aria-label="Biblioteca de emoji" title="Emoji" onClick={() => setShowEmojiPicker((current) => !current)} disabled={shouldDisableComposer || sendLoading} className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                         <Smile className="h-4 w-4" />
@@ -7071,7 +7344,7 @@ export default function HomePage() {
                       {recordingAudio ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                     </button>
                   </div>
-                  <div className="relative flex-1">
+                  <div className="order-1 relative flex-1 md:order-2">
                     <textarea
                       value={messageInput}
                       onChange={(event) => setMessageInput(event.target.value)}
@@ -7080,7 +7353,7 @@ export default function HomePage() {
                       placeholder={canSendToSelectedTicket ? (isEditingMessage ? "Edite a mensagem" : composerPlaceholder) : composerPlaceholder}
                       disabled={shouldDisableComposer}
                       onPaste={(event) => void handleComposerPaste(event)}
-                      className={`min-h-[44px] max-h-28 w-full resize-none rounded-[24px] border px-5 py-2.5 text-sm leading-5 text-slate-700 outline-none transition disabled:cursor-not-allowed disabled:text-slate-400 ${
+                      className={`min-h-[56px] max-h-36 w-full resize-none rounded-[28px] border px-4 py-3 text-[16px] leading-6 text-slate-700 outline-none transition md:min-h-[44px] md:max-h-28 md:rounded-[24px] md:px-5 md:py-2.5 md:text-sm md:leading-5 disabled:cursor-not-allowed disabled:text-slate-400 ${
                         composerInternalNoteMode
                           ? "border-[#eadc7a] bg-[#fff7b8] focus:border-[#d6c14a] focus:bg-[#fffbe0] disabled:bg-[#f5efb7]"
                           : "border-slate-200 bg-[#f8fafc] focus:border-slate-300 focus:bg-white disabled:bg-slate-100"
@@ -7112,25 +7385,27 @@ export default function HomePage() {
                         </div>
                       ) : null}
                   </div>
-                  <button
-                    type="button"
-                    aria-label="Agendar mensagem"
-                    onClick={() => setShowScheduleModal(true)}
-                    disabled={sendLoading || isEditingMessage || (!messageInput.trim() && !composerAttachment) || shouldDisableComposer}
-                    className="inline-flex h-10 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-[13px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-                  >
-                    <Clock className="h-4 w-4" />
-                    Agendar
-                  </button>
-                  <button
-                    type="submit"
-                    aria-label="Enviar mensagem"
-                    disabled={sendLoading || (!messageInput.trim() && !composerAttachment) || shouldDisableComposer}
-                    className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-[#1A1C32] px-4 text-[13px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-[#252844] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
-                  >
-                    <Send className="h-4 w-4" />
-                    {sendLoading ? (isEditingMessage ? "Salvando" : "Enviando") : (isEditingMessage ? "Salvar" : "Enviar")}
-                  </button>
+                  <div className="order-3 flex items-center gap-2 md:w-auto">
+                    <button
+                      type="button"
+                      aria-label="Agendar mensagem"
+                      onClick={() => setShowScheduleModal(true)}
+                      disabled={sendLoading || isEditingMessage || (!messageInput.trim() && !composerAttachment) || shouldDisableComposer}
+                      className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-[12px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-50 md:h-10 md:flex-none md:text-[13px] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                    >
+                      <Clock className="h-4 w-4" />
+                      Agendar
+                    </button>
+                    <button
+                      type="submit"
+                      aria-label="Enviar mensagem"
+                      disabled={sendLoading || (!messageInput.trim() && !composerAttachment) || shouldDisableComposer}
+                      className="inline-flex h-11 min-w-[128px] flex-1 items-center justify-center gap-2 rounded-full bg-[#1A1C32] px-4 text-[12px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-[#252844] md:h-10 md:min-w-0 md:flex-none md:text-[13px] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+                    >
+                      <Send className="h-4 w-4" />
+                      {sendLoading ? (isEditingMessage ? "Salvando" : "Enviando") : (isEditingMessage ? "Salvar" : "Enviar")}
+                    </button>
+                  </div>
                 </div>
               </form>
               </div>
@@ -8356,6 +8631,21 @@ export default function HomePage() {
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              aria-label={browserNotificationsEnabled ? "Notificações do navegador ativas" : "Ativar notificações do navegador"}
+              title={browserNotificationsEnabled ? "Notificações do navegador ativas" : "Ativar notificações do navegador"}
+              onClick={() => void handleEnableBrowserNotifications()}
+              disabled={!browserNotificationsSupported}
+              className={`inline-flex h-10 items-center gap-2 rounded-full border px-3 text-sm transition ${
+                browserNotificationsEnabled
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                  : "border-white/10 bg-white/10 text-white hover:bg-white/15"
+              } disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-white/40`}
+            >
+              {browserNotificationsEnabled ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
+              <span className="hidden md:inline">{browserNotificationsEnabled ? "Notificações ativas" : "Ativar notificações"}</span>
+            </button>
             <button
               type="button"
               aria-label="Atualizar dados do painel"
