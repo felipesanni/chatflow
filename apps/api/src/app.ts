@@ -70,44 +70,51 @@ export async function buildApp() {
   app.setErrorHandler((error, request, reply) => {
     request.log.error(error);
 
-    const statusCode = typeof (error as { statusCode?: number }).statusCode === 'number'
-      ? (error as { statusCode: number }).statusCode
+    const normalizedError = typeof error === 'object' && error !== null
+      ? error as { statusCode?: number; code?: string; message?: string }
+      : {};
+
+    const statusCode = typeof normalizedError.statusCode === 'number'
+      ? normalizedError.statusCode
       : 500;
 
     const message = (() => {
-      if (error.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
-        return 'O arquivo ou conteúdo enviado é grande demais para ser processado.';
+      if (normalizedError.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
+        return 'O arquivo ou conteudo enviado e grande demais para ser processado.';
       }
 
-      if (error.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE') {
-        return 'Tipo de conteúdo não suportado para esta operação.';
+      if (normalizedError.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE') {
+        return 'Tipo de conteudo nao suportado para esta operacao.';
       }
 
-      if (error.message === 'Request body is too large' || /body.+too large/i.test(error.message)) {
-        return 'O arquivo ou conteúdo enviado é grande demais para ser processado.';
+      if (
+        normalizedError.message === 'Request body is too large'
+        || (typeof normalizedError.message === 'string' && /body.+too large/i.test(normalizedError.message))
+      ) {
+        return 'O arquivo ou conteudo enviado e grande demais para ser processado.';
       }
 
-      if (error.message === 'Unsupported Media Type') {
-        return 'Tipo de conteúdo não suportado para esta operação.';
+      if (normalizedError.message === 'Unsupported Media Type') {
+        return 'Tipo de conteudo nao suportado para esta operacao.';
       }
 
-      if (error.message === 'Unauthorized') {
-        return 'Acesso não autorizado.';
+      if (normalizedError.message === 'Unauthorized') {
+        return 'Acesso nao autorizado.';
       }
 
-      if (error.message === 'Forbidden') {
-        return 'Você não possui permissão para executar esta ação.';
+      if (normalizedError.message === 'Forbidden') {
+        return 'Voce nao possui permissao para executar esta acao.';
       }
 
-      if (error.message === 'Not Found') {
-        return 'Recurso não encontrado.';
+      if (normalizedError.message === 'Not Found') {
+        return 'Recurso nao encontrado.';
       }
 
       if (statusCode >= 500) {
-        return 'Ocorreu um erro interno ao processar a solicitação.';
+        return 'Ocorreu um erro interno ao processar a solicitacao.';
       }
 
-      return error.message || 'Não foi possível concluir a solicitação.';
+      return normalizedError.message || 'Nao foi possivel concluir a solicitacao.';
     })();
 
     if (!reply.sent) {
