@@ -48,6 +48,12 @@ export type BrowserPushDispatchResult = {
   deliveredCount: number;
   failedCount: number;
   removedCount: number;
+  failures: Array<{
+    subscriptionId: string;
+    endpoint: string;
+    statusCode: number | null;
+    message: string;
+  }>;
 };
 
 function toWebPushSubscription(subscription: BrowserPushSubscriptionInput) {
@@ -115,7 +121,17 @@ async function notifyBrowserPushSubscription(
     auth: string;
   },
   payload: BrowserPushPayload,
-): Promise<'delivered' | 'failed' | 'removed'> {
+): Promise<
+  | { status: 'delivered' }
+  | { status: 'removed' }
+  | {
+      status: 'failed';
+      subscriptionId: string;
+      endpoint: string;
+      statusCode: number | null;
+      message: string;
+    }
+> {
   try {
     await webpush.sendNotification(
       toWebPushSubscription({
@@ -133,7 +149,7 @@ async function notifyBrowserPushSubscription(
       data: { lastUsedAt: new Date() },
     });
 
-    return 'delivered';
+    return { status: 'delivered' };
   } catch (error) {
     const statusCode =
       typeof error === 'object' && error !== null && 'statusCode' in error
@@ -144,18 +160,23 @@ async function notifyBrowserPushSubscription(
       await app.prisma.browserPushSubscription.delete({
         where: { id: subscription.id },
       }).catch(() => null);
-      return 'removed';
+      return { status: 'removed' };
     }
+
+    const errorMessage = error instanceof Error
+      ? error.message
+      : 'Falha desconhecida ao enviar notificacao web push.';
 
     app.log.error(
       {
         action: 'browser_push_delivery_failed',
         subscriptionId: subscription.id,
         endpoint: subscription.endpoint,
+        statusCode,
         error: error instanceof Error
           ? {
               name: error.name,
-              message: error.message,
+              message: errorMessage,
               stack: error.stack,
             }
           : error,
@@ -163,7 +184,13 @@ async function notifyBrowserPushSubscription(
       'Falha ao enviar notificacao web push.',
     );
 
-    return 'failed';
+    return {
+      status: 'failed',
+      subscriptionId: subscription.id,
+      endpoint: subscription.endpoint,
+      statusCode,
+      message: errorMessage,
+    };
   }
 }
 
@@ -182,6 +209,7 @@ export async function sendBrowserPushToUsers(
       deliveredCount: 0,
       failedCount: 0,
       removedCount: 0,
+      failures: [],
     };
   }
 
@@ -216,6 +244,7 @@ export async function sendBrowserPushToUsers(
       deliveredCount: 0,
       failedCount: 0,
       removedCount: 0,
+      failures: [],
     };
   }
 
@@ -238,9 +267,17 @@ export async function sendBrowserPushToUsers(
     enabled: webPushEnabled,
     requestedUserIds: uniqueUserIds,
     matchedSubscriptions: subscriptions.length,
-    deliveredCount: deliveryResults.filter((result) => result === 'delivered').length,
-    failedCount: deliveryResults.filter((result) => result === 'failed').length,
-    removedCount: deliveryResults.filter((result) => result === 'removed').length,
+    deliveredCount: deliveryResults.filter((result) => result.status === 'delivered').length,
+    failedCount: deliveryResults.filter((result) => result.status === 'failed').length,
+    removedCount: deliveryResults.filter((result) => result.status === 'removed').length,
+    failures: deliveryResults
+      .filter((result): result is Extract<typeof result, { status: 'failed' }> => result.status === 'failed')
+      .map((result) => ({
+        subscriptionId: result.subscriptionId,
+        endpoint: result.endpoint,
+        statusCode: result.statusCode,
+        message: result.message,
+      })),
   };
 
   app.log.info(
