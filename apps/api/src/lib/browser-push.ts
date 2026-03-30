@@ -57,7 +57,7 @@ export async function saveBrowserPushSubscription(
   subscription: BrowserPushSubscriptionInput,
   userAgent?: string | null,
 ) {
-  return app.prisma.browserPushSubscription.upsert({
+  const savedSubscription = await app.prisma.browserPushSubscription.upsert({
     where: { endpoint: subscription.endpoint },
     create: {
       id: randomUUID(),
@@ -76,6 +76,17 @@ export async function saveBrowserPushSubscription(
       lastUsedAt: new Date(),
     },
   });
+
+  app.log.info(
+    {
+      action: 'browser_push_subscription_saved',
+      userId,
+      endpoint: subscription.endpoint,
+    },
+    'Subscription de web push registrada para o usuario.',
+  );
+
+  return savedSubscription;
 }
 
 export async function deleteBrowserPushSubscription(app: FastifyInstance, endpoint: string, userId?: string) {
@@ -180,6 +191,17 @@ export async function sendBrowserPushToUsers(
     );
     return;
   }
+
+  app.log.info(
+    {
+      action: 'browser_push_dispatch_started',
+      requestedUserIds: uniqueUserIds,
+      matchedSubscriptions: subscriptions.length,
+      title: payload.title,
+      tag: payload.tag,
+    },
+    'Enviando notificacao web push para subscriptions registradas.',
+  );
 
   await Promise.all(subscriptions.map((subscription) => notifyBrowserPushSubscription(app, subscription, payload)));
 }
