@@ -390,6 +390,11 @@ type ApiAccessTokenCreateResponse = {
   message: string;
 };
 
+type BrowserPushConfigResponse = {
+  enabled: boolean;
+  publicKey: string | null;
+};
+
 const permissionDefinitions = [
   { key: "dashboard.view", group: "Painel geral", label: "Visualizar painel geral" },
   { key: "tickets.view", group: "Atendimento", label: "Visualizar atendimento" },
@@ -1152,6 +1157,24 @@ function normalizeApiTesterPath(value: string) {
   return `/${trimmed}`;
 }
 
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const normalized = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = typeof window !== "undefined" ? window.atob(normalized) : "";
+  return Uint8Array.from(raw, (char) => char.charCodeAt(0));
+}
+
+function serializePushSubscription(subscription: PushSubscription) {
+  const json = subscription.toJSON();
+  return {
+    endpoint: subscription.endpoint,
+    keys: {
+      p256dh: json.keys?.p256dh ?? "",
+      auth: json.keys?.auth ?? "",
+    },
+  };
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? {});
 
@@ -1563,6 +1586,7 @@ export default function HomePage() {
   const [browserNotificationPermission, setBrowserNotificationPermission] = React.useState<NotificationPermission>(
     typeof window !== "undefined" && "Notification" in window ? Notification.permission : "default",
   );
+  const [browserPushEnabled, setBrowserPushEnabled] = React.useState(false);
   const [showOnlyUnread, setShowOnlyUnread] = React.useState(false);
   const [showAllTickets, setShowAllTickets] = React.useState(false);
   const [showArchivedTickets, setShowArchivedTickets] = React.useState(false);
@@ -2895,6 +2919,7 @@ export default function HomePage() {
         payload?.direction !== "inbound"
         || !ticketIdToRefresh
         || !browserNotificationsEnabled
+        || browserPushEnabled
       ) {
         return;
       }
@@ -2954,7 +2979,7 @@ export default function HomePage() {
       socket.disconnect();
       socketRef.current = null;
     };
-    }, [refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
+    }, [browserNotificationsEnabled, browserPushEnabled, refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!user) return;
@@ -4950,6 +4975,16 @@ export default function HomePage() {
       browserNotificationRegistrationRef.current = null;
     });
 
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) {
+      return;
+    }
+
     const handleServiceWorkerMessage = (event: MessageEvent) => {
       const payload = event.data as { type?: string; url?: string } | undefined;
       if (payload?.type !== "chatflow-notification-open-ticket" || !payload.url) {
@@ -4976,12 +5011,78 @@ export default function HomePage() {
     };
 
     navigator.serviceWorker.addEventListener("message", handleServiceWorkerMessage);
-
     return () => {
-      disposed = true;
       navigator.serviceWorker.removeEventListener("message", handleServiceWorkerMessage);
     };
   }, [isMobileViewport, openTicketFromNotification, tickets]);
+
+  React.useEffect(() => {
+    if (
+      typeof window === "undefined"
+      || !user
+      || !("serviceWorker" in navigator)
+      || !("PushManager" in window)
+    ) {
+      setBrowserPushEnabled(false);
+      return;
+    }
+
+    let disposed = false;
+
+    const syncBrowserPush = async () => {
+      try {
+        const config = await apiFetch<BrowserPushConfigResponse>("/browser-notifications/config", { method: "GET" });
+        if (disposed) return;
+
+        if (!config.enabled || !config.publicKey) {
+          setBrowserPushEnabled(false);
+          return;
+        }
+
+        const registration = browserNotificationRegistrationRef.current ?? await navigator.serviceWorker.ready;
+        if (disposed) return;
+
+        browserNotificationRegistrationRef.current = registration;
+        const existingSubscription = await registration.pushManager.getSubscription();
+
+        if (browserNotificationPermission !== "granted") {
+          setBrowserPushEnabled(false);
+          if (existingSubscription) {
+            await apiFetch("/browser-notifications/subscriptions", {
+              method: "DELETE",
+              body: JSON.stringify({ endpoint: existingSubscription.endpoint }),
+            }).catch(() => undefined);
+            await existingSubscription.unsubscribe().catch(() => false);
+          }
+          return;
+        }
+
+        const activeSubscription = existingSubscription ?? await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(config.publicKey),
+        });
+
+        if (disposed) return;
+
+        await apiFetch("/browser-notifications/subscriptions", {
+          method: "POST",
+          body: JSON.stringify(serializePushSubscription(activeSubscription)),
+        });
+
+        setBrowserPushEnabled(true);
+      } catch {
+        if (!disposed) {
+          setBrowserPushEnabled(false);
+        }
+      }
+    };
+
+    void syncBrowserPush();
+
+    return () => {
+      disposed = true;
+    };
+  }, [browserNotificationPermission, user]);
 
   React.useEffect(() => {
     if (typeof window === "undefined") {

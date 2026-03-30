@@ -17,6 +17,9 @@ const envSchema = z.object({
   QUEUE_WEBHOOK_CONCURRENCY: z.coerce.number().int().positive().default(4),
   SESSION_SECRET: z.string().min(8),
   WEB_APP_URL: z.string().url(),
+  WEB_PUSH_VAPID_PUBLIC_KEY: z.string().min(1).optional(),
+  WEB_PUSH_VAPID_PRIVATE_KEY: z.string().min(1).optional(),
+  WEB_PUSH_SUBJECT: z.string().min(1).optional(),
   ADMIN_BOOTSTRAP_EMAIL: z.string().email().optional(),
   ADMIN_BOOTSTRAP_PASSWORD: z.string().min(8).optional(),
   ADMIN_BOOTSTRAP_NAME: z.string().min(2).optional(),
@@ -42,6 +45,22 @@ export function loadEnv(): AppEnv {
       && DISALLOWED_PRODUCTION_SECRETS.has(parsed.data.ADMIN_BOOTSTRAP_PASSWORD)
     ) {
       throw new Error('Invalid API environment: ADMIN_BOOTSTRAP_PASSWORD must be replaced or removed before running in production.');
+    }
+
+    const hasPartialWebPushConfig =
+      Boolean(parsed.data.WEB_PUSH_VAPID_PUBLIC_KEY)
+      || Boolean(parsed.data.WEB_PUSH_VAPID_PRIVATE_KEY)
+      || Boolean(parsed.data.WEB_PUSH_SUBJECT);
+
+    const hasFullWebPushConfig =
+      Boolean(parsed.data.WEB_PUSH_VAPID_PUBLIC_KEY)
+      && Boolean(parsed.data.WEB_PUSH_VAPID_PRIVATE_KEY)
+      && Boolean(parsed.data.WEB_PUSH_SUBJECT);
+
+    if (hasPartialWebPushConfig && !hasFullWebPushConfig) {
+      throw new Error(
+        'Invalid API environment: WEB_PUSH_VAPID_PUBLIC_KEY, WEB_PUSH_VAPID_PRIVATE_KEY e WEB_PUSH_SUBJECT devem ser configurados juntos.',
+      );
     }
   }
 

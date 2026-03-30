@@ -6,6 +6,22 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+self.addEventListener("push", (event) => {
+  const payload = event.data?.json?.() ?? {};
+  const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "Nova mensagem";
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body:
+        typeof payload.body === "string" && payload.body.trim()
+          ? payload.body.trim()
+          : "Você recebeu uma nova mensagem.",
+      tag: typeof payload.tag === "string" ? payload.tag : undefined,
+      data: payload.data && typeof payload.data === "object" ? payload.data : {},
+    }),
+  );
+});
+
 self.addEventListener("notificationclick", (event) => {
   const targetUrl = event.notification?.data?.url || "/";
   event.notification.close();

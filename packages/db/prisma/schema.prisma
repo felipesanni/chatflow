@@ -98,6 +98,7 @@ model User {
   scheduledMessages ScheduledMessage[] @relation("scheduled_message_created_by")
   dashboardExcludedCustomers Customer[] @relation("dashboard_excluded_by_user")
   apiAccessTokens ApiAccessToken[] @relation("api_access_token_created_by")
+  browserPushSubscriptions BrowserPushSubscription[]
 
   @@map("users")
 }
@@ -115,6 +116,22 @@ model ApiAccessToken {
   createdByUser   User?    @relation("api_access_token_created_by", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@map("api_access_tokens")
+}
+
+model BrowserPushSubscription {
+  id         String   @id @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  endpoint   String   @unique
+  p256dh     String
+  auth       String
+  userAgent  String?  @map("user_agent")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  lastUsedAt DateTime? @map("last_used_at")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("browser_push_subscriptions")
 }
 
 model Agent {

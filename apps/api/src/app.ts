@@ -23,6 +23,7 @@ import { scheduledMessageRoutes } from './modules/scheduled-messages/routes.js';
 import { whatsappRoutes } from './modules/whatsapp/routes.js';
 import { apiAccessRoutes } from './modules/api-access/routes.js';
 import { externalRoutes } from './modules/external/routes.js';
+import { browserNotificationRoutes } from './modules/browser-notifications/routes.js';
 
 export async function buildApp() {
   const env = loadEnv();
@@ -66,6 +67,7 @@ export async function buildApp() {
   await app.register(whatsappRoutes, { prefix: '/api' });
   await app.register(apiAccessRoutes, { prefix: '/api' });
   await app.register(externalRoutes, { prefix: '/api' });
+  await app.register(browserNotificationRoutes, { prefix: '/api' });
 
   app.setErrorHandler((error, request, reply) => {
     request.log.error(error);

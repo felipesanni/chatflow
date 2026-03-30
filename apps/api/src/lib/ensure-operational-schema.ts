@@ -132,6 +132,27 @@ const operationalStatements = [
     );
   `,
   `
+    CREATE TABLE IF NOT EXISTS browser_push_subscriptions (
+      id UUID PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      user_agent TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_used_at TIMESTAMPTZ
+    );
+  `,
+  `
+    CREATE UNIQUE INDEX IF NOT EXISTS browser_push_subscriptions_endpoint_key
+      ON browser_push_subscriptions(endpoint);
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS browser_push_subscriptions_user_id_idx
+      ON browser_push_subscriptions(user_id);
+  `,
+  `
     CREATE UNIQUE INDEX IF NOT EXISTS api_access_tokens_token_hash_key
       ON api_access_tokens(token_hash);
   `,

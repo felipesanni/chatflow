@@ -5,6 +5,7 @@ import { parseEvolutionPayload } from './evolution.js';
 import { loadEnv } from '../config/env.js';
 import { decryptSecret } from './secrets.js';
 import { fetchEvolutionGroupName, fetchEvolutionProfilePictureUrl } from './evolution-client.js';
+import { notifyInboundTicketMessage } from './inbound-notifications.js';
 import {
   buildActiveTicketIdentityWhere,
   buildTicketAliasCandidates,
@@ -1246,6 +1247,13 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         messageId: createdMessage.id,
         direction: createdMessage.direction,
       });
+
+      if (createdMessage.direction === 'inbound') {
+        await notifyInboundTicketMessage(app, {
+          ticketId: ticket.id,
+          preview: ticket.lastMessagePreview,
+        });
+      }
     }
 
     app.io.emit('ticket.updated', {
