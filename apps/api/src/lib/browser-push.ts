@@ -41,6 +41,15 @@ export type BrowserPushPayload = {
   data?: Record<string, unknown>;
 };
 
+export type BrowserPushDispatchResult = {
+  enabled: boolean;
+  requestedUserIds: string[];
+  matchedSubscriptions: number;
+  deliveredCount: number;
+  failedCount: number;
+  removedCount: number;
+};
+
 function toWebPushSubscription(subscription: BrowserPushSubscriptionInput) {
   return {
     endpoint: subscription.endpoint,
@@ -106,7 +115,7 @@ async function notifyBrowserPushSubscription(
     auth: string;
   },
   payload: BrowserPushPayload,
-) {
+): Promise<'delivered' | 'failed' | 'removed'> {
   try {
     await webpush.sendNotification(
       toWebPushSubscription({
@@ -123,6 +132,8 @@ async function notifyBrowserPushSubscription(
       where: { id: subscription.id },
       data: { lastUsedAt: new Date() },
     });
+
+    return 'delivered';
   } catch (error) {
     const statusCode =
       typeof error === 'object' && error !== null && 'statusCode' in error
@@ -133,7 +144,7 @@ async function notifyBrowserPushSubscription(
       await app.prisma.browserPushSubscription.delete({
         where: { id: subscription.id },
       }).catch(() => null);
-      return;
+      return 'removed';
     }
 
     app.log.error(
@@ -151,6 +162,8 @@ async function notifyBrowserPushSubscription(
       },
       'Falha ao enviar notificacao web push.',
     );
+
+    return 'failed';
   }
 }
 
@@ -158,12 +171,19 @@ export async function sendBrowserPushToUsers(
   app: FastifyInstance,
   userIds: string[],
   payload: BrowserPushPayload,
-) {
-  if (!webPushEnabled || userIds.length === 0) {
-    return;
-  }
-
+): Promise<BrowserPushDispatchResult> {
   const uniqueUserIds = Array.from(new Set(userIds));
+
+  if (!webPushEnabled || userIds.length === 0) {
+    return {
+      enabled: webPushEnabled,
+      requestedUserIds: uniqueUserIds,
+      matchedSubscriptions: 0,
+      deliveredCount: 0,
+      failedCount: 0,
+      removedCount: 0,
+    };
+  }
 
   const subscriptions = await app.prisma.browserPushSubscription.findMany({
     where: {
@@ -189,7 +209,14 @@ export async function sendBrowserPushToUsers(
       },
       'Nenhuma subscription ativa encontrada para enviar notificacao web push.',
     );
-    return;
+    return {
+      enabled: webPushEnabled,
+      requestedUserIds: uniqueUserIds,
+      matchedSubscriptions: 0,
+      deliveredCount: 0,
+      failedCount: 0,
+      removedCount: 0,
+    };
   }
 
   app.log.info(
@@ -203,5 +230,28 @@ export async function sendBrowserPushToUsers(
     'Enviando notificacao web push para subscriptions registradas.',
   );
 
-  await Promise.all(subscriptions.map((subscription) => notifyBrowserPushSubscription(app, subscription, payload)));
+  const deliveryResults = await Promise.all(
+    subscriptions.map((subscription) => notifyBrowserPushSubscription(app, subscription, payload)),
+  );
+
+  const summary = {
+    enabled: webPushEnabled,
+    requestedUserIds: uniqueUserIds,
+    matchedSubscriptions: subscriptions.length,
+    deliveredCount: deliveryResults.filter((result) => result === 'delivered').length,
+    failedCount: deliveryResults.filter((result) => result === 'failed').length,
+    removedCount: deliveryResults.filter((result) => result === 'removed').length,
+  };
+
+  app.log.info(
+    {
+      action: 'browser_push_dispatch_finished',
+      ...summary,
+      title: payload.title,
+      tag: payload.tag,
+    },
+    'Tentativa de envio de notificacao web push concluida.',
+  );
+
+  return summary;
 }
