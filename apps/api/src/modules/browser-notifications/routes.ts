@@ -4,6 +4,7 @@ import {
   getBrowserPushConfig,
   saveBrowserPushSubscription,
   deleteBrowserPushSubscription,
+  deleteAllBrowserPushSubscriptions,
   sendBrowserPushToUsers,
 } from '../../lib/browser-push.js';
 import { requireSession } from '../../lib/auth-guard.js';
@@ -107,8 +108,14 @@ export const browserNotificationRoutes: FastifyPluginAsync = async (app) => {
     const session = requireSession(request, reply);
     if (!session) return;
 
-    const body = deletePushSubscriptionSchema.parse(request.body);
-    await deleteBrowserPushSubscription(app, body.endpoint, session.userId);
+    const body = deletePushSubscriptionSchema.safeParse(request.body);
+
+    if (body.success) {
+      await deleteBrowserPushSubscription(app, body.data.endpoint, session.userId);
+      return reply.code(204).send();
+    }
+
+    await deleteAllBrowserPushSubscriptions(app, session.userId);
 
     return reply.code(204).send();
   });

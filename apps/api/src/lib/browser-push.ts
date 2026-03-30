@@ -112,6 +112,12 @@ export async function deleteBrowserPushSubscription(app: FastifyInstance, endpoi
   await app.prisma.browserPushSubscription.deleteMany({ where });
 }
 
+export async function deleteAllBrowserPushSubscriptions(app: FastifyInstance, userId: string) {
+  await app.prisma.browserPushSubscription.deleteMany({
+    where: { userId },
+  });
+}
+
 async function notifyBrowserPushSubscription(
   app: FastifyInstance,
   subscription: {
