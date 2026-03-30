@@ -1164,6 +1164,24 @@ function urlBase64ToUint8Array(base64String: string) {
   return Uint8Array.from(raw, (char) => char.charCodeAt(0));
 }
 
+function applicationServerKeysMatch(
+  expectedKey: Uint8Array,
+  currentKey: ArrayBuffer | null | undefined,
+) {
+  if (!currentKey) return false;
+
+  const currentKeyBytes = new Uint8Array(currentKey);
+  if (currentKeyBytes.length !== expectedKey.length) return false;
+
+  for (let index = 0; index < expectedKey.length; index += 1) {
+    if (currentKeyBytes[index] !== expectedKey[index]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function serializePushSubscription(subscription: PushSubscription) {
   const json = subscription.toJSON();
   return {
@@ -5058,7 +5076,8 @@ export default function HomePage() {
         if (disposed) return;
 
         browserNotificationRegistrationRef.current = registration;
-        const existingSubscription = await registration.pushManager.getSubscription();
+        const expectedApplicationServerKey = urlBase64ToUint8Array(config.publicKey);
+        let existingSubscription = await registration.pushManager.getSubscription();
 
         if (browserNotificationPermission !== "granted") {
           setBrowserPushEnabled(false);
@@ -5072,9 +5091,23 @@ export default function HomePage() {
           return;
         }
 
+        const currentApplicationServerKey = existingSubscription?.options?.applicationServerKey;
+        const mustRenewSubscription = existingSubscription
+          ? !applicationServerKeysMatch(expectedApplicationServerKey, currentApplicationServerKey)
+          : false;
+
+        if (mustRenewSubscription && existingSubscription) {
+          await apiFetch("/browser-notifications/subscriptions", {
+            method: "DELETE",
+            body: JSON.stringify({ endpoint: existingSubscription.endpoint }),
+          }).catch(() => undefined);
+          await existingSubscription.unsubscribe().catch(() => false);
+          existingSubscription = null;
+        }
+
         const activeSubscription = existingSubscription ?? await registration.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(config.publicKey),
+          applicationServerKey: expectedApplicationServerKey,
         });
 
         if (disposed) return;
