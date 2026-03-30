@@ -38,6 +38,8 @@ export type BrowserPushPayload = {
   title: string;
   body: string;
   tag?: string;
+  icon?: string;
+  badge?: string;
   data?: Record<string, unknown>;
 };
 

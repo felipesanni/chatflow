@@ -2969,21 +2969,26 @@ export default function HomePage() {
           openTicketFromNotification(matchingTicket);
         };
 
-        const notificationData = {
-          ticketId: matchingTicket.id,
-          url: notificationUrl,
-        };
+          const notificationData = {
+            ticketId: matchingTicket.id,
+            url: notificationUrl,
+            customerName: matchingTicket.customerName,
+          };
+          const notificationIcon = matchingTicket.customerAvatarUrl || "/favicon.ico";
 
-        if (typeof document !== "undefined" && document.visibilityState === "hidden" && browserNotificationRegistrationRef.current) {
-          void browserNotificationRegistrationRef.current.showNotification(notificationTitle, {
-            body: notificationBody,
-            tag: `ticket:${matchingTicket.id}`,
-            data: notificationData,
-          }).catch(() => {
-            const fallbackNotification = new Notification(notificationTitle, {
+          if (typeof document !== "undefined" && document.visibilityState === "hidden" && browserNotificationRegistrationRef.current) {
+            void browserNotificationRegistrationRef.current.showNotification(notificationTitle, {
               body: notificationBody,
+              icon: notificationIcon,
+              badge: "/favicon.ico",
               tag: `ticket:${matchingTicket.id}`,
-            });
+              data: notificationData,
+            }).catch(() => {
+              const fallbackNotification = new Notification(notificationTitle, {
+                body: notificationBody,
+                icon: notificationIcon,
+                tag: `ticket:${matchingTicket.id}`,
+              });
 
             fallbackNotification.onclick = () => {
               openMatchingTicket();
@@ -2993,10 +2998,11 @@ export default function HomePage() {
           return;
         }
 
-        const notification = new Notification(notificationTitle, {
-          body: notificationBody,
-          tag: `ticket:${matchingTicket.id}`,
-        });
+          const notification = new Notification(notificationTitle, {
+            body: notificationBody,
+            icon: notificationIcon,
+            tag: `ticket:${matchingTicket.id}`,
+          });
 
         notification.onclick = () => {
           openMatchingTicket();

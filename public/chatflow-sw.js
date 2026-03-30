@@ -9,13 +9,18 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("push", (event) => {
   const payload = event.data?.json?.() ?? {};
   const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "Nova mensagem";
+  const body =
+    typeof payload.body === "string" && payload.body.trim()
+      ? payload.body.trim()
+      : "Voce recebeu uma nova mensagem.";
+  const icon = typeof payload.icon === "string" && payload.icon.trim() ? payload.icon.trim() : "/favicon.ico";
+  const badge = typeof payload.badge === "string" && payload.badge.trim() ? payload.badge.trim() : "/favicon.ico";
 
   event.waitUntil(
     self.registration.showNotification(title, {
-      body:
-        typeof payload.body === "string" && payload.body.trim()
-          ? payload.body.trim()
-          : "Você recebeu uma nova mensagem.",
+      body,
+      icon,
+      badge,
       tag: typeof payload.tag === "string" ? payload.tag : undefined,
       data: payload.data && typeof payload.data === "object" ? payload.data : {},
     }),

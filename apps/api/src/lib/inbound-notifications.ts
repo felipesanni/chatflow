@@ -5,6 +5,13 @@ function buildTicketUrl(ticketId: string) {
   return `/?ticketId=${encodeURIComponent(ticketId)}`;
 }
 
+function toAbsoluteAppUrl(path: string) {
+  const baseUrl = process.env.WEB_APP_URL?.trim() || '';
+  if (!baseUrl) return path;
+
+  return new URL(path, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).toString();
+}
+
 export async function notifyInboundTicketMessage(
   app: FastifyInstance,
   params: {
@@ -17,6 +24,7 @@ export async function notifyInboundTicketMessage(
     select: {
       id: true,
       customerNameSnapshot: true,
+      customerAvatarUrl: true,
       currentAgentId: true,
       currentQueue: {
         select: {
@@ -67,12 +75,17 @@ export async function notifyInboundTicketMessage(
   );
 
   await sendBrowserPushToUsers(app, recipientUserIds, {
-    title: ticket.customerNameSnapshot || 'Nova mensagem',
+    title: ticket.customerNameSnapshot
+      ? `Nova mensagem de ${ticket.customerNameSnapshot}`
+      : 'Nova mensagem no ChatFlow',
     body: params.preview?.trim() || 'Nova mensagem recebida.',
     tag: `ticket:${ticket.id}`,
+    icon: ticket.customerAvatarUrl || toAbsoluteAppUrl('/favicon.ico'),
+    badge: toAbsoluteAppUrl('/favicon.ico'),
     data: {
       ticketId: ticket.id,
       url: buildTicketUrl(ticket.id),
+      customerName: ticket.customerNameSnapshot,
     },
   });
 }
