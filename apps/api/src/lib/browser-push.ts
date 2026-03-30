@@ -152,10 +152,12 @@ export async function sendBrowserPushToUsers(
     return;
   }
 
+  const uniqueUserIds = Array.from(new Set(userIds));
+
   const subscriptions = await app.prisma.browserPushSubscription.findMany({
     where: {
       userId: {
-        in: Array.from(new Set(userIds)),
+        in: uniqueUserIds,
       },
     },
     select: {
@@ -165,6 +167,19 @@ export async function sendBrowserPushToUsers(
       auth: true,
     },
   });
+
+  if (subscriptions.length === 0) {
+    app.log.info(
+      {
+        action: 'browser_push_skipped_without_subscriptions',
+        requestedUserIds: uniqueUserIds,
+        title: payload.title,
+        tag: payload.tag,
+      },
+      'Nenhuma subscription ativa encontrada para enviar notificacao web push.',
+    );
+    return;
+  }
 
   await Promise.all(subscriptions.map((subscription) => notifyBrowserPushSubscription(app, subscription, payload)));
 }

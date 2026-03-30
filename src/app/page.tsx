@@ -2915,12 +2915,11 @@ export default function HomePage() {
         void refreshScheduledMessages(ticketIdToRefresh);
       }
 
-      if (
-        payload?.direction !== "inbound"
-        || !ticketIdToRefresh
-        || !browserNotificationsEnabled
-        || browserPushEnabled
-      ) {
+        if (
+          payload?.direction !== "inbound"
+          || !ticketIdToRefresh
+          || !browserNotificationsEnabled
+        ) {
         return;
       }
 
@@ -2948,27 +2947,43 @@ export default function HomePage() {
           ? `${window.location.origin}/?ticketId=${encodeURIComponent(matchingTicket.id)}`
           : `/?ticketId=${encodeURIComponent(matchingTicket.id)}`;
 
-      if (browserNotificationRegistrationRef.current) {
-        void browserNotificationRegistrationRef.current.showNotification(notificationTitle, {
+        const openMatchingTicket = () => {
+          openTicketFromNotification(matchingTicket);
+        };
+
+        const notificationData = {
+          ticketId: matchingTicket.id,
+          url: notificationUrl,
+        };
+
+        if (typeof document !== "undefined" && document.visibilityState === "hidden" && browserNotificationRegistrationRef.current) {
+          void browserNotificationRegistrationRef.current.showNotification(notificationTitle, {
+            body: notificationBody,
+            tag: `ticket:${matchingTicket.id}`,
+            data: notificationData,
+          }).catch(() => {
+            const fallbackNotification = new Notification(notificationTitle, {
+              body: notificationBody,
+              tag: `ticket:${matchingTicket.id}`,
+            });
+
+            fallbackNotification.onclick = () => {
+              openMatchingTicket();
+              fallbackNotification.close();
+            };
+          });
+          return;
+        }
+
+        const notification = new Notification(notificationTitle, {
           body: notificationBody,
           tag: `ticket:${matchingTicket.id}`,
-          data: {
-            ticketId: matchingTicket.id,
-            url: notificationUrl,
-          },
         });
-        return;
-      }
 
-      const notification = new Notification(notificationTitle, {
-        body: notificationBody,
-        tag: `ticket:${matchingTicket.id}`,
-      });
-
-      notification.onclick = () => {
-        openTicketFromNotification(matchingTicket);
-        notification.close();
-      };
+        notification.onclick = () => {
+          openMatchingTicket();
+          notification.close();
+        };
     });
     socket.on("message.updated", refreshForTicket);
     socket.on("instance.updated", () => void refreshInstances());
