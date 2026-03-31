@@ -201,6 +201,24 @@ function canTrustDirectMediaResponse(expectedMimeType: string, responseContentTy
   return true;
 }
 
+function looksLikeHtmlDocument(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return normalized.startsWith('<!doctype html')
+    || normalized.startsWith('<html')
+    || normalized.includes('<body')
+    || normalized.includes('<head');
+}
+
+function looksLikeBase64Payload(value: string) {
+  const normalized = value.trim().replace(/^["']|["']$/g, '').replace(/\s+/g, '');
+
+  if (normalized.length < 16 || normalized.length % 4 !== 0) {
+    return false;
+  }
+
+  return /^[a-z0-9+/=]+$/i.test(normalized);
+}
+
 async function parseMediaResponseAsDataUrl(response: Response, fallbackMimeType: string) {
   const contentType = response.headers.get('content-type') ?? '';
 
@@ -235,7 +253,14 @@ async function parseMediaResponseAsDataUrl(response: Response, fallbackMimeType:
       return rawText;
     }
 
+    if (looksLikeHtmlDocument(rawText)) {
+      return null;
+    }
+
     const normalizedText = rawText.replace(/^["']|["']$/g, '');
+    if (!looksLikeBase64Payload(normalizedText)) {
+      return null;
+    }
     return `data:${fallbackMimeType || 'application/octet-stream'};base64,${normalizedText}`;
   }
 
@@ -321,19 +346,26 @@ async function fetchEvolutionAttachmentDataUrl(params: {
           return `data:${mimeType};base64,${base64}`;
         }
 
-        if (contentType.startsWith('text/')) {
-          const rawText = (await response.text()).trim();
-          if (!rawText) {
-            continue;
-          }
+          if (contentType.startsWith('text/')) {
+            const rawText = (await response.text()).trim();
+            if (!rawText) {
+              continue;
+            }
 
-          if (rawText.startsWith('data:')) {
-            return rawText;
-          }
+            if (rawText.startsWith('data:')) {
+              return rawText;
+            }
 
-          const normalizedText = rawText.replace(/^["']|["']$/g, '');
-          return `data:${params.mimeType || 'application/octet-stream'};base64,${normalizedText}`;
-        }
+            if (looksLikeHtmlDocument(rawText)) {
+              continue;
+            }
+
+            const normalizedText = rawText.replace(/^["']|["']$/g, '');
+            if (!looksLikeBase64Payload(normalizedText)) {
+              continue;
+            }
+            return `data:${params.mimeType || 'application/octet-stream'};base64,${normalizedText}`;
+          }
 
         const arrayBuffer = await response.arrayBuffer();
         if (!arrayBuffer.byteLength) {
