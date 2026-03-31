@@ -8797,30 +8797,25 @@ export default function HomePage() {
   if (!user) {
     return (
       <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#eef3f6] px-5 py-10 sm:px-8">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(8,68,132,0.12),transparent_34%),linear-gradient(135deg,#f8fbfc_0%,#edf3f5_48%,#e7eef2_100%)]" />
-        <div className="absolute inset-x-0 top-0 h-28 bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(255,255,255,0))]" />
-        <div className="absolute left-[-8%] top-[12%] h-64 w-64 rounded-full bg-[#35bc4b]/10 blur-3xl" />
-        <div className="absolute bottom-[-8%] right-[-4%] h-72 w-72 rounded-full bg-[#084484]/10 blur-3xl" />
+        <div className="absolute inset-0 bg-[linear-gradient(135deg,#f9fbfc_0%,#eff4f7_52%,#e8eef2_100%)]" />
+        <div className="absolute inset-x-0 top-0 h-24 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(255,255,255,0))]" />
+        <div className="absolute left-[-10%] top-[14%] h-56 w-56 rounded-full bg-[#35bc4b]/6 blur-3xl" />
+        <div className="absolute bottom-[-10%] right-[-6%] h-60 w-60 rounded-full bg-[#084484]/7 blur-3xl" />
 
-        <section className="relative z-10 w-full max-w-[470px]">
-          <div className="rounded-[32px] border border-white/70 bg-white/94 px-6 py-8 shadow-[0_30px_90px_rgba(8,68,132,0.14)] backdrop-blur-xl sm:px-8 sm:py-10">
+        <section className="relative z-10 w-full max-w-[430px]">
+          <div className="rounded-[30px] border border-white/80 bg-white/88 px-6 py-7 shadow-[0_18px_48px_rgba(8,68,132,0.08)] backdrop-blur-lg sm:px-7 sm:py-8">
             <div className="flex flex-col items-center text-center">
-              <div className="rounded-[26px] border border-[#084484]/8 bg-[linear-gradient(180deg,rgba(248,251,252,0.96),rgba(237,245,247,0.9))] px-6 py-5 shadow-[0_16px_36px_rgba(8,68,132,0.08)]">
-                <img src={loginBrandImageSrc} alt="Logo da SERMST" className="max-h-20 w-auto object-contain sm:max-h-24" />
+              <div className="rounded-[22px] border border-[#084484]/7 bg-white/92 px-4 py-3 shadow-[0_10px_24px_rgba(8,68,132,0.05)]">
+                <img src={loginBrandImageSrc} alt="Logo da SERMST" className="max-h-12 w-auto object-contain sm:max-h-14" />
               </div>
-              <div className="mt-6 text-[11px] font-bold uppercase tracking-[0.24em] text-[#084484]/55">Painel de atendimento</div>
-              <h1 className="mt-3 text-[31px] font-semibold leading-none tracking-[-0.06em] text-[#0f172a]">
+              <div className="mt-5 text-[10px] font-bold uppercase tracking-[0.22em] text-[#084484]/48">Painel de atendimento</div>
+              <h1 className="mt-3 text-[28px] font-semibold leading-none tracking-[-0.06em] text-[#0f172a]">
                 {mode === "login" ? "Acesse sua conta" : "Criar acesso inicial"}
               </h1>
-              <p className="mt-4 max-w-sm text-sm leading-6 text-slate-500">
-                {mode === "login"
-                  ? "Entre com suas credenciais para continuar no ambiente operacional da SERMST."
-                  : "Cadastre o administrador principal para concluir a configuração inicial do painel da SERMST."}
-              </p>
             </div>
 
             {mode === "login" ? (
-              <form onSubmit={handleLogin} className="mt-8 space-y-5">
+              <form onSubmit={handleLogin} className="mt-6 space-y-5">
                   <AuthField
                     label="E-mail"
                     value={loginForm.email}
@@ -8848,12 +8843,12 @@ export default function HomePage() {
                       </button>
                     }
                   />
-                  <button type="submit" className="flex h-14 w-full items-center justify-center gap-2 rounded-[18px] bg-[#084484] px-4 text-lg font-semibold text-white shadow-[0_16px_30px_rgba(8,68,132,0.22)] transition hover:bg-[#073766] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35bc4b]/35 focus-visible:ring-offset-2">
+                  <button type="submit" className="flex h-13 w-full items-center justify-center gap-2 rounded-[18px] bg-[#084484] px-4 text-base font-semibold text-white shadow-[0_12px_24px_rgba(8,68,132,0.16)] transition hover:bg-[#073766] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35bc4b]/30 focus-visible:ring-offset-2">
                     Entrar
                   </button>
                 </form>
               ) : (
-                <form onSubmit={handleBootstrap} className="mt-8 space-y-5">
+                <form onSubmit={handleBootstrap} className="mt-6 space-y-5">
                   <AuthField
                     label="Nome"
                     value={bootstrapForm.name}
@@ -8889,7 +8884,7 @@ export default function HomePage() {
                       </button>
                     }
                   />
-                  <button type="submit" className="flex h-14 w-full items-center justify-center gap-2 rounded-[18px] bg-[#084484] px-4 text-lg font-semibold text-white shadow-[0_16px_30px_rgba(8,68,132,0.22)] transition hover:bg-[#073766] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35bc4b]/35 focus-visible:ring-offset-2">
+                  <button type="submit" className="flex h-13 w-full items-center justify-center gap-2 rounded-[18px] bg-[#084484] px-4 text-base font-semibold text-white shadow-[0_12px_24px_rgba(8,68,132,0.16)] transition hover:bg-[#073766] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35bc4b]/30 focus-visible:ring-offset-2">
                     Criar administrador
                   </button>
                 </form>
