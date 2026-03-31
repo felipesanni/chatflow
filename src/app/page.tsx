@@ -5250,7 +5250,7 @@ export default function HomePage() {
   const shouldRenderBrandImage = brandMode === "image" && Boolean(brandLogoPreview);
   const shouldRenderBrandText = brandMode === "text" && trimmedBrandText.length > 0;
   const brandTextLabel = trimmedBrandText.length > 0 ? trimmedBrandText : "CHATFLOW";
-  const shouldRenderLoginBrandImage = Boolean(brandLogoPreview);
+  const loginBrandImageSrc = "/sermst-login-logo.png";
   const loginBrandTextLabel = trimmedBrandText.length > 0 ? trimmedBrandText : "SERMST";
 
   const workspaceDescription =
@@ -8797,27 +8797,19 @@ export default function HomePage() {
   if (!user) {
     return (
       <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#eef3f6] px-5 py-10 sm:px-8">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(15,23,42,0.08),transparent_34%),linear-gradient(135deg,#f7fafb_0%,#edf2f5_46%,#e6edf1_100%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(8,68,132,0.12),transparent_34%),linear-gradient(135deg,#f8fbfc_0%,#edf3f5_48%,#e7eef2_100%)]" />
         <div className="absolute inset-x-0 top-0 h-28 bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(255,255,255,0))]" />
-        <div className="absolute left-[-8%] top-[12%] h-64 w-64 rounded-full bg-emerald-100/35 blur-3xl" />
-        <div className="absolute bottom-[-8%] right-[-4%] h-72 w-72 rounded-full bg-slate-300/30 blur-3xl" />
+        <div className="absolute left-[-8%] top-[12%] h-64 w-64 rounded-full bg-[#35bc4b]/10 blur-3xl" />
+        <div className="absolute bottom-[-8%] right-[-4%] h-72 w-72 rounded-full bg-[#084484]/10 blur-3xl" />
 
-        <section className="relative z-10 w-full max-w-[440px]">
-          <div className="rounded-[32px] border border-white/70 bg-white/92 px-6 py-8 shadow-[0_30px_90px_rgba(15,23,42,0.12)] backdrop-blur-xl sm:px-8 sm:py-10">
+        <section className="relative z-10 w-full max-w-[470px]">
+          <div className="rounded-[32px] border border-white/70 bg-white/94 px-6 py-8 shadow-[0_30px_90px_rgba(8,68,132,0.14)] backdrop-blur-xl sm:px-8 sm:py-10">
             <div className="flex flex-col items-center text-center">
-              <div className="rounded-[24px] border border-emerald-100 bg-emerald-50/80 px-5 py-4 shadow-[0_12px_28px_rgba(16,185,129,0.08)]">
-                {shouldRenderLoginBrandImage ? (
-                  <img src={brandLogoPreview ?? undefined} alt="Logo da SERMST" className="max-h-16 w-auto object-contain" />
-                ) : shouldRenderBrandText ? (
-                  <div className="text-[30px] font-semibold tracking-[-0.05em] text-slate-900">{loginBrandTextLabel}</div>
-                ) : (
-                  <span className="grid h-14 w-14 place-items-center rounded-[18px] bg-white text-emerald-600 shadow-sm">
-                    <ShieldCheck className="h-7 w-7" />
-                  </span>
-                )}
+              <div className="rounded-[26px] border border-[#084484]/8 bg-[linear-gradient(180deg,rgba(248,251,252,0.96),rgba(237,245,247,0.9))] px-6 py-5 shadow-[0_16px_36px_rgba(8,68,132,0.08)]">
+                <img src={loginBrandImageSrc} alt="Logo da SERMST" className="max-h-20 w-auto object-contain sm:max-h-24" />
               </div>
-              <div className="mt-6 text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Painel de atendimento</div>
-              <h1 className="mt-3 text-[31px] font-semibold leading-none tracking-[-0.06em] text-slate-900">
+              <div className="mt-6 text-[11px] font-bold uppercase tracking-[0.24em] text-[#084484]/55">Painel de atendimento</div>
+              <h1 className="mt-3 text-[31px] font-semibold leading-none tracking-[-0.06em] text-[#0f172a]">
                 {mode === "login" ? "Acesse sua conta" : "Criar acesso inicial"}
               </h1>
               <p className="mt-4 max-w-sm text-sm leading-6 text-slate-500">
@@ -8856,7 +8848,7 @@ export default function HomePage() {
                       </button>
                     }
                   />
-                  <button type="submit" className="flex h-14 w-full items-center justify-center gap-2 rounded-[18px] bg-[#18b663] px-4 text-lg font-semibold text-white shadow-[0_16px_30px_rgba(24,182,99,0.22)] transition hover:bg-[#14a85a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2">
+                  <button type="submit" className="flex h-14 w-full items-center justify-center gap-2 rounded-[18px] bg-[#084484] px-4 text-lg font-semibold text-white shadow-[0_16px_30px_rgba(8,68,132,0.22)] transition hover:bg-[#073766] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35bc4b]/35 focus-visible:ring-offset-2">
                     Entrar
                   </button>
                 </form>
@@ -8897,7 +8889,7 @@ export default function HomePage() {
                       </button>
                     }
                   />
-                  <button type="submit" className="flex h-14 w-full items-center justify-center gap-2 rounded-[18px] bg-[#18b663] px-4 text-lg font-semibold text-white shadow-[0_16px_30px_rgba(24,182,99,0.22)] transition hover:bg-[#14a85a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2">
+                  <button type="submit" className="flex h-14 w-full items-center justify-center gap-2 rounded-[18px] bg-[#084484] px-4 text-lg font-semibold text-white shadow-[0_16px_30px_rgba(8,68,132,0.22)] transition hover:bg-[#073766] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#35bc4b]/35 focus-visible:ring-offset-2">
                     Criar administrador
                   </button>
                 </form>
