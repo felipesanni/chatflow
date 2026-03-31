@@ -405,7 +405,9 @@ const permissionDefinitions = [
   { key: "tickets.reply", group: "Atendimento", label: "Responder mensagens" },
   { key: "tickets.replyUnassigned", group: "Atendimento", label: "Responder tickets não atribuídos ao usuário" },
   { key: "tickets.transfer", group: "Atendimento", label: "Transferir atendimentos" },
+  { key: "tickets.transferOthers", group: "Atendimento", label: "Transferir tickets de outros usuários" },
   { key: "tickets.close", group: "Atendimento", label: "Encerrar atendimentos" },
+  { key: "tickets.closeWithoutAccept", group: "Atendimento", label: "Encerrar tickets sem aceitar atendimento" },
   { key: "tickets.closedView", group: "Atendimento", label: "Visualizar módulo de tickets fechados" },
   { key: "tickets.bulkDelete", group: "Atendimento", label: "Apagar tickets em lote" },
   { key: "messages.bulkDelete", group: "Atendimento", label: "Apagar mensagens em lote" },
@@ -470,7 +472,9 @@ function defaultPermissionsForRole(role: "admin" | "agent"): PermissionMap {
     "tickets.reply": true,
     "tickets.replyUnassigned": false,
     "tickets.transfer": true,
+    "tickets.transferOthers": false,
     "tickets.close": true,
+    "tickets.closeWithoutAccept": false,
     "tickets.closedView": false,
     "tickets.bulkDelete": false,
     "messages.bulkDelete": false,
@@ -2082,6 +2086,8 @@ export default function HomePage() {
   const canViewQuickReplies = currentUser.permissions["quickReplies.view"];
   const canViewTeam = currentUser.permissions["team.view"];
   const canTransferTickets = currentUser.permissions["tickets.transfer"];
+  const canTransferTicketsFromOthers = currentUser.permissions["tickets.transferOthers"];
+  const canCloseTicketsWithoutAccept = currentUser.permissions["tickets.closeWithoutAccept"];
   const canManageInstances = currentUser.permissions["channels.manage"];
   const canManageQuickReplies = currentUser.permissions["quickReplies.manage"];
   const canManageAgents = currentUser.permissions["agents.manage"];
@@ -2139,9 +2145,12 @@ export default function HomePage() {
   );
   const canCloseSelectedTicket = Boolean(
     selectedTicket &&
+    !selectedTicket.isGroup &&
     selectedTicket.status !== "closed" &&
-    currentUser.permissions["tickets.close"] &&
-    isSelectedTicketOwnedByCurrentUser,
+    (
+      (currentUser.permissions["tickets.close"] && isSelectedTicketOwnedByCurrentUser)
+      || (canCloseTicketsWithoutAccept && !isSelectedTicketOwnedByCurrentUser)
+    ),
   );
   const canReopenSelectedTicket = Boolean(
     selectedTicket &&
@@ -2169,9 +2178,12 @@ export default function HomePage() {
           : "Aceite o atendimento para responder";
   const canTransferSelectedTicket = Boolean(
     selectedTicket &&
+    !selectedTicket.isGroup &&
     selectedTicket.status !== "closed" &&
-    canTransferTickets &&
-    isSelectedTicketOwnedByCurrentUser,
+    (
+      (canTransferTickets && (isSelectedTicketOwnedByCurrentUser || !selectedTicket.currentAgent))
+      || (canTransferTicketsFromOthers && Boolean(selectedTicket.currentAgent) && !isSelectedTicketOwnedByCurrentUser)
+    ),
   );
   const ticketDensity: "compact" = "compact";
 
@@ -2696,7 +2708,7 @@ export default function HomePage() {
 
   const refreshAgents = React.useCallback(async () => {
     const permissions = user ? normalizePermissions(user.role, user.permissions) : null;
-    if (!user || !(permissions?.["team.view"] || permissions?.["tickets.transfer"])) return;
+    if (!user || !(permissions?.["team.view"] || permissions?.["tickets.transfer"] || permissions?.["tickets.transferOthers"])) return;
     try {
       const payload = await apiFetch<{ items: AgentItem[] }>("/agents", { method: "GET" });
       setAgents(payload.items);
@@ -2707,7 +2719,7 @@ export default function HomePage() {
 
   const refreshQueues = React.useCallback(async () => {
     const permissions = user ? normalizePermissions(user.role, user.permissions) : null;
-    if (!user || !(permissions?.["team.view"] || permissions?.["tickets.transfer"])) return;
+    if (!user || !(permissions?.["team.view"] || permissions?.["tickets.transfer"] || permissions?.["tickets.transferOthers"])) return;
     try {
       const payload = await apiFetch<{ items: QueueItem[] }>("/queues", { method: "GET" });
       setQueues(payload.items);

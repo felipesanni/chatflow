@@ -16,7 +16,12 @@ export function requireSession(request: FastifyRequest, reply: FastifyReply) {
   return session;
 }
 
-export async function requirePermission(app: FastifyInstance, request: FastifyRequest, reply: FastifyReply, permission: PermissionKey) {
+export async function requirePermission(
+  app: FastifyInstance,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  permission: PermissionKey | PermissionKey[],
+) {
   const session = requireSession(request, reply);
 
   if (!session) {
@@ -46,7 +51,10 @@ export async function requirePermission(app: FastifyInstance, request: FastifyRe
     return null;
   }
 
-  if (!hasPermission(user.role, user.permissions, permission)) {
+  const requiredPermissions = Array.isArray(permission) ? permission : [permission];
+  const allowed = requiredPermissions.some((item) => hasPermission(user.role, user.permissions, item));
+
+  if (!allowed) {
     reply.forbidden('Voce nao possui permissao para executar esta acao.');
     return null;
   }

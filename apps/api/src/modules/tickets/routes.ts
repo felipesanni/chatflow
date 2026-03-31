@@ -285,6 +285,38 @@ function canManageTicket(viewerId: string, ticket: { currentAgentId: string | nu
   return ticket.currentAgentId === viewerId;
 }
 
+function canTransferTicket(
+  viewerId: string,
+  permissions: PermissionMap,
+  ticket: { currentAgentId: string | null; isGroup?: boolean | null },
+) {
+  if (ticket.isGroup) {
+    return false;
+  }
+
+  if (ticket.currentAgentId === viewerId || ticket.currentAgentId === null) {
+    return permissions['tickets.transfer'];
+  }
+
+  return permissions['tickets.transferOthers'];
+}
+
+function canCloseTicket(
+  viewerId: string,
+  permissions: PermissionMap,
+  ticket: { currentAgentId: string | null; isGroup?: boolean | null },
+) {
+  if (ticket.isGroup) {
+    return false;
+  }
+
+  if (ticket.currentAgentId === viewerId) {
+    return permissions['tickets.close'];
+  }
+
+  return permissions['tickets.closeWithoutAccept'];
+}
+
 export const ticketRoutes: FastifyPluginAsync = async (app) => {
   app.get('/tickets/duplicates', async (request, reply) => {
     const access = await requirePermission(app, request, reply, 'tickets.bulkDelete');
@@ -788,25 +820,25 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/tickets/:ticketId/close', async (request, reply) => {
-    const access = await requirePermission(app, request, reply, 'tickets.close');
+    const access = await requirePermission(app, request, reply, ['tickets.close', 'tickets.closeWithoutAccept']);
     if (!access) return;
     const session = access.session;
 
     const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
     const parsedBody = closeTicketBodySchema.parse(request.body);
     const reason = parsedBody.reason ?? 'Encerrado pelo agente';
-    const currentTicket = await app.prisma.ticket.findUnique({
-      where: { id: params.ticketId },
-      select: { id: true, currentAgentId: true },
-    });
+      const currentTicket = await app.prisma.ticket.findUnique({
+        where: { id: params.ticketId },
+        select: { id: true, currentAgentId: true, isGroup: true },
+      });
 
     if (!currentTicket) {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canManageTicket(session.userId, currentTicket)) {
-      return reply.forbidden('Apenas o agente responsavel pode encerrar este ticket.');
-    }
+      if (!canCloseTicket(session.userId, access.permissions, currentTicket)) {
+        return reply.forbidden('Voce nao possui permissao para encerrar este ticket sem assumi-lo.');
+      }
 
     const ticket = await app.prisma.ticket.update({
       where: { id: params.ticketId },
@@ -880,7 +912,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/tickets/:ticketId/transfer', async (request, reply) => {
-    const access = await requirePermission(app, request, reply, 'tickets.transfer');
+    const access = await requirePermission(app, request, reply, ['tickets.transfer', 'tickets.transferOthers']);
     if (!access) return;
     const session = access.session;
 
@@ -900,9 +932,9 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canManageTicket(session.userId, currentTicket)) {
-      return reply.forbidden('Apenas o agente responsavel pode transferir este ticket.');
-    }
+      if (!canTransferTicket(session.userId, access.permissions, currentTicket)) {
+        return reply.forbidden('Voce nao possui permissao para transferir este ticket.');
+      }
 
     if (body.agentId) {
       const targetAgent = await app.prisma.agent.findUnique({
