@@ -8908,7 +8908,6 @@ export default function HomePage() {
                   {authError ?? panelMessage}
                 </div>
               )}
-            </div>
           </div>
         </section>
       </main>
