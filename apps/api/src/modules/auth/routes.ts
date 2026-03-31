@@ -5,7 +5,7 @@ import { hashPassword, verifyPassword } from '../../lib/password.js';
 import { clearSessionCookie, createSessionToken, getSessionFromRequest, setSessionCookie } from '../../lib/session.js';
 import { loadEnv } from '../../config/env.js';
 import { defaultPermissionsForRole, resolvePermissions } from '../../lib/permissions.js';
-import { requireSession } from '../../lib/auth-guard.js';
+import { describeUserAccessRestriction, requireSession } from '../../lib/auth-guard.js';
 
 const bootstrapBodySchema = z.object({
   email: z.string().email(),
@@ -35,6 +35,9 @@ function serializeAuthenticatedUser(user: {
   email: string;
   role: 'admin' | 'agent';
   permissions: unknown;
+  status?: 'active' | 'inactive';
+  accessStartTime?: string | null;
+  accessEndTime?: string | null;
   agent: { name: string; avatarUrl: string | null } | null;
 }, fallbackName?: string) {
   return {
@@ -112,6 +115,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       return reply.unauthorized('Credenciais invalidas.');
     }
 
+    const accessRestriction = describeUserAccessRestriction(user);
+    if (accessRestriction) {
+      return reply.forbidden(accessRestriction);
+    }
+
     const token = createSessionToken(
       {
         userId: user.id,
@@ -138,7 +146,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(204).send();
   });
 
-  app.get('/auth/me', async (request) => {
+  app.get('/auth/me', async (request, reply) => {
     const session = getSessionFromRequest(request, env.SESSION_SECRET);
 
     if (!session) {
@@ -153,6 +161,14 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (!user) {
+      return {
+        authenticated: false,
+      };
+    }
+
+    const accessRestriction = describeUserAccessRestriction(user);
+    if (accessRestriction) {
+      clearSessionCookie(reply, env.NODE_ENV === 'production');
       return {
         authenticated: false,
       };
@@ -176,6 +192,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     if (!existing || !existing.agent) {
       return reply.notFound('Perfil do agente nao encontrado.');
+    }
+
+    const accessRestriction = describeUserAccessRestriction(existing);
+    if (accessRestriction) {
+      return reply.forbidden(accessRestriction);
     }
 
     const normalizedAvatarUrl =

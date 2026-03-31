@@ -196,6 +196,9 @@ type AgentItem = {
   email: string;
   role: "admin" | "agent";
   permissions: PermissionMap;
+  status: "active" | "inactive";
+  accessStartTime: string | null;
+  accessEndTime: string | null;
   presence: string;
   queues: Array<{ id: string; name: string }>;
   createdAt: string;
@@ -1589,7 +1592,7 @@ export default function HomePage() {
   const [editingQuickReplyId, setEditingQuickReplyId] = React.useState<string | null>(null);
   const [editingCustomerId, setEditingCustomerId] = React.useState<string | null>(null);
   const [managementModal, setManagementModal] = React.useState<null | "instance" | "agent" | "queue" | "conversation" | "quickReply" | "customer">(null);
-  const [managementModalTab, setManagementModalTab] = React.useState<"general" | "permissions">("general");
+  const [managementModalTab, setManagementModalTab] = React.useState<"general" | "permissions" | "access">("general");
 
   const [messageInput, setMessageInput] = React.useState("");
   const [editingMessageId, setEditingMessageId] = React.useState<string | null>(null);
@@ -1683,6 +1686,10 @@ export default function HomePage() {
     role: "agent" as "admin" | "agent",
     queueIds: [] as string[],
     permissions: defaultPermissionsForRole("agent"),
+    blocked: false,
+    accessScheduleEnabled: false,
+    accessStartTime: "08:00",
+    accessEndTime: "18:00",
   });
   const [queueForm, setQueueForm] = React.useState({ name: "", color: "#1A1C32" });
   const [quickReplyForm, setQuickReplyForm] = React.useState({ shortcut: "", content: "", isActive: true });
@@ -2093,6 +2100,7 @@ export default function HomePage() {
   const canManageAgents = currentUser.permissions["agents.manage"];
   const canDeleteAgents = currentUser.permissions["agents.delete"];
   const canManageAgentPasswords = currentUser.permissions["agents.password.manage"];
+  const canManageUserAccess = currentUser.role === "admin";
   const canManageQueues = currentUser.permissions["queues.manage"];
   const canAssignQueues = currentUser.permissions["queues.assign"];
   const canStartConversation = currentUser.permissions["tickets.reply"];
@@ -4312,7 +4320,19 @@ export default function HomePage() {
   function resetAgentForm() {
     setEditingAgentId(null);
     setDuplicatingAgentName(null);
-    setAgentForm({ name: "", email: "", password: "", confirmPassword: "", role: "agent", queueIds: [], permissions: defaultPermissionsForRole("agent") });
+    setAgentForm({
+      name: "",
+      email: "",
+      password: "",
+      confirmPassword: "",
+      role: "agent",
+      queueIds: [],
+      permissions: defaultPermissionsForRole("agent"),
+      blocked: false,
+      accessScheduleEnabled: false,
+      accessStartTime: "08:00",
+      accessEndTime: "18:00",
+    });
     setManagementModalTab("general");
   }
 
@@ -4373,6 +4393,10 @@ export default function HomePage() {
       role: agent.role,
       queueIds: agent.queues.map((queue) => queue.id),
       permissions: normalizePermissions(agent.role, agent.permissions),
+      blocked: agent.status === "inactive",
+      accessScheduleEnabled: Boolean(agent.accessStartTime && agent.accessEndTime),
+      accessStartTime: agent.accessStartTime ?? "08:00",
+      accessEndTime: agent.accessEndTime ?? "18:00",
     });
     setActiveWorkspace("settings");
     setAdminSection("agents");
@@ -4391,6 +4415,10 @@ export default function HomePage() {
       role: agent.role,
       queueIds: agent.queues.map((queue) => queue.id),
       permissions: normalizePermissions(agent.role, agent.permissions),
+      blocked: false,
+      accessScheduleEnabled: Boolean(agent.accessStartTime && agent.accessEndTime),
+      accessStartTime: agent.accessStartTime ?? "08:00",
+      accessEndTime: agent.accessEndTime ?? "18:00",
     });
     setActiveWorkspace("settings");
     setAdminSection("agents");
@@ -4514,6 +4542,10 @@ export default function HomePage() {
       role: "agent",
       queueIds: [],
       permissions: defaultPermissionsForRole("agent"),
+      blocked: false,
+      accessScheduleEnabled: false,
+      accessStartTime: "08:00",
+      accessEndTime: "18:00",
     });
     setQueueForm({ name: "", color: "#1A1C32" });
     setQuickReplyForm({ shortcut: "", content: "", isActive: true });
@@ -4604,13 +4636,32 @@ export default function HomePage() {
       return;
     }
 
+    if (agentForm.accessScheduleEnabled && (!agentForm.accessStartTime || !agentForm.accessEndTime)) {
+      setPanelMessage("Defina o horário inicial e final para limitar o acesso do usuário.");
+      return;
+    }
+
+    if (agentForm.accessScheduleEnabled && agentForm.accessStartTime === agentForm.accessEndTime) {
+      setPanelMessage("O horário final precisa ser diferente do horário inicial.");
+      return;
+    }
+
     setAgentLoading(true);
     try {
       const payload = {
-        ...agentForm,
+        name: agentForm.name,
+        email: agentForm.email,
         password: trimmedPassword,
+        role: agentForm.role,
         queueIds: agentForm.role === "admin" ? queues.map((queue) => queue.id) : agentForm.queueIds,
         permissions: agentForm.permissions,
+        ...(canManageUserAccess
+          ? {
+              blocked: agentForm.blocked,
+              accessStartTime: agentForm.accessScheduleEnabled ? agentForm.accessStartTime : null,
+              accessEndTime: agentForm.accessScheduleEnabled ? agentForm.accessEndTime : null,
+            }
+          : {}),
       };
 
       await apiFetch(editingAgentId ? `/agents/${editingAgentId}` : "/agents", {
@@ -5199,6 +5250,8 @@ export default function HomePage() {
   const shouldRenderBrandImage = brandMode === "image" && Boolean(brandLogoPreview);
   const shouldRenderBrandText = brandMode === "text" && trimmedBrandText.length > 0;
   const brandTextLabel = trimmedBrandText.length > 0 ? trimmedBrandText : "CHATFLOW";
+  const shouldRenderLoginBrandImage = Boolean(brandLogoPreview);
+  const loginBrandTextLabel = trimmedBrandText.length > 0 ? trimmedBrandText : "SERMST";
 
   const workspaceDescription =
     activeWorkspace === "dashboard"
@@ -8512,6 +8565,9 @@ export default function HomePage() {
             <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
               <AdminTab label="Geral" active={managementModalTab === "general"} onClick={() => setManagementModalTab("general")} />
               <AdminTab label="Permissões" active={managementModalTab === "permissions"} onClick={() => setManagementModalTab("permissions")} />
+              {canManageUserAccess ? (
+                <AdminTab label="Acesso" active={managementModalTab === "access"} onClick={() => setManagementModalTab("access")} />
+              ) : null}
             </div>
 
             {managementModalTab === "general" ? (
@@ -8573,7 +8629,7 @@ export default function HomePage() {
                   </div>
                 ) : null}
               </div>
-            ) : (
+            ) : managementModalTab === "permissions" ? (
                 <div className="space-y-4">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                     {agentForm.role === "admin"
@@ -8608,6 +8664,76 @@ export default function HomePage() {
                       </div>
                     </section>
                   ))}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  Controle se este usuário pode acessar o painel e, se necessário, limite o uso a uma janela diária de horário.
+                </div>
+
+                <label className={`flex items-start gap-3 rounded-2xl border px-4 py-4 text-sm transition ${agentForm.blocked ? "border-rose-200 bg-rose-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                  <input
+                    type="checkbox"
+                    checked={agentForm.blocked}
+                    onChange={(event) => setAgentForm((current) => ({ ...current, blocked: event.target.checked }))}
+                    className="mt-1 h-4 w-4 rounded border-slate-300 text-rose-600 focus:ring-rose-500"
+                  />
+                  <span>
+                    <span className="block font-medium text-slate-800">Bloquear usuário</span>
+                    <span className="mt-1 block text-xs text-slate-500">
+                      Usuários bloqueados não conseguem entrar no sistema até serem liberados novamente.
+                    </span>
+                  </span>
+                </label>
+
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <label className="flex items-start gap-3 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={agentForm.accessScheduleEnabled}
+                      onChange={(event) =>
+                        setAgentForm((current) => ({
+                          ...current,
+                          accessScheduleEnabled: event.target.checked,
+                        }))
+                      }
+                      className="mt-1 h-4 w-4 rounded border-slate-300 text-[#1A1C32] focus:ring-[#1A1C32]"
+                    />
+                    <span>
+                      <span className="block font-medium text-slate-800">Limitar horário de uso</span>
+                      <span className="mt-1 block text-xs text-slate-500">
+                        Quando ativo, o login só será permitido dentro do intervalo diário informado abaixo.
+                      </span>
+                    </span>
+                  </label>
+
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <label className="block text-sm font-medium text-slate-600">
+                      Horário inicial
+                      <input
+                        type="time"
+                        value={agentForm.accessStartTime}
+                        disabled={!agentForm.accessScheduleEnabled}
+                        onChange={(event) => setAgentForm((current) => ({ ...current, accessStartTime: event.target.value }))}
+                        className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300 disabled:cursor-not-allowed disabled:bg-slate-100"
+                      />
+                    </label>
+                    <label className="block text-sm font-medium text-slate-600">
+                      Horário final
+                      <input
+                        type="time"
+                        value={agentForm.accessEndTime}
+                        disabled={!agentForm.accessScheduleEnabled}
+                        onChange={(event) => setAgentForm((current) => ({ ...current, accessEndTime: event.target.value }))}
+                        className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300 disabled:cursor-not-allowed disabled:bg-slate-100"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="mt-3 text-xs text-slate-500">
+                    Se o horário inicial for maior que o final, o sistema considera um intervalo que atravessa a madrugada.
+                  </div>
                 </div>
               </div>
             )}
@@ -8670,54 +8796,39 @@ export default function HomePage() {
 
   if (!user) {
     return (
-      <main className="min-h-screen bg-[#eef3f6]">
-        <div className="grid min-h-screen lg:grid-cols-[1.08fr_0.92fr]">
-          <section className="relative hidden overflow-hidden lg:block">
-            <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(245,247,249,0.18),rgba(15,23,42,0.08)),radial-gradient(circle_at_top_left,rgba(255,255,255,0.9),transparent_36%),linear-gradient(135deg,#d9e2e7_0%,#f4f7f8_36%,#d3d9de_100%)]" />
-            <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,0.12),transparent_28%),linear-gradient(180deg,transparent,rgba(255,255,255,0.18))]" />
-            <div className="absolute left-[8%] top-[14%] h-[42%] w-[44%] rounded-[40px] border border-white/40 bg-white/30 shadow-[0_30px_80px_rgba(15,23,42,0.08)] backdrop-blur-[2px]" />
-            <div className="absolute left-[20%] top-[28%] h-[24%] w-[28%] rounded-[18px] border border-slate-200/60 bg-white/70" />
-            <div className="absolute left-[16%] bottom-[16%] flex gap-3">
-              <div className="h-28 w-14 rounded-[18px] border border-slate-300/70 bg-slate-700/80 shadow-[0_18px_45px_rgba(15,23,42,0.2)]" />
-              <div className="h-28 w-14 rounded-[18px] border border-slate-300/70 bg-slate-700/80 shadow-[0_18px_45px_rgba(15,23,42,0.2)]" />
-              <div className="h-28 w-14 rounded-[18px] border border-slate-300/70 bg-slate-700/80 shadow-[0_18px_45px_rgba(15,23,42,0.2)]" />
-              <div className="h-28 w-14 rounded-[18px] border border-slate-300/70 bg-slate-700/80 shadow-[0_18px_45px_rgba(15,23,42,0.2)]" />
-            </div>
-            <div className="absolute right-[12%] top-[12%] max-w-sm rounded-[28px] border border-white/40 bg-white/52 p-6 text-slate-700 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur-md">
-              <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">Ambiente operacional</div>
-              <div className="mt-4 text-3xl font-semibold leading-[1.02] tracking-[-0.05em] text-slate-900">
-                Acesso institucional com foco total no atendimento.
+      <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#eef3f6] px-5 py-10 sm:px-8">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(15,23,42,0.08),transparent_34%),linear-gradient(135deg,#f7fafb_0%,#edf2f5_46%,#e6edf1_100%)]" />
+        <div className="absolute inset-x-0 top-0 h-28 bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(255,255,255,0))]" />
+        <div className="absolute left-[-8%] top-[12%] h-64 w-64 rounded-full bg-emerald-100/35 blur-3xl" />
+        <div className="absolute bottom-[-8%] right-[-4%] h-72 w-72 rounded-full bg-slate-300/30 blur-3xl" />
+
+        <section className="relative z-10 w-full max-w-[440px]">
+          <div className="rounded-[32px] border border-white/70 bg-white/92 px-6 py-8 shadow-[0_30px_90px_rgba(15,23,42,0.12)] backdrop-blur-xl sm:px-8 sm:py-10">
+            <div className="flex flex-col items-center text-center">
+              <div className="rounded-[24px] border border-emerald-100 bg-emerald-50/80 px-5 py-4 shadow-[0_12px_28px_rgba(16,185,129,0.08)]">
+                {shouldRenderLoginBrandImage ? (
+                  <img src={brandLogoPreview ?? undefined} alt="Logo da SERMST" className="max-h-16 w-auto object-contain" />
+                ) : shouldRenderBrandText ? (
+                  <div className="text-[30px] font-semibold tracking-[-0.05em] text-slate-900">{loginBrandTextLabel}</div>
+                ) : (
+                  <span className="grid h-14 w-14 place-items-center rounded-[18px] bg-white text-emerald-600 shadow-sm">
+                    <ShieldCheck className="h-7 w-7" />
+                  </span>
+                )}
               </div>
-              <p className="mt-4 text-sm leading-7 text-slate-600">
-                Uma entrada mais sóbria, limpa e alinhada à rotina da equipe, sem excesso de informação antes do login.
+              <div className="mt-6 text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Painel de atendimento</div>
+              <h1 className="mt-3 text-[31px] font-semibold leading-none tracking-[-0.06em] text-slate-900">
+                {mode === "login" ? "Acesse sua conta" : "Criar acesso inicial"}
+              </h1>
+              <p className="mt-4 max-w-sm text-sm leading-6 text-slate-500">
+                {mode === "login"
+                  ? "Entre com suas credenciais para continuar no ambiente operacional da SERMST."
+                  : "Cadastre o administrador principal para concluir a configuração inicial do painel da SERMST."}
               </p>
             </div>
-          </section>
 
-          <section className="flex min-h-screen items-center justify-center px-5 py-10 sm:px-8">
-            <div className="w-full max-w-[460px] rounded-[30px] border border-slate-200/80 bg-white px-6 py-8 shadow-[0_30px_90px_rgba(15,23,42,0.1)] sm:px-8 sm:py-10">
-              <div className="flex flex-col items-center text-center">
-                {shouldRenderBrandImage ? (
-                  <img src={brandLogoPreview ?? undefined} alt="Logo do painel" className="max-h-16 w-auto object-contain" />
-                ) : shouldRenderBrandText ? (
-                  <div className="text-[34px] font-semibold tracking-[-0.05em] text-slate-900">{brandTextLabel}</div>
-                ) : (
-                  <>
-                    <span className="grid h-14 w-14 place-items-center rounded-[20px] bg-emerald-50 text-emerald-600">
-                      <ShieldCheck className="h-7 w-7" />
-                    </span>
-                    <div className="mt-4 text-[28px] font-semibold tracking-[-0.05em] text-slate-900">ChatFlow</div>
-                  </>
-                )}
-                <p className="mt-4 max-w-xs text-sm leading-6 text-slate-500">
-                  {mode === "login"
-                    ? "Entre com sua conta para acessar o painel de atendimento."
-                    : "Crie a conta administrativa inicial para liberar o acesso ao sistema."}
-                </p>
-              </div>
-
-              {mode === "login" ? (
-                <form onSubmit={handleLogin} className="mt-8 space-y-5">
+            {mode === "login" ? (
+              <form onSubmit={handleLogin} className="mt-8 space-y-5">
                   <AuthField
                     label="E-mail"
                     value={loginForm.email}
@@ -8797,20 +8908,9 @@ export default function HomePage() {
                   {authError ?? panelMessage}
                 </div>
               )}
-
-              <div className="mt-6 text-center">
-                <button
-                  type="button"
-                  aria-label={mode === "login" ? "Abrir primeiro acesso" : "Voltar para login"}
-                  onClick={() => setMode((current) => (current === "login" ? "bootstrap" : "login"))}
-                  className="text-sm font-medium text-slate-500 transition hover:text-slate-800"
-                >
-                  {mode === "login" ? "Primeiro acesso" : "Voltar para login"}
-                </button>
-              </div>
             </div>
-          </section>
-        </div>
+          </div>
+        </section>
       </main>
     );
   }

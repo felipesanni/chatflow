@@ -5,6 +5,10 @@ import { requirePermission } from '../../lib/auth-guard.js';
 import { hashPassword } from '../../lib/password.js';
 import { defaultPermissionsForRole, permissionDefinitions, permissionsToJson, resolvePermissions, type PermissionKey } from '../../lib/permissions.js';
 
+const accessTimeSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'Informe um horário válido no formato HH:mm.');
+
 const createAgentSchema = z.object({
   name: z.string().min(2),
   email: z.string().email(),
@@ -12,6 +16,28 @@ const createAgentSchema = z.object({
   role: z.enum(['admin', 'agent']).default('agent'),
   queueIds: z.array(z.string().uuid()).default([]),
   permissions: z.record(z.string(), z.boolean()).optional(),
+  blocked: z.boolean().optional(),
+  accessStartTime: z.union([accessTimeSchema, z.literal(''), z.null()]).optional(),
+  accessEndTime: z.union([accessTimeSchema, z.literal(''), z.null()]).optional(),
+}).superRefine((value, ctx) => {
+  const hasStart = Boolean(value.accessStartTime);
+  const hasEnd = Boolean(value.accessEndTime);
+
+  if (hasStart !== hasEnd) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['accessStartTime'],
+      message: 'Defina o horário inicial e final juntos.',
+    });
+  }
+
+  if (value.accessStartTime && value.accessEndTime && value.accessStartTime === value.accessEndTime) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['accessEndTime'],
+      message: 'O horário final precisa ser diferente do horário inicial.',
+    });
+  }
 });
 
 const updateAgentSchema = z.object({
@@ -21,6 +47,28 @@ const updateAgentSchema = z.object({
   role: z.enum(['admin', 'agent']).default('agent'),
   queueIds: z.array(z.string().uuid()).default([]),
   permissions: z.record(z.string(), z.boolean()).optional(),
+  blocked: z.boolean().optional(),
+  accessStartTime: z.union([accessTimeSchema, z.literal(''), z.null()]).optional(),
+  accessEndTime: z.union([accessTimeSchema, z.literal(''), z.null()]).optional(),
+}).superRefine((value, ctx) => {
+  const hasStart = Boolean(value.accessStartTime);
+  const hasEnd = Boolean(value.accessEndTime);
+
+  if (hasStart !== hasEnd) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['accessStartTime'],
+      message: 'Defina o horário inicial e final juntos.',
+    });
+  }
+
+  if (value.accessStartTime && value.accessEndTime && value.accessStartTime === value.accessEndTime) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['accessEndTime'],
+      message: 'O horário final precisa ser diferente do horário inicial.',
+    });
+  }
 });
 
 const validPermissionKeys = new Set(permissionDefinitions.map((item) => item.key));
@@ -35,6 +83,16 @@ function sanitizePermissions(input: Record<string, boolean> | undefined, role: '
   }
 
   return permissionsToJson(normalized, role);
+}
+
+function normalizeAccessWindow(startTime?: string | null, endTime?: string | null) {
+  const normalizedStartTime = typeof startTime === 'string' && startTime.trim() ? startTime.trim() : null;
+  const normalizedEndTime = typeof endTime === 'string' && endTime.trim() ? endTime.trim() : null;
+
+  return {
+    accessStartTime: normalizedStartTime,
+    accessEndTime: normalizedEndTime,
+  };
 }
 
 export const agentRoutes: FastifyPluginAsync = async (app) => {
@@ -61,6 +119,9 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         email: agent.user.email,
         role: agent.user.role,
         permissions: resolvePermissions(agent.user.role, agent.user.permissions),
+        status: agent.user.status,
+        accessStartTime: agent.user.accessStartTime,
+        accessEndTime: agent.user.accessEndTime,
         presence: agent.presence,
         queues: agent.queueLinks.map((link: any) => ({ id: link.queue.id, name: link.queue.name })),
         createdAt: agent.createdAt,
@@ -69,11 +130,17 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/agents', async (request, reply) => {
-    if (!(await requirePermission(app, request, reply, 'agents.manage'))) return;
+    const access = await requirePermission(app, request, reply, 'agents.manage');
+    if (!access) return;
 
     const body = createAgentSchema.parse(request.body);
     const normalizedPassword = body.password.trim();
     const userId = randomUUID();
+    const accessWindow = normalizeAccessWindow(body.accessStartTime, body.accessEndTime);
+
+    if (access.user.role !== 'admin' && (body.blocked || accessWindow.accessStartTime || accessWindow.accessEndTime)) {
+      return reply.forbidden('Somente administradores podem bloquear usuários ou definir horários de acesso.');
+    }
 
     await app.prisma.user.create({
       data: {
@@ -82,7 +149,9 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         passwordHash: hashPassword(normalizedPassword),
         role: body.role,
         permissions: sanitizePermissions(body.permissions, body.role),
-        status: 'active',
+        status: body.blocked ? 'inactive' : 'active',
+        accessStartTime: accessWindow.accessStartTime,
+        accessEndTime: accessWindow.accessEndTime,
         agent: {
           create: {
             name: body.name,
@@ -122,6 +191,9 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         email: created.email,
         role: created.role,
         permissions: resolvePermissions(created.role, created.permissions),
+        status: created.status,
+        accessStartTime: created.accessStartTime,
+        accessEndTime: created.accessEndTime,
         presence: created.agent?.presence ?? 'offline',
         queues: created.agent?.queueLinks.map((link: any) => ({ id: link.queue.id, name: link.queue.name })) ?? [],
       },
@@ -135,6 +207,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ agentId: z.string().uuid() }).parse(request.params);
     const body = updateAgentSchema.parse(request.body);
     const normalizedPassword = body.password?.trim() ?? '';
+    const accessWindow = normalizeAccessWindow(body.accessStartTime, body.accessEndTime);
 
     const existing = await app.prisma.agent.findUnique({
       where: { id: params.agentId },
@@ -162,6 +235,20 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       return reply.forbidden('Voce nao possui permissao para alterar senhas de usuarios.');
     }
 
+    if (access.user.role !== 'admin' && (body.blocked !== undefined || accessWindow.accessStartTime || accessWindow.accessEndTime)) {
+      return reply.forbidden('Somente administradores podem bloquear usuários ou definir horários de acesso.');
+    }
+
+    const nextStatus = access.user.role === 'admin'
+      ? (body.blocked ? 'inactive' : 'active')
+      : existing.user.status;
+    const nextAccessStartTime = access.user.role === 'admin'
+      ? accessWindow.accessStartTime
+      : existing.user.accessStartTime;
+    const nextAccessEndTime = access.user.role === 'admin'
+      ? accessWindow.accessEndTime
+      : existing.user.accessEndTime;
+
     await app.prisma.$transaction(async (tx) => {
       await tx.user.update({
         where: { id: existing.user.id },
@@ -169,6 +256,9 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
           email: normalizedEmail,
           role: body.role,
           permissions: sanitizePermissions(body.permissions, body.role),
+          status: nextStatus,
+          accessStartTime: nextAccessStartTime,
+          accessEndTime: nextAccessEndTime,
           ...(normalizedPassword ? { passwordHash: hashPassword(normalizedPassword) } : {}),
         },
       });
@@ -205,6 +295,9 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         email: normalizedEmail,
         role: body.role,
         permissions: resolvePermissions(body.role, body.permissions ?? defaultPermissionsForRole(body.role)),
+        status: nextStatus,
+        accessStartTime: nextAccessStartTime,
+        accessEndTime: nextAccessEndTime,
         queues: updated?.queueLinks.map((link: any) => ({ id: link.queue.id, name: link.queue.name })) ?? [],
       },
     });

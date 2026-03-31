@@ -89,6 +89,8 @@ model User {
   role        UserRole    @default(agent)
   permissions Json        @default("{}")
   status      UserStatus  @default(active)
+  accessStartTime String? @map("access_start_time")
+  accessEndTime   String? @map("access_end_time")
   createdAt   DateTime    @default(now()) @map("created_at")
   updatedAt   DateTime    @updatedAt @map("updated_at")
   lastLoginAt DateTime?   @map("last_login_at")

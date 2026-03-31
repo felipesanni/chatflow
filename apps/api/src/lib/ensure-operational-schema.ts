@@ -119,6 +119,14 @@ const operationalStatements = [
       ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb;
   `,
   `
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS access_start_time TEXT;
+  `,
+  `
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS access_end_time TEXT;
+  `,
+  `
     CREATE TABLE IF NOT EXISTS api_access_tokens (
       id UUID PRIMARY KEY,
       name TEXT NOT NULL,
