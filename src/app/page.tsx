@@ -4743,7 +4743,14 @@ export default function HomePage() {
         Array.isArray(item.scheduleConfig?.daysOfWeek) && item.scheduleConfig.daysOfWeek.length > 0
           ? item.scheduleConfig.daysOfWeek
           : [1, 2, 3, 4, 5],
-      actionType: primaryAction?.type ?? "send_message",
+      actionType:
+        primaryAction?.type === "send_message"
+        || primaryAction?.type === "transfer_queue"
+        || primaryAction?.type === "assign_agent"
+        || primaryAction?.type === "close_ticket"
+        || primaryAction?.type === "webhook"
+          ? primaryAction.type
+          : "send_message",
       actionMessage: typeof primaryAction?.config?.message === "string" ? primaryAction.config.message : "",
       actionQueueId: typeof primaryAction?.config?.queueId === "string" ? primaryAction.config.queueId : "",
       actionAgentId: typeof primaryAction?.config?.agentId === "string" ? primaryAction.config.agentId : "",

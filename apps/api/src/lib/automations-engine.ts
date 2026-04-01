@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { deliverOutboundMessage } from './outbound-messages.js';
 
 type AutomationCondition = {
