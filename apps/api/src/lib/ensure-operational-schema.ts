@@ -242,6 +242,7 @@ const operationalStatements = [
       name TEXT NOT NULL UNIQUE,
       color TEXT,
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      is_bot_queue BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -345,6 +346,10 @@ const operationalStatements = [
     `
       ALTER TABLE queues
         ALTER COLUMN public_id SET NOT NULL;
+    `,
+    `
+      ALTER TABLE queues
+        ADD COLUMN IF NOT EXISTS is_bot_queue BOOLEAN NOT NULL DEFAULT FALSE;
     `,
     `
       CREATE TABLE IF NOT EXISTS automations (

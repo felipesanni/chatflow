@@ -210,6 +210,7 @@ type QueueItem = {
   name: string;
   color: string | null;
   isActive: boolean;
+  isBotQueue: boolean;
   openTicketCount: number;
   agents: Array<{ id: string; name: string }>;
 };
@@ -484,6 +485,7 @@ const permissionDefinitions = [
   { key: "agents.password.manage", group: "Equipe e filas", label: "Alterar senhas de usuários" },
   { key: "queues.manage", group: "Equipe e filas", label: "Cadastrar e editar filas" },
   { key: "queues.assign", group: "Equipe e filas", label: "Associar agentes às filas" },
+  { key: "queues.viewBot", group: "Equipe e filas", label: "Visualizar filas de automação (bot)" },
   { key: "api.view", group: "API", label: "Visualizar módulo de API" },
   { key: "api.manage", group: "API", label: "Gerenciar tokens da API" },
   { key: "contacts.view", group: "Contatos", label: "Visualizar contatos" },
@@ -552,6 +554,7 @@ function defaultPermissionsForRole(role: "admin" | "agent"): PermissionMap {
     "agents.password.manage": false,
     "queues.manage": false,
     "queues.assign": false,
+    "queues.viewBot": false,
     "api.view": false,
     "api.manage": false,
     "contacts.view": true,
@@ -1833,7 +1836,7 @@ export default function HomePage() {
     accessStartTime: "08:00",
     accessEndTime: "18:00",
   });
-  const [queueForm, setQueueForm] = React.useState({ name: "", color: "#1A1C32" });
+  const [queueForm, setQueueForm] = React.useState({ name: "", color: "#1A1C32", isBotQueue: false });
   const [quickReplyForm, setQuickReplyForm] = React.useState({ shortcut: "", content: "", isActive: true });
   const [automationForm, setAutomationForm] = React.useState({
     name: "",
@@ -4569,7 +4572,7 @@ export default function HomePage() {
 
   function resetQueueForm() {
     setEditingQueueId(null);
-    setQueueForm({ name: "", color: "#1A1C32" });
+    setQueueForm({ name: "", color: "#1A1C32", isBotQueue: false });
   }
 
   function resetQuickReplyForm() {
@@ -4702,6 +4705,7 @@ export default function HomePage() {
     setQueueForm({
       name: queue.name,
       color: queue.color ?? "#1A1C32",
+      isBotQueue: queue.isBotQueue,
     });
     setActiveWorkspace("settings");
     setAdminSection("queues");
@@ -4869,7 +4873,7 @@ export default function HomePage() {
       accessStartTime: "08:00",
       accessEndTime: "18:00",
     });
-    setQueueForm({ name: "", color: "#1A1C32" });
+    setQueueForm({ name: "", color: "#1A1C32", isBotQueue: false });
     setQuickReplyForm({ shortcut: "", content: "", isActive: true });
     setAutomationForm({
       name: "",
@@ -6502,7 +6506,12 @@ export default function HomePage() {
                   ) : (
                     filteredQueues.map((queue) => (
                       <DataRow key={queue.id}>
-                        <DataCell>{queue.name}</DataCell>
+                        <DataCell>
+                          <div className="flex items-center gap-2">
+                            <span>{queue.name}</span>
+                            {queue.isBotQueue ? <StatusChip tone="default">BOT</StatusChip> : null}
+                          </div>
+                        </DataCell>
                         <DataCell subtle><span className="font-mono text-xs">{queue.publicId}</span></DataCell>
                         <DataCell>
                           <div className="flex items-center gap-2">
@@ -7541,7 +7550,12 @@ export default function HomePage() {
                   ) : (
                     filteredQueues.map((queue) => (
                       <DataRow key={queue.id}>
-                        <DataCell>{queue.name}</DataCell>
+                        <DataCell>
+                          <div className="flex items-center gap-2">
+                            <span>{queue.name}</span>
+                            {queue.isBotQueue ? <StatusChip tone="default">BOT</StatusChip> : null}
+                          </div>
+                        </DataCell>
                         <DataCell subtle><span className="font-mono text-xs">{queue.publicId}</span></DataCell>
                         <DataCell>
                           <div className="flex items-center gap-2">
@@ -9811,6 +9825,20 @@ export default function HomePage() {
               </div>
             </label>
           </div>
+          <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+            <input
+              type="checkbox"
+              checked={queueForm.isBotQueue}
+              onChange={(event) => setQueueForm((current) => ({ ...current, isBotQueue: event.target.checked }))}
+              className="mt-1 h-4 w-4 rounded border-slate-300 text-[#1A1C32] focus:ring-[#1A1C32]"
+            />
+            <div>
+              <div className="text-sm font-semibold text-slate-900">Fila de automação (bot)</div>
+              <div className="mt-1 text-sm text-slate-500">
+                Essa fila fica visível apenas para administradores e para usuários com a permissão de visualizar filas de automação.
+              </div>
+            </div>
+          </label>
           <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
             <button type="button" onClick={closeManagementModal} className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
               Cancelar

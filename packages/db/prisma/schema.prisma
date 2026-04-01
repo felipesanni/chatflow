@@ -201,6 +201,7 @@ model Queue {
     name        String   @unique
   color       String?
   isActive    Boolean  @default(true) @map("is_active")
+  isBotQueue  Boolean  @default(false) @map("is_bot_queue")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
   tickets     Ticket[] @relation("current_queue")

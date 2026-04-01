@@ -6,11 +6,13 @@ import { requirePermission } from '../../lib/auth-guard.js';
 const createQueueSchema = z.object({
   name: z.string().min(2),
   color: z.string().min(4).optional(),
+  isBotQueue: z.boolean().optional(),
 });
 
 const updateQueueSchema = z.object({
   name: z.string().min(2),
   color: z.string().min(4).optional(),
+  isBotQueue: z.boolean().optional(),
 });
 
 const assignQueueAgentsSchema = z.object({
@@ -19,9 +21,13 @@ const assignQueueAgentsSchema = z.object({
 
 export const queueRoutes: FastifyPluginAsync = async (app) => {
   app.get('/queues', async (request, reply) => {
-    if (!(await requirePermission(app, request, reply, 'team.view'))) return;
+    const access = await requirePermission(app, request, reply, 'team.view');
+    if (!access) return;
+
+    const canViewBotQueues = access.user.role === 'admin' || access.permissions['queues.viewBot'];
 
     const items = await app.prisma.queue.findMany({
+      where: canViewBotQueues ? undefined : { isBotQueue: false },
       include: {
         queueAgents: {
           include: {
@@ -41,11 +47,12 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
           id: queue.id,
           publicId: queue.publicId,
           name: queue.name,
-        color: queue.color,
-        isActive: queue.isActive,
-        openTicketCount: queue.tickets.length,
-        agents: queue.queueAgents.map((link: any) => ({ id: link.agent.id, name: link.agent.name })),
-      })),
+          color: queue.color,
+          isActive: queue.isActive,
+          isBotQueue: queue.isBotQueue,
+          openTicketCount: queue.tickets.length,
+          agents: queue.queueAgents.map((link: any) => ({ id: link.agent.id, name: link.agent.name })),
+        })),
     };
   });
 
@@ -58,6 +65,7 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
         id: randomUUID(),
         name: body.name,
         color: body.color,
+        isBotQueue: body.isBotQueue ?? false,
       },
     });
 
@@ -86,6 +94,7 @@ export const queueRoutes: FastifyPluginAsync = async (app) => {
       data: {
         name: body.name,
         color: body.color,
+        isBotQueue: body.isBotQueue ?? false,
       },
     });
 
