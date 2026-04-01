@@ -1255,9 +1255,16 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           preview: ticket.lastMessagePreview,
         });
 
-        await processAutomationMessageReceived(app, {
+        void processAutomationMessageReceived(app, {
           ticketId: ticket.id,
           messageId: createdMessage.id,
+        }).catch((automationError) => {
+          app.log.error({
+            action: 'automation_message_received_failed',
+            ticketId: ticket.id,
+            messageId: createdMessage.id,
+            error: automationError,
+          }, 'Falha ao processar automacao para mensagem recebida.');
         });
       }
     }

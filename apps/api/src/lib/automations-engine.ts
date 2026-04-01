@@ -243,7 +243,9 @@ function dedupeKeyForContext(automation: AutomationWithRuntime, context: Trigger
 async function createAutomationExecution(
   app: FastifyInstance,
   params: {
+    id?: string;
     automationId: string;
+    dedupeKey?: string | null;
     status: 'success' | 'skipped' | 'failed';
     message: string;
     triggerPayload: Record<string, unknown>;
@@ -252,11 +254,61 @@ async function createAutomationExecution(
 ) {
   await app.prisma.automationExecution.create({
     data: {
-      id: randomUUID(),
+      id: params.id ?? randomUUID(),
       automationId: params.automationId,
+      dedupeKey: params.dedupeKey ?? null,
       status: params.status,
       message: params.message,
       triggerPayload: params.triggerPayload as Prisma.InputJsonValue,
+      resultPayload: params.resultPayload ? params.resultPayload as Prisma.InputJsonValue : Prisma.JsonNull,
+    },
+  });
+}
+
+async function claimAutomationExecution(
+  app: FastifyInstance,
+  params: {
+    automationId: string;
+    dedupeKey: string;
+    triggerPayload: Record<string, unknown>;
+  },
+) {
+  const executionId = randomUUID();
+
+  try {
+    await createAutomationExecution(app, {
+      id: executionId,
+      automationId: params.automationId,
+      dedupeKey: params.dedupeKey,
+      status: 'skipped',
+      message: 'Execucao reservada para processamento.',
+      triggerPayload: params.triggerPayload,
+      resultPayload: null,
+    });
+    return executionId;
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function finalizeAutomationExecution(
+  app: FastifyInstance,
+  params: {
+    id: string;
+    status: 'success' | 'skipped' | 'failed';
+    message: string;
+    resultPayload?: Record<string, unknown> | null;
+  },
+) {
+  await app.prisma.automationExecution.update({
+    where: { id: params.id },
+    data: {
+      status: params.status,
+      message: params.message,
       resultPayload: params.resultPayload ? params.resultPayload as Prisma.InputJsonValue : Prisma.JsonNull,
     },
   });
@@ -288,6 +340,7 @@ async function executeAction(
       actorUserId: params.actorUserId,
       body: message,
       preserveCurrentAgent: true,
+      preserveCurrentStatus: true,
     });
 
     return {
@@ -482,6 +535,16 @@ async function executeAction(
         signal: controller.signal,
       });
 
+      if (!response.ok) {
+        const responseBody = (await response.text().catch(() => '')).trim();
+        const snippet = responseBody.slice(0, 300);
+        throw new Error(
+          snippet
+            ? `Webhook respondeu ${response.status}: ${snippet}`
+            : `Webhook respondeu ${response.status}.`,
+        );
+      }
+
       return {
         type: 'webhook',
         statusCode: response.status,
@@ -517,14 +580,22 @@ async function runAutomationAgainstContext(
     messageId: context.message?.id ?? null,
     dedupeKey,
   };
+  const executionId = await claimAutomationExecution(app, {
+    automationId: automation.id,
+    dedupeKey,
+    triggerPayload,
+  });
+
+  if (!executionId) {
+    return null;
+  }
 
   const conditionsMatched = conditions.every((condition) => evaluateCondition(condition, context));
   if (!conditionsMatched) {
-    await createAutomationExecution(app, {
-      automationId: automation.id,
+    await finalizeAutomationExecution(app, {
+      id: executionId,
       status: 'skipped',
       message: 'Condições não atendidas para este evento.',
-      triggerPayload,
       resultPayload: {
         ticketId: context.ticket.id,
         messageId: context.message?.id ?? null,
@@ -546,11 +617,10 @@ async function runAutomationAgainstContext(
       }));
     }
 
-    await createAutomationExecution(app, {
-      automationId: automation.id,
+    await finalizeAutomationExecution(app, {
+      id: executionId,
       status: 'success',
       message: `${results.length} ação(ões) executada(s) com sucesso.`,
-      triggerPayload,
       resultPayload: {
         ticketId: context.ticket.id,
         actorUserId,
@@ -559,11 +629,10 @@ async function runAutomationAgainstContext(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Falha ao executar automação.';
-    await createAutomationExecution(app, {
-      automationId: automation.id,
+    await finalizeAutomationExecution(app, {
+      id: executionId,
       status: 'failed',
       message,
-      triggerPayload,
       resultPayload: {
         ticketId: context.ticket.id,
         actorUserId,

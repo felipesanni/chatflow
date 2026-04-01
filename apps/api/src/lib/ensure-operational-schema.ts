@@ -368,6 +368,7 @@ const operationalStatements = [
       CREATE TABLE IF NOT EXISTS automation_executions (
         id UUID PRIMARY KEY,
         automation_id UUID NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+        dedupe_key TEXT,
         status "AutomationExecutionStatus" NOT NULL,
         trigger_payload JSONB,
         result_payload JSONB,
@@ -394,6 +395,27 @@ const operationalStatements = [
     `
       CREATE INDEX IF NOT EXISTS automation_executions_automation_id_executed_at_idx
         ON automation_executions(automation_id, executed_at DESC);
+    `,
+    `
+      ALTER TABLE automation_executions
+      ADD COLUMN IF NOT EXISTS dedupe_key TEXT;
+    `,
+    `
+      DELETE FROM automation_executions AS older
+      USING automation_executions AS newer
+      WHERE older.automation_id = newer.automation_id
+        AND older.dedupe_key IS NOT NULL
+        AND newer.dedupe_key IS NOT NULL
+        AND older.dedupe_key = newer.dedupe_key
+        AND (
+          older.executed_at < newer.executed_at
+          OR (older.executed_at = newer.executed_at AND older.id < newer.id)
+        );
+    `,
+    `
+      CREATE UNIQUE INDEX IF NOT EXISTS automation_executions_automation_id_dedupe_key_key
+        ON automation_executions(automation_id, dedupe_key)
+        WHERE dedupe_key IS NOT NULL;
     `,
     `
       CREATE TABLE IF NOT EXISTS tickets (

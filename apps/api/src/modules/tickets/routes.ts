@@ -635,7 +635,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       return reply.badRequest('Instancia nao encontrada.');
     }
 
-    const queueId = body.queueId ?? null;
+    const queueId = body.queueId ?? instance.defaultQueueId ?? null;
     if (queueId) {
       const queue = await app.prisma.queue.findUnique({ where: { id: queueId } });
       if (!queue) {

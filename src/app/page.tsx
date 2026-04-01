@@ -4613,12 +4613,29 @@ export default function HomePage() {
   }
 
   function resetConversationForm() {
+    const firstInstance = instances[0] ?? null;
     setConversationForm({
       phone: "",
-      whatsappInstanceId: instances[0]?.id ?? "",
-      queueId: "",
+      whatsappInstanceId: firstInstance?.id ?? "",
+      queueId: firstInstance?.defaultQueueId ?? "",
       customerSearch: "",
     });
+  }
+
+  function getConversationDefaultQueue(instanceId: string) {
+    const instance = instances.find((item) => item.id === instanceId) ?? null;
+    if (!instance?.defaultQueueId) {
+      return {
+        id: "",
+        name: "Instância sem fila padrão",
+      };
+    }
+
+    const queue = queues.find((item) => item.id === instance.defaultQueueId) ?? null;
+    return {
+      id: instance.defaultQueueId,
+      name: queue?.name ?? instance.defaultQueue?.name ?? "Fila padrão da instância",
+    };
   }
 
   function startEditInstance(instance: InstanceItem) {
@@ -4884,7 +4901,7 @@ export default function HomePage() {
     setConversationForm({
       phone: "",
       whatsappInstanceId: instances[0]?.id ?? "",
-      queueId: "",
+      queueId: instances[0]?.defaultQueueId ?? "",
       customerSearch: "",
     });
   }
@@ -5393,6 +5410,7 @@ export default function HomePage() {
     setConversationLoading(true);
     try {
       const normalizedPhone = onlyPhoneDigits(conversationForm.phone);
+      const defaultConversationQueue = getConversationDefaultQueue(conversationForm.whatsappInstanceId);
       const matchedCustomer = customers.find((customer) => customer.phone && onlyPhoneDigits(customer.phone) === normalizedPhone) ?? null;
 
       if (existingOpenConversationTicket) {
@@ -5415,7 +5433,7 @@ export default function HomePage() {
           customerName: matchedCustomer?.name,
           phone: normalizedPhone,
           whatsappInstanceId: conversationForm.whatsappInstanceId,
-          queueId: conversationForm.queueId || null,
+          queueId: defaultConversationQueue.id || null,
         }),
       });
 
@@ -9007,7 +9025,14 @@ export default function HomePage() {
                 Instância
                 <select
                   value={conversationForm.whatsappInstanceId}
-                  onChange={(event) => setConversationForm((current) => ({ ...current, whatsappInstanceId: event.target.value }))}
+                  onChange={(event) => {
+                    const defaultQueue = getConversationDefaultQueue(event.target.value);
+                    setConversationForm((current) => ({
+                      ...current,
+                      whatsappInstanceId: event.target.value,
+                      queueId: defaultQueue.id,
+                    }));
+                  }}
                   className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
                 >
                   <option value="">Selecione uma instância</option>
@@ -9020,18 +9045,12 @@ export default function HomePage() {
               </label>
               <label className="block text-sm font-medium text-slate-600">
                 Fila
-                <select
-                  value={conversationForm.queueId}
-                  onChange={(event) => setConversationForm((current) => ({ ...current, queueId: event.target.value }))}
-                  className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-                >
-                  <option value="">Sem fila inicial</option>
-                  {queues.map((queue) => (
-                    <option key={queue.id} value={queue.id}>
-                      {queue.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="mt-2 flex h-11 w-full items-center rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-700">
+                  {getConversationDefaultQueue(conversationForm.whatsappInstanceId).name}
+                </div>
+                <p className="mt-2 text-xs font-medium text-slate-400">
+                  Novos tickets sempre usam a fila padrão da instância selecionada.
+                </p>
               </label>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">

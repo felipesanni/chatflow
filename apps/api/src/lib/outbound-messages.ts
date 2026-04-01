@@ -23,6 +23,7 @@ type DeliverOutboundMessageParams = {
   attachment?: OutgoingAttachmentInput | null;
   internalNote?: boolean;
   preserveCurrentAgent?: boolean;
+  preserveCurrentStatus?: boolean;
 };
 
 function parseDataUrl(input: string) {
@@ -262,7 +263,7 @@ export async function deliverOutboundMessage(app: FastifyInstance, params: Deliv
       lastMessagePreview: preview,
       lastMessageAt: message.createdAt,
       unreadCount: 0,
-      status: 'open',
+      status: params.preserveCurrentStatus ? ticket.status : 'open',
       currentAgentId: ticket.isGroup
         ? null
         : params.preserveCurrentAgent

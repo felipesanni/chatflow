@@ -349,9 +349,11 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
         },
       });
     } catch (error) {
-      await app.prisma.ticket.delete({
-        where: { id: ticketResult.ticket.id },
-      }).catch(() => {});
+      if (ticketResult.created) {
+        await app.prisma.ticket.delete({
+          where: { id: ticketResult.ticket.id },
+        }).catch(() => {});
+      }
 
       app.log.error({
         action: 'external_message_send_failed',

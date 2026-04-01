@@ -315,6 +315,7 @@ model Automation {
 model AutomationExecution {
   id             String                    @id @db.Uuid
   automationId   String                    @map("automation_id") @db.Uuid
+  dedupeKey      String?                   @map("dedupe_key")
   status         AutomationExecutionStatus
   triggerPayload Json?                     @map("trigger_payload")
   resultPayload  Json?                     @map("result_payload")
@@ -323,6 +324,7 @@ model AutomationExecution {
   automation     Automation                @relation(fields: [automationId], references: [id], onDelete: Cascade)
 
   @@index([automationId, executedAt(sort: Desc)])
+  @@unique([automationId, dedupeKey])
   @@map("automation_executions")
 }
 
