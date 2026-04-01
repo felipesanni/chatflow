@@ -2237,6 +2237,14 @@ export default function HomePage() {
     () => messages.find((message) => message.id === replyToMessageId) ?? null,
     [messages, replyToMessageId],
   );
+  const botQueueIds = React.useMemo(
+    () => queues.filter((queue) => queue.isBotQueue).map((queue) => queue.id),
+    [queues],
+  );
+  const botQueueNames = React.useMemo(
+    () => queues.filter((queue) => queue.isBotQueue).map((queue) => queue.name),
+    [queues],
+  );
 
   const currentUser: AuthUser = user ?? {
     id: "",
@@ -4927,6 +4935,24 @@ export default function HomePage() {
     }));
   }
 
+  function updateBotAgentMode(enabled: boolean) {
+    if (enabled) {
+      setManagementModalTab("general");
+    }
+
+    setAgentForm((current) => ({
+      ...current,
+      isBotAgent: enabled,
+      role: enabled ? "agent" : current.role,
+      queueIds: enabled ? botQueueIds : current.queueIds,
+      permissions: enabled ? defaultPermissionsForRole("agent") : current.permissions,
+      blocked: enabled ? false : current.blocked,
+      accessScheduleEnabled: enabled ? false : current.accessScheduleEnabled,
+      accessStartTime: enabled ? "08:00" : current.accessStartTime,
+      accessEndTime: enabled ? "18:00" : current.accessEndTime,
+    }));
+  }
+
   function toggleAgentPermission(permission: PermissionKey) {
     setAgentForm((current) => ({
       ...current,
@@ -4973,18 +4999,19 @@ export default function HomePage() {
   async function handleCreateAgent(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedPassword = agentForm.password.trim();
+    const requiresCredentials = !agentForm.isBotAgent;
 
-    if (!editingAgentId && trimmedPassword.length < 8) {
+    if (!editingAgentId && requiresCredentials && trimmedPassword.length < 8) {
       setPanelMessage("Informe uma senha com ao menos 8 caracteres.");
       return;
     }
 
-    if (trimmedPassword && trimmedPassword !== agentForm.confirmPassword) {
+    if (requiresCredentials && trimmedPassword && trimmedPassword !== agentForm.confirmPassword) {
       setPanelMessage("A confirmação da senha não confere.");
       return;
     }
 
-    if (editingAgentId && trimmedPassword && !canManageAgentPasswords) {
+    if (requiresCredentials && editingAgentId && trimmedPassword && !canManageAgentPasswords) {
       setPanelMessage("Você não possui permissão para alterar senhas de usuários.");
       return;
     }
@@ -5003,10 +5030,14 @@ export default function HomePage() {
     try {
       const payload = {
         name: agentForm.name,
-        email: agentForm.email,
-        password: trimmedPassword,
-        role: agentForm.role,
-        queueIds: agentForm.role === "admin" ? queues.map((queue) => queue.id) : agentForm.queueIds,
+        email: agentForm.isBotAgent ? "" : agentForm.email,
+        password: agentForm.isBotAgent ? "" : trimmedPassword,
+        role: agentForm.isBotAgent ? "agent" : agentForm.role,
+        queueIds: agentForm.isBotAgent
+          ? botQueueIds
+          : agentForm.role === "admin"
+            ? queues.map((queue) => queue.id)
+            : agentForm.queueIds,
         permissions: agentForm.permissions,
         ...(currentUser.role === "admin" ? { isBotAgent: agentForm.isBotAgent } : {}),
         ...(canManageUserAccess
@@ -9644,8 +9675,10 @@ export default function HomePage() {
           <form onSubmit={handleCreateAgent} className="space-y-4">
             <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
               <AdminTab label="Geral" active={managementModalTab === "general"} onClick={() => setManagementModalTab("general")} />
-              <AdminTab label="Permissões" active={managementModalTab === "permissions"} onClick={() => setManagementModalTab("permissions")} />
-              {canManageUserAccess ? (
+              {!agentForm.isBotAgent ? (
+                <AdminTab label="Permissões" active={managementModalTab === "permissions"} onClick={() => setManagementModalTab("permissions")} />
+              ) : null}
+              {canManageUserAccess && !agentForm.isBotAgent ? (
                 <AdminTab label="Acesso" active={managementModalTab === "access"} onClick={() => setManagementModalTab("access")} />
               ) : null}
             </div>
@@ -9654,34 +9687,51 @@ export default function HomePage() {
               <div className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <CompactField label="Nome" value={agentForm.name} onChange={(value) => setAgentForm((current) => ({ ...current, name: value }))} placeholder="Nome completo" />
-                  <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} placeholder="usuario@empresa.com" autoComplete="email" />
-                  {!editingAgentId || canManageAgentPasswords ? (
+                  {!agentForm.isBotAgent ? (
+                    <CompactField label="E-mail" value={agentForm.email} onChange={(value) => setAgentForm((current) => ({ ...current, email: value }))} placeholder="usuario@empresa.com" autoComplete="email" />
+                  ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                      Credenciais de login não são necessárias para usuários bot.
+                    </div>
+                  )}
+                  {!agentForm.isBotAgent && (!editingAgentId || canManageAgentPasswords) ? (
                     <>
                       <CompactField label={editingAgentId ? "Nova senha" : "Senha"} type="password" value={agentForm.password} onChange={(value) => setAgentForm((current) => ({ ...current, password: value }))} placeholder={editingAgentId ? "Opcional para manter a atual" : "Senha de acesso"} autoComplete="new-password" />
                       <CompactField label={editingAgentId ? "Confirmar nova senha" : "Confirmar senha"} type="password" value={agentForm.confirmPassword} onChange={(value) => setAgentForm((current) => ({ ...current, confirmPassword: value }))} placeholder="Repita a senha" autoComplete="new-password" />
                     </>
-                  ) : (
+                  ) : !agentForm.isBotAgent ? (
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500 md:col-span-2">
                       Você pode editar os dados do usuário, mas a troca de senha exige a permissão <span className="font-semibold">agents.password.manage</span>.
                     </div>
+                  ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                      O sistema gera credenciais técnicas internas automaticamente para este agente.
+                    </div>
                   )}
-                  <label className="block text-sm font-medium text-slate-600">
-                    Perfil
-                    <select
-                      value={agentForm.role}
-                      onChange={(event) => updateAgentRole(event.target.value as "admin" | "agent")}
-                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-                    >
-                      <option value="agent">Agente</option>
-                      <option value="admin">Administrador</option>
-                    </select>
-                  </label>
+                  {!agentForm.isBotAgent ? (
+                    <label className="block text-sm font-medium text-slate-600">
+                      Perfil
+                      <select
+                        value={agentForm.role}
+                        onChange={(event) => updateAgentRole(event.target.value as "admin" | "agent")}
+                        className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                      >
+                        <option value="agent">Agente</option>
+                        <option value="admin">Administrador</option>
+                      </select>
+                    </label>
+                  ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700">Perfil aplicado</div>
+                      <div className="mt-1 font-medium text-slate-800">Agente técnico de automação</div>
+                    </div>
+                  )}
                   {currentUser.role === "admin" ? (
                     <label className={`flex items-start gap-3 rounded-2xl border px-4 py-4 text-sm transition md:col-span-2 ${agentForm.isBotAgent ? "border-sky-200 bg-sky-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
                       <input
                         type="checkbox"
                         checked={agentForm.isBotAgent}
-                        onChange={(event) => setAgentForm((current) => ({ ...current, isBotAgent: event.target.checked }))}
+                        onChange={(event) => updateBotAgentMode(event.target.checked)}
                         className="mt-1 h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
                       />
                       <span>
@@ -9694,7 +9744,20 @@ export default function HomePage() {
                   ) : null}
                 </div>
 
-                {canAssignQueues ? (
+                {agentForm.isBotAgent ? (
+                  <div className="rounded-3xl border border-sky-100 bg-sky-50 p-4">
+                    <div className="text-sm font-semibold text-slate-900">Configuração automática do bot</div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      O agente bot já fica preparado para uso técnico com permissões padrão de agente e acesso manual oculto.
+                    </div>
+                    <div className="mt-4 rounded-2xl border border-sky-100 bg-white px-4 py-3 text-sm text-slate-700">
+                      <div className="font-medium text-slate-800">Filas bot vinculadas</div>
+                      <div className="mt-1 text-slate-600">
+                        {botQueueNames.length > 0 ? botQueueNames.join(", ") : "Nenhuma fila bot cadastrada ainda."}
+                      </div>
+                    </div>
+                  </div>
+                ) : canAssignQueues ? (
                   <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                     <div className="text-sm font-semibold text-slate-900">Filas visíveis no atendimento</div>
                     <div className="mt-1 text-sm text-slate-500">
@@ -9725,7 +9788,7 @@ export default function HomePage() {
                   </div>
                 ) : null}
               </div>
-            ) : managementModalTab === "permissions" ? (
+            ) : managementModalTab === "permissions" && !agentForm.isBotAgent ? (
                 <div className="space-y-4">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                     {agentForm.role === "admin"
@@ -9761,9 +9824,9 @@ export default function HomePage() {
                     </section>
                   ))}
                 </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
+                </div>
+              ) : (
+                <div className="space-y-4">
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                   Controle se este usuário pode acessar o painel e, se necessário, limite o uso a uma janela diária de horário.
                 </div>

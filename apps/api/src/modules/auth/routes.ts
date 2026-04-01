@@ -115,6 +115,10 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       return reply.unauthorized('Credenciais invalidas.');
     }
 
+    if (user.agent?.isBotAgent) {
+      return reply.forbidden('Usuarios de automacao nao podem acessar o painel.');
+    }
+
     const accessRestriction = describeUserAccessRestriction(user);
     if (accessRestriction) {
       return reply.forbidden(accessRestriction);

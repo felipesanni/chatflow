@@ -11,39 +11,7 @@ const accessTimeSchema = z
 
 const createAgentSchema = z.object({
   name: z.string().min(2),
-  email: z.string().email(),
-  password: z.string().min(8),
-  role: z.enum(['admin', 'agent']).default('agent'),
-  queueIds: z.array(z.string().uuid()).default([]),
-  permissions: z.record(z.string(), z.boolean()).optional(),
-  isBotAgent: z.boolean().optional(),
-  blocked: z.boolean().optional(),
-  accessStartTime: z.union([accessTimeSchema, z.literal(''), z.null()]).optional(),
-  accessEndTime: z.union([accessTimeSchema, z.literal(''), z.null()]).optional(),
-}).superRefine((value, ctx) => {
-  const hasStart = Boolean(value.accessStartTime);
-  const hasEnd = Boolean(value.accessEndTime);
-
-  if (hasStart !== hasEnd) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['accessStartTime'],
-      message: 'Defina o horário inicial e final juntos.',
-    });
-  }
-
-  if (value.accessStartTime && value.accessEndTime && value.accessStartTime === value.accessEndTime) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['accessEndTime'],
-      message: 'O horário final precisa ser diferente do horário inicial.',
-    });
-  }
-});
-
-const updateAgentSchema = z.object({
-  name: z.string().min(2),
-  email: z.string().email(),
+  email: z.string().email().optional().or(z.literal('')),
   password: z.string().min(8).optional().or(z.literal('')),
   role: z.enum(['admin', 'agent']).default('agent'),
   queueIds: z.array(z.string().uuid()).default([]),
@@ -71,6 +39,64 @@ const updateAgentSchema = z.object({
       message: 'O horário final precisa ser diferente do horário inicial.',
     });
   }
+
+  if (!value.isBotAgent) {
+    if (!value.email || !value.email.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['email'],
+        message: 'Informe um e-mail válido.',
+      });
+    }
+
+    if (!value.password || value.password.trim().length < 8) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['password'],
+        message: 'Informe uma senha com ao menos 8 caracteres.',
+      });
+    }
+  }
+});
+
+const updateAgentSchema = z.object({
+  name: z.string().min(2),
+  email: z.string().email().optional().or(z.literal('')),
+  password: z.string().min(8).optional().or(z.literal('')),
+  role: z.enum(['admin', 'agent']).default('agent'),
+  queueIds: z.array(z.string().uuid()).default([]),
+  permissions: z.record(z.string(), z.boolean()).optional(),
+  isBotAgent: z.boolean().optional(),
+  blocked: z.boolean().optional(),
+  accessStartTime: z.union([accessTimeSchema, z.literal(''), z.null()]).optional(),
+  accessEndTime: z.union([accessTimeSchema, z.literal(''), z.null()]).optional(),
+}).superRefine((value, ctx) => {
+  const hasStart = Boolean(value.accessStartTime);
+  const hasEnd = Boolean(value.accessEndTime);
+
+  if (hasStart !== hasEnd) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['accessStartTime'],
+      message: 'Defina o horário inicial e final juntos.',
+    });
+  }
+
+  if (value.accessStartTime && value.accessEndTime && value.accessStartTime === value.accessEndTime) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['accessEndTime'],
+      message: 'O horário final precisa ser diferente do horário inicial.',
+    });
+  }
+
+  if (!value.isBotAgent && (!value.email || !value.email.trim())) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['email'],
+      message: 'Informe um e-mail válido.',
+    });
+  }
 });
 
 const validPermissionKeys = new Set(permissionDefinitions.map((item) => item.key));
@@ -95,6 +121,10 @@ function normalizeAccessWindow(startTime?: string | null, endTime?: string | nul
     accessStartTime: normalizedStartTime,
     accessEndTime: normalizedEndTime,
   };
+}
+
+function buildInternalBotEmail() {
+  return `bot+${randomUUID()}@internal.chatflow.local`;
 }
 
 export const agentRoutes: FastifyPluginAsync = async (app) => {
@@ -141,10 +171,11 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     if (!access) return;
 
     const body = createAgentSchema.parse(request.body);
-    const normalizedPassword = body.password.trim();
+    const normalizedBotMode = access.user.role === 'admin' ? body.isBotAgent === true : false;
+    const normalizedEmail = normalizedBotMode ? buildInternalBotEmail() : body.email!.trim().toLowerCase();
+    const normalizedPassword = normalizedBotMode ? randomUUID().replaceAll('-', '') : body.password!.trim();
     const userId = randomUUID();
     const accessWindow = normalizeAccessWindow(body.accessStartTime, body.accessEndTime);
-    const isBotAgent = access.user.role === 'admin' ? body.isBotAgent === true : false;
 
     if (access.user.role !== 'admin' && (body.blocked || accessWindow.accessStartTime || accessWindow.accessEndTime)) {
       return reply.forbidden('Somente administradores podem bloquear usuários ou definir horários de acesso.');
@@ -153,10 +184,10 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     await app.prisma.user.create({
       data: {
         id: userId,
-        email: body.email.toLowerCase(),
+        email: normalizedEmail,
         passwordHash: hashPassword(normalizedPassword),
-        role: body.role,
-        permissions: sanitizePermissions(body.permissions, body.role),
+        role: normalizedBotMode ? 'agent' : body.role,
+        permissions: sanitizePermissions(body.permissions, normalizedBotMode ? 'agent' : body.role),
         status: body.blocked ? 'inactive' : 'active',
         accessStartTime: accessWindow.accessStartTime,
         accessEndTime: accessWindow.accessEndTime,
@@ -164,7 +195,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
           create: {
             name: body.name,
             presence: 'offline',
-            isBotAgent,
+            isBotAgent: normalizedBotMode,
             queueLinks: {
               create: body.queueIds.map((queueId) => ({ queueId })),
             },
@@ -203,7 +234,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         status: created.status,
         accessStartTime: created.accessStartTime,
         accessEndTime: created.accessEndTime,
-        isBotAgent: created.agent?.isBotAgent ?? isBotAgent,
+        isBotAgent: created.agent?.isBotAgent ?? normalizedBotMode,
         presence: created.agent?.presence ?? 'offline',
         queues: created.agent?.queueLinks.map((link: any) => ({ id: link.queue.id, name: link.queue.name })) ?? [],
       },
@@ -216,7 +247,6 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
 
     const params = z.object({ agentId: z.string().uuid() }).parse(request.params);
     const body = updateAgentSchema.parse(request.body);
-    const normalizedPassword = body.password?.trim() ?? '';
     const accessWindow = normalizeAccessWindow(body.accessStartTime, body.accessEndTime);
 
     const existing = await app.prisma.agent.findUnique({
@@ -228,17 +258,24 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Agente nao encontrado.');
     }
 
-    const normalizedEmail = body.email.toLowerCase();
-    const emailConflict = await app.prisma.user.findFirst({
-      where: {
-        email: normalizedEmail,
-        id: { not: existing.user.id },
-      },
-      select: { id: true },
-    });
+    const nextIsBotAgent = access.user.role === 'admin'
+      ? body.isBotAgent === true
+      : existing.isBotAgent;
+    const normalizedEmail = nextIsBotAgent ? existing.user.email : body.email!.trim().toLowerCase();
+    const normalizedPassword = nextIsBotAgent ? '' : (body.password?.trim() ?? '');
 
-    if (emailConflict) {
-      return reply.conflict('Ja existe outro usuario com este e-mail.');
+    if (!nextIsBotAgent) {
+      const emailConflict = await app.prisma.user.findFirst({
+        where: {
+          email: normalizedEmail,
+          id: { not: existing.user.id },
+        },
+        select: { id: true },
+      });
+
+      if (emailConflict) {
+        return reply.conflict('Ja existe outro usuario com este e-mail.');
+      }
     }
 
     if (normalizedPassword && !access.permissions['agents.password.manage']) {
@@ -252,9 +289,6 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     const nextStatus = access.user.role === 'admin'
       ? (body.blocked ? 'inactive' : 'active')
       : existing.user.status;
-    const nextIsBotAgent = access.user.role === 'admin'
-      ? body.isBotAgent === true
-      : existing.isBotAgent;
     const nextAccessStartTime = access.user.role === 'admin'
       ? accessWindow.accessStartTime
       : existing.user.accessStartTime;
@@ -267,8 +301,8 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         where: { id: existing.user.id },
         data: {
           email: normalizedEmail,
-          role: body.role,
-          permissions: sanitizePermissions(body.permissions, body.role),
+          role: nextIsBotAgent ? 'agent' : body.role,
+          permissions: sanitizePermissions(body.permissions, nextIsBotAgent ? 'agent' : body.role),
           status: nextStatus,
           accessStartTime: nextAccessStartTime,
           accessEndTime: nextAccessEndTime,
@@ -307,8 +341,8 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
           publicId: updated?.publicId,
           name: body.name,
         email: normalizedEmail,
-        role: body.role,
-        permissions: resolvePermissions(body.role, body.permissions ?? defaultPermissionsForRole(body.role)),
+        role: nextIsBotAgent ? 'agent' : body.role,
+        permissions: resolvePermissions(nextIsBotAgent ? 'agent' : body.role, body.permissions ?? defaultPermissionsForRole(nextIsBotAgent ? 'agent' : body.role)),
         status: nextStatus,
         accessStartTime: nextAccessStartTime,
         accessEndTime: nextAccessEndTime,
