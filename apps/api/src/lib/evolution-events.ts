@@ -6,6 +6,7 @@ import { loadEnv } from '../config/env.js';
 import { decryptSecret } from './secrets.js';
 import { fetchEvolutionGroupName, fetchEvolutionProfilePictureUrl } from './evolution-client.js';
 import { notifyInboundTicketMessage } from './inbound-notifications.js';
+import { processAutomationMessageReceived } from './automations-engine.js';
 import {
   buildActiveTicketIdentityWhere,
   buildTicketAliasCandidates,
@@ -1252,6 +1253,11 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         await notifyInboundTicketMessage(app, {
           ticketId: ticket.id,
           preview: ticket.lastMessagePreview,
+        });
+
+        await processAutomationMessageReceived(app, {
+          ticketId: ticket.id,
+          messageId: createdMessage.id,
         });
       }
     }

@@ -35,6 +35,7 @@ export const permissionDefinitions = [
   { key: 'activity.view', group: 'Atividade', label: 'Visualizar atividade operacional' },
   { key: 'calendar.view', group: 'Agenda', label: 'Visualizar agenda operacional' },
   { key: 'automations.view', group: 'Automacoes', label: 'Visualizar automacoes' },
+  { key: 'automations.manage', group: 'Automacoes', label: 'Criar e editar automacoes' },
   { key: 'settings.view', group: 'Configuracoes', label: 'Visualizar configuracoes' },
 ] as const;
 
@@ -90,6 +91,7 @@ export function defaultPermissionsForRole(role: UserRole): PermissionMap {
     'activity.view': true,
     'calendar.view': true,
     'automations.view': false,
+    'automations.manage': false,
     'settings.view': false,
   };
 }

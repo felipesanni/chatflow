@@ -7,6 +7,7 @@ import { prismaPlugin } from './plugins/prisma.js';
 import { queuesPlugin } from './plugins/queues.js';
 import { realtimePlugin } from './plugins/realtime.js';
 import { evolutionSocketsPlugin } from './plugins/evolution-sockets.js';
+import { automationsRuntimePlugin } from './plugins/automations-runtime.js';
 import { ensureBootstrapAdmin } from './lib/bootstrap-admin.js';
 import { ensureOperationalSchema } from './lib/ensure-operational-schema.js';
 import { createEvolutionDebugMonitor } from './lib/evolution-debug.js';
@@ -24,6 +25,7 @@ import { whatsappRoutes } from './modules/whatsapp/routes.js';
 import { apiAccessRoutes } from './modules/api-access/routes.js';
 import { externalRoutes } from './modules/external/routes.js';
 import { browserNotificationRoutes } from './modules/browser-notifications/routes.js';
+import { automationRoutes } from './modules/automations/routes.js';
 
 export async function buildApp() {
   const env = loadEnv();
@@ -53,6 +55,7 @@ export async function buildApp() {
   await ensureOperationalSchema(app);
   await ensureBootstrapAdmin(app, env);
   await app.register(evolutionSocketsPlugin);
+  await app.register(automationsRuntimePlugin);
 
   await app.register(healthRoutes, { prefix: '/api' });
   await app.register(dashboardRoutes, { prefix: '/api' });
@@ -68,6 +71,7 @@ export async function buildApp() {
   await app.register(apiAccessRoutes, { prefix: '/api' });
   await app.register(externalRoutes, { prefix: '/api' });
   await app.register(browserNotificationRoutes, { prefix: '/api' });
+  await app.register(automationRoutes, { prefix: '/api' });
 
   app.setErrorHandler((error, request, reply) => {
     request.log.error(error);

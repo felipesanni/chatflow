@@ -82,6 +82,25 @@ enum ScheduledMessageStatus {
   canceled
 }
 
+enum AutomationStatus {
+  draft
+  active
+  inactive
+}
+
+enum AutomationTriggerType {
+  message_received
+  ticket_created
+  ticket_inactive
+  scheduled_time
+}
+
+enum AutomationExecutionStatus {
+  success
+  skipped
+  failed
+}
+
 model User {
   id          String      @id @db.Uuid
   email       String      @unique
@@ -101,6 +120,8 @@ model User {
   dashboardExcludedCustomers Customer[] @relation("dashboard_excluded_by_user")
   apiAccessTokens ApiAccessToken[] @relation("api_access_token_created_by")
   browserPushSubscriptions BrowserPushSubscription[]
+  createdAutomations Automation[] @relation("automation_created_by")
+  updatedAutomations Automation[] @relation("automation_updated_by")
 
   @@map("users")
 }
@@ -187,6 +208,7 @@ model Queue {
   queueAgents QueueAgent[]
   assignmentsFrom TicketAssignment[] @relation("assignment_from_queue")
   assignmentsTo   TicketAssignment[] @relation("assignment_to_queue")
+  automations     Automation[]
 
   @@map("queues")
 }
@@ -221,6 +243,7 @@ model WhatsAppInstance {
   tickets               Ticket[]
   chatAliases           TicketChatAlias[]
   webhookLogs           WebhookLog[]
+  automations           Automation[]
 
   @@map("whatsapp_instances")
 }
@@ -259,6 +282,48 @@ model Ticket {
   @@index([currentAgentId, lastMessageAt(sort: Desc)])
   @@index([currentQueueId, lastMessageAt(sort: Desc)])
   @@map("tickets")
+}
+
+model Automation {
+  id                 String                @id @db.Uuid
+  name               String
+  description        String?
+  status             AutomationStatus      @default(draft)
+  triggerType        AutomationTriggerType @map("trigger_type")
+  queueId            String?               @map("queue_id") @db.Uuid
+  whatsappInstanceId String?               @map("whatsapp_instance_id") @db.Uuid
+  conditions         Json                  @default("{}")
+  actions            Json                  @default("[]")
+  scheduleConfig     Json?                 @map("schedule_config")
+  createdByUserId    String?               @map("created_by_user_id") @db.Uuid
+  updatedByUserId    String?               @map("updated_by_user_id") @db.Uuid
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
+  createdByUser      User?                 @relation("automation_created_by", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedByUser      User?                 @relation("automation_updated_by", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  queue              Queue?                @relation(fields: [queueId], references: [id], onDelete: SetNull)
+  whatsappInstance   WhatsAppInstance?     @relation(fields: [whatsappInstanceId], references: [id], onDelete: SetNull)
+  executions         AutomationExecution[]
+
+  @@index([status, updatedAt(sort: Desc)])
+  @@index([triggerType, status])
+  @@index([queueId])
+  @@index([whatsappInstanceId])
+  @@map("automations")
+}
+
+model AutomationExecution {
+  id             String                    @id @db.Uuid
+  automationId   String                    @map("automation_id") @db.Uuid
+  status         AutomationExecutionStatus
+  triggerPayload Json?                     @map("trigger_payload")
+  resultPayload  Json?                     @map("result_payload")
+  message        String?
+  executedAt     DateTime                  @default(now()) @map("executed_at")
+  automation     Automation                @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@index([automationId, executedAt(sort: Desc)])
+  @@map("automation_executions")
 }
 
 model TicketChatAlias {

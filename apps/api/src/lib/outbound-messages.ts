@@ -22,6 +22,7 @@ type DeliverOutboundMessageParams = {
   replyToMessageId?: string | null;
   attachment?: OutgoingAttachmentInput | null;
   internalNote?: boolean;
+  preserveCurrentAgent?: boolean;
 };
 
 function parseDataUrl(input: string) {
@@ -262,7 +263,11 @@ export async function deliverOutboundMessage(app: FastifyInstance, params: Deliv
       lastMessageAt: message.createdAt,
       unreadCount: 0,
       status: 'open',
-      currentAgentId: ticket.isGroup ? null : (ticket.currentAgentId ?? actor.id),
+      currentAgentId: ticket.isGroup
+        ? null
+        : params.preserveCurrentAgent
+          ? ticket.currentAgentId
+          : (ticket.currentAgentId ?? actor.id),
       updatedAt: new Date(),
     },
   });

@@ -102,6 +102,30 @@ const operationalStatements = [
     END $$;
   `,
   `
+    DO $$
+    BEGIN
+      CREATE TYPE "AutomationStatus" AS ENUM ('draft', 'active', 'inactive');
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `,
+  `
+    DO $$
+    BEGIN
+      CREATE TYPE "AutomationTriggerType" AS ENUM ('message_received', 'ticket_created', 'ticket_inactive', 'scheduled_time');
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `,
+  `
+    DO $$
+    BEGIN
+      CREATE TYPE "AutomationExecutionStatus" AS ENUM ('success', 'skipped', 'failed');
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `,
+  `
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
@@ -321,6 +345,55 @@ const operationalStatements = [
     `
       ALTER TABLE queues
         ALTER COLUMN public_id SET NOT NULL;
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS automations (
+        id UUID PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        status "AutomationStatus" NOT NULL DEFAULT 'draft',
+        trigger_type "AutomationTriggerType" NOT NULL,
+        queue_id UUID REFERENCES queues(id) ON DELETE SET NULL,
+        whatsapp_instance_id UUID REFERENCES whatsapp_instances(id) ON DELETE SET NULL,
+        conditions JSONB NOT NULL DEFAULT '{}'::jsonb,
+        actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+        schedule_config JSONB,
+        created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        updated_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS automation_executions (
+        id UUID PRIMARY KEY,
+        automation_id UUID NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+        status "AutomationExecutionStatus" NOT NULL,
+        trigger_payload JSONB,
+        result_payload JSONB,
+        message TEXT,
+        executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `,
+    `
+      CREATE INDEX IF NOT EXISTS automations_status_updated_at_idx
+        ON automations(status, updated_at DESC);
+    `,
+    `
+      CREATE INDEX IF NOT EXISTS automations_trigger_status_idx
+        ON automations(trigger_type, status);
+    `,
+    `
+      CREATE INDEX IF NOT EXISTS automations_queue_id_idx
+        ON automations(queue_id);
+    `,
+    `
+      CREATE INDEX IF NOT EXISTS automations_whatsapp_instance_id_idx
+        ON automations(whatsapp_instance_id);
+    `,
+    `
+      CREATE INDEX IF NOT EXISTS automation_executions_automation_id_executed_at_idx
+        ON automation_executions(automation_id, executed_at DESC);
     `,
     `
       CREATE TABLE IF NOT EXISTS tickets (

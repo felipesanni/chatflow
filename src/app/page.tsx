@@ -214,6 +214,65 @@ type QueueItem = {
   agents: Array<{ id: string; name: string }>;
 };
 
+type AutomationCondition = {
+  field: string;
+  operator: string;
+  value?: unknown;
+  valueLabel?: string;
+};
+
+type AutomationAction = {
+  type: string;
+  config?: Record<string, unknown>;
+  summary?: string;
+};
+
+type AutomationScheduleConfig = {
+  time?: string;
+  daysOfWeek?: number[];
+};
+
+type AutomationItem = {
+  id: string;
+  name: string;
+  description: string | null;
+  status: "draft" | "active" | "inactive";
+  triggerType: "message_received" | "ticket_created" | "ticket_inactive" | "scheduled_time";
+  queueId?: string | null;
+  whatsappInstanceId?: string | null;
+  conditions: AutomationCondition[];
+  actions: AutomationAction[];
+  scheduleConfig?: AutomationScheduleConfig | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: { id: string; name: string } | null;
+  updatedBy?: { id: string; name: string } | null;
+  queue?: { id: string; name: string; color: string | null } | null;
+  whatsappInstance?: { id: string; name: string } | null;
+  executionCount: number;
+  latestExecution?: {
+    id: string;
+    status: "success" | "skipped" | "failed";
+    executedAt: string;
+    message?: string | null;
+  } | null;
+};
+
+type AutomationExecutionItem = {
+  id: string;
+  status: "success" | "skipped" | "failed";
+  message?: string | null;
+  triggerPayload?: unknown;
+  resultPayload?: unknown;
+  executedAt: string;
+  automation: {
+    id: string;
+    name: string;
+    status: "draft" | "active" | "inactive";
+    triggerType: "message_received" | "ticket_created" | "ticket_inactive" | "scheduled_time";
+  };
+};
+
 type CreateConversationResponse = {
   item: TicketItem;
   created: boolean;
@@ -433,6 +492,7 @@ const permissionDefinitions = [
   { key: "activity.view", group: "Atividade", label: "Visualizar atividade operacional" },
   { key: "calendar.view", group: "Agenda", label: "Visualizar agenda operacional" },
   { key: "automations.view", group: "Automações", label: "Visualizar automações" },
+  { key: "automations.manage", group: "Automações", label: "Criar e editar automações" },
   { key: "settings.view", group: "Configurações", label: "Visualizar configurações" },
 ] as const;
 
@@ -500,6 +560,7 @@ function defaultPermissionsForRole(role: "admin" | "agent"): PermissionMap {
     "activity.view": true,
     "calendar.view": true,
     "automations.view": false,
+    "automations.manage": false,
     "settings.view": false,
   };
 }
@@ -1325,6 +1386,81 @@ function formatDurationMetric(minutes: number | null | undefined) {
   return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}min` : `${hours}h`;
 }
 
+function translateAutomationTrigger(triggerType: AutomationItem["triggerType"]) {
+  if (triggerType === "message_received") return "Nova mensagem recebida";
+  if (triggerType === "ticket_created") return "Ticket criado";
+  if (triggerType === "ticket_inactive") return "Ticket sem resposta";
+  if (triggerType === "scheduled_time") return "Horário agendado";
+  return triggerType;
+}
+
+function translateAutomationStatus(status: AutomationItem["status"]) {
+  if (status === "active") return "Ativa";
+  if (status === "inactive") return "Inativa";
+  return "Rascunho";
+}
+
+function translateAutomationExecutionStatus(status: AutomationExecutionItem["status"]) {
+  if (status === "success") return "Executada";
+  if (status === "failed") return "Falhou";
+  return "Ignorada";
+}
+
+function translateAutomationAction(type: AutomationAction["type"]) {
+  if (type === "send_message") return "Enviar mensagem";
+  if (type === "transfer_queue") return "Transferir para fila";
+  if (type === "assign_agent") return "Atribuir agente";
+  if (type === "close_ticket") return "Encerrar ticket";
+  if (type === "webhook") return "Chamar webhook";
+  return type;
+}
+
+function formatAutomationCondition(condition: AutomationCondition) {
+  if (condition.field === "message.keyword") {
+    return `Mensagem contém "${condition.valueLabel ?? condition.value ?? ""}"`;
+  }
+
+  if (condition.field === "ticket.assignment") {
+    if (condition.value === "unassigned") return "Ticket sem agente";
+    if (condition.value === "assigned") return "Ticket com agente";
+  }
+
+  if (condition.field === "ticket.inactivityMinutes") {
+    return `Inatividade de ${condition.valueLabel ?? condition.value ?? ""} min`;
+  }
+
+  return condition.valueLabel ?? String(condition.value ?? condition.field);
+}
+
+function formatAutomationActionSummary(action: AutomationAction) {
+  if (action.summary?.trim()) {
+    return action.summary.trim();
+  }
+
+  if (action.type === "send_message") {
+    const message = typeof action.config?.message === "string" ? action.config.message : "";
+    return message ? `Enviar: ${message}` : "Enviar mensagem automática";
+  }
+
+  if (action.type === "transfer_queue") {
+    return action.config?.queueName ? `Transferir para ${action.config.queueName}` : "Transferir para fila";
+  }
+
+  if (action.type === "assign_agent") {
+    return action.config?.agentName ? `Atribuir ${action.config.agentName}` : "Atribuir agente";
+  }
+
+  if (action.type === "close_ticket") {
+    return action.config?.reason ? `Encerrar: ${action.config.reason}` : "Encerrar ticket";
+  }
+
+  if (action.type === "webhook") {
+    return action.config?.url ? `Webhook: ${action.config.url}` : "Chamar webhook";
+  }
+
+  return translateAutomationAction(action.type);
+}
+
 function formatShortDateLabel(value: string) {
   try {
     return new Intl.DateTimeFormat("pt-BR", {
@@ -1553,6 +1689,8 @@ export default function HomePage() {
   const [queues, setQueues] = React.useState<QueueItem[]>([]);
   const [customers, setCustomers] = React.useState<CustomerItem[]>([]);
   const [quickReplies, setQuickReplies] = React.useState<QuickReplyItem[]>([]);
+  const [automations, setAutomations] = React.useState<AutomationItem[]>([]);
+  const [automationExecutions, setAutomationExecutions] = React.useState<AutomationExecutionItem[]>([]);
   const [dashboardOverview, setDashboardOverview] = React.useState<DashboardOverview | null>(null);
   const [dashboardRange, setDashboardRange] = React.useState<DashboardRangeKey>("7d");
   const [dashboardAgentId, setDashboardAgentId] = React.useState<string>("all");
@@ -1564,6 +1702,8 @@ export default function HomePage() {
   const [agentLoading, setAgentLoading] = React.useState(false);
   const [queueLoading, setQueueLoading] = React.useState(false);
   const [quickReplyLoading, setQuickReplyLoading] = React.useState(false);
+  const [automationLoading, setAutomationLoading] = React.useState(false);
+  const [automationExecutionLoading, setAutomationExecutionLoading] = React.useState(false);
   const [customerLoading, setCustomerLoading] = React.useState(false);
   const [conversationLoading, setConversationLoading] = React.useState(false);
   const [sharedContactLoadingKey, setSharedContactLoadingKey] = React.useState<string | null>(null);
@@ -1590,9 +1730,11 @@ export default function HomePage() {
   const [duplicatingAgentName, setDuplicatingAgentName] = React.useState<string | null>(null);
   const [editingQueueId, setEditingQueueId] = React.useState<string | null>(null);
   const [editingQuickReplyId, setEditingQuickReplyId] = React.useState<string | null>(null);
+  const [editingAutomationId, setEditingAutomationId] = React.useState<string | null>(null);
   const [editingCustomerId, setEditingCustomerId] = React.useState<string | null>(null);
-  const [managementModal, setManagementModal] = React.useState<null | "instance" | "agent" | "queue" | "conversation" | "quickReply" | "customer">(null);
+  const [managementModal, setManagementModal] = React.useState<null | "instance" | "agent" | "queue" | "conversation" | "quickReply" | "customer" | "automation">(null);
   const [managementModalTab, setManagementModalTab] = React.useState<"general" | "permissions" | "access">("general");
+  const [automationView, setAutomationView] = React.useState<"rules" | "executions">("rules");
 
   const [messageInput, setMessageInput] = React.useState("");
   const [editingMessageId, setEditingMessageId] = React.useState<string | null>(null);
@@ -1693,6 +1835,25 @@ export default function HomePage() {
   });
   const [queueForm, setQueueForm] = React.useState({ name: "", color: "#1A1C32" });
   const [quickReplyForm, setQuickReplyForm] = React.useState({ shortcut: "", content: "", isActive: true });
+  const [automationForm, setAutomationForm] = React.useState({
+    name: "",
+    description: "",
+    status: "draft" as "draft" | "active" | "inactive",
+    triggerType: "message_received" as "message_received" | "ticket_created" | "ticket_inactive" | "scheduled_time",
+    queueId: "",
+    whatsappInstanceId: "",
+    inactivityMinutes: "30",
+    keyword: "",
+    assignmentScope: "any" as "any" | "unassigned" | "assigned",
+    scheduleTime: "09:00",
+    scheduleDaysOfWeek: [1, 2, 3, 4, 5] as number[],
+    actionType: "send_message" as "send_message" | "transfer_queue" | "assign_agent" | "close_ticket" | "webhook",
+    actionMessage: "",
+    actionQueueId: "",
+    actionAgentId: "",
+    actionWebhookUrl: "",
+    actionCloseReason: "",
+  });
   const [conversationForm, setConversationForm] = React.useState({
     phone: "",
     whatsappInstanceId: "",
@@ -2103,6 +2264,8 @@ export default function HomePage() {
   const canManageUserAccess = currentUser.role === "admin";
   const canManageQueues = currentUser.permissions["queues.manage"];
   const canAssignQueues = currentUser.permissions["queues.assign"];
+  const canViewAutomations = currentUser.permissions["automations.view"];
+  const canManageAutomations = currentUser.permissions["automations.manage"];
   const canStartConversation = currentUser.permissions["tickets.reply"];
   const canViewOtherTickets = currentUser.permissions["tickets.viewOthers"] || currentUser.permissions["tickets.viewAll"];
   const canReplyUnassignedTickets = currentUser.permissions["tickets.replyUnassigned"];
@@ -2341,6 +2504,40 @@ export default function HomePage() {
         .includes(managementSearch),
     );
   }, [managementSearch, quickReplies]);
+
+  const filteredAutomations = React.useMemo(() => {
+    if (!managementSearch) return automations;
+    return automations.filter((item) =>
+      [
+        item.name,
+        item.description ?? "",
+        translateAutomationTrigger(item.triggerType),
+        translateAutomationStatus(item.status),
+        item.queue?.name ?? "",
+        item.whatsappInstance?.name ?? "",
+        item.actions.map((action) => formatAutomationActionSummary(action)).join(" "),
+        item.conditions.map((condition) => formatAutomationCondition(condition)).join(" "),
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(managementSearch),
+    );
+  }, [automations, managementSearch]);
+
+  const filteredAutomationExecutions = React.useMemo(() => {
+    if (!managementSearch) return automationExecutions;
+    return automationExecutions.filter((item) =>
+      [
+        item.automation.name,
+        translateAutomationExecutionStatus(item.status),
+        translateAutomationTrigger(item.automation.triggerType),
+        item.message ?? "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(managementSearch),
+    );
+  }, [automationExecutions, managementSearch]);
 
   const filteredScheduledMessageOverview = React.useMemo(() => {
     return scheduledMessageOverview.filter((item) => {
@@ -2756,6 +2953,32 @@ export default function HomePage() {
     }
   }, [user]);
 
+  const refreshAutomations = React.useCallback(async () => {
+    if (!user || !normalizePermissions(user.role, user.permissions)["automations.view"]) return;
+    setAutomationLoading(true);
+    try {
+      const payload = await apiFetch<{ items: AutomationItem[] }>("/automations", { method: "GET" });
+      setAutomations(payload.items);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar automações.");
+    } finally {
+      setAutomationLoading(false);
+    }
+  }, [user]);
+
+  const refreshAutomationExecutions = React.useCallback(async () => {
+    if (!user || !normalizePermissions(user.role, user.permissions)["automations.view"]) return;
+    setAutomationExecutionLoading(true);
+    try {
+      const payload = await apiFetch<{ items: AutomationExecutionItem[] }>("/automations/executions", { method: "GET" });
+      setAutomationExecutions(payload.items);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar execuções das automações.");
+    } finally {
+      setAutomationExecutionLoading(false);
+    }
+  }, [user]);
+
   const refreshDashboard = React.useCallback(async () => {
     if (!user || !normalizePermissions(user.role, user.permissions)["dashboard.view"]) return;
     setDashboardLoading(true);
@@ -2787,7 +3010,9 @@ export default function HomePage() {
     await refreshQueues();
     await refreshCustomers();
     await refreshQuickReplies();
-  }, [refreshAgents, refreshCustomers, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId]);
+    await refreshAutomations();
+    await refreshAutomationExecutions();
+  }, [refreshAgents, refreshAutomationExecutions, refreshAutomations, refreshCustomers, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId]);
 
   React.useEffect(() => {
     void refreshAuth();
@@ -2802,6 +3027,8 @@ export default function HomePage() {
       setQueues([]);
       setCustomers([]);
       setQuickReplies([]);
+      setAutomations([]);
+      setAutomationExecutions([]);
       setScheduledMessageOverview([]);
       setDashboardOverview(null);
       setSelectedTicketId(null);
@@ -2823,10 +3050,14 @@ export default function HomePage() {
     if (canViewQuickReplies) {
       void refreshQuickReplies();
     }
+    if (canViewAutomations) {
+      void refreshAutomations();
+      void refreshAutomationExecutions();
+    }
     if (normalizePermissions(user.role, user.permissions)["calendar.view"]) {
       void refreshScheduledMessageOverview();
     }
-  }, [canTransferTickets, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshCustomers, refreshDashboard, refreshInstances, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshTickets, user]);
+  }, [canTransferTickets, canViewAutomations, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshAutomationExecutions, refreshAutomations, refreshCustomers, refreshDashboard, refreshInstances, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshTickets, user]);
 
   React.useEffect(() => {
     if (!selectedTicketId || !user) {
@@ -4346,6 +4577,29 @@ export default function HomePage() {
     setQuickReplyForm({ shortcut: "", content: "", isActive: true });
   }
 
+  function resetAutomationForm() {
+    setEditingAutomationId(null);
+    setAutomationForm({
+      name: "",
+      description: "",
+      status: "draft",
+      triggerType: "message_received",
+      queueId: "",
+      whatsappInstanceId: "",
+      inactivityMinutes: "30",
+      keyword: "",
+      assignmentScope: "any",
+      scheduleTime: "09:00",
+      scheduleDaysOfWeek: [1, 2, 3, 4, 5],
+      actionType: "send_message",
+      actionMessage: "",
+      actionQueueId: "",
+      actionAgentId: "",
+      actionWebhookUrl: "",
+      actionCloseReason: "",
+    });
+  }
+
   function resetCustomerForm() {
     setEditingCustomerId(null);
     setCustomerForm({
@@ -4464,6 +4718,42 @@ export default function HomePage() {
     setManagementModal("customer");
   }
 
+  function startEditAutomation(item: AutomationItem) {
+    const keywordCondition = item.conditions.find((condition) => condition.field === "message.keyword");
+    const inactivityCondition = item.conditions.find((condition) => condition.field === "ticket.inactivityMinutes");
+    const assignmentCondition = item.conditions.find((condition) => condition.field === "ticket.assignment");
+    const primaryAction = item.actions[0];
+
+    setEditingAutomationId(item.id);
+    setAutomationForm({
+      name: item.name,
+      description: item.description ?? "",
+      status: item.status,
+      triggerType: item.triggerType,
+      queueId: item.queueId ?? "",
+      whatsappInstanceId: item.whatsappInstanceId ?? "",
+      inactivityMinutes: String(inactivityCondition?.value ?? 30),
+      keyword: typeof keywordCondition?.value === "string" ? keywordCondition.value : "",
+      assignmentScope:
+        assignmentCondition?.value === "assigned" || assignmentCondition?.value === "unassigned"
+          ? assignmentCondition.value
+          : "any",
+      scheduleTime: item.scheduleConfig?.time ?? "09:00",
+      scheduleDaysOfWeek:
+        Array.isArray(item.scheduleConfig?.daysOfWeek) && item.scheduleConfig.daysOfWeek.length > 0
+          ? item.scheduleConfig.daysOfWeek
+          : [1, 2, 3, 4, 5],
+      actionType: primaryAction?.type ?? "send_message",
+      actionMessage: typeof primaryAction?.config?.message === "string" ? primaryAction.config.message : "",
+      actionQueueId: typeof primaryAction?.config?.queueId === "string" ? primaryAction.config.queueId : "",
+      actionAgentId: typeof primaryAction?.config?.agentId === "string" ? primaryAction.config.agentId : "",
+      actionWebhookUrl: typeof primaryAction?.config?.url === "string" ? primaryAction.config.url : "",
+      actionCloseReason: typeof primaryAction?.config?.reason === "string" ? primaryAction.config.reason : "",
+    });
+    setManagementModal("automation");
+    setActiveWorkspace("automations");
+  }
+
   function openCreateInstanceModal() {
     resetInstanceForm();
     setManagementModalTab("general");
@@ -4493,6 +4783,13 @@ export default function HomePage() {
     setManagementModalTab("general");
     setManagementModal("quickReply");
     setActiveWorkspace("quickReplies");
+  }
+
+  function openCreateAutomationModal() {
+    resetAutomationForm();
+    setManagementModalTab("general");
+    setManagementModal("automation");
+    setActiveWorkspace("automations");
   }
 
   function openCreateCustomerModal() {
@@ -4525,6 +4822,7 @@ export default function HomePage() {
     setDuplicatingAgentName(null);
     setEditingQueueId(null);
     setEditingQuickReplyId(null);
+    setEditingAutomationId(null);
     setEditingCustomerId(null);
     setInstanceForm({
       name: "",
@@ -4549,6 +4847,25 @@ export default function HomePage() {
     });
     setQueueForm({ name: "", color: "#1A1C32" });
     setQuickReplyForm({ shortcut: "", content: "", isActive: true });
+    setAutomationForm({
+      name: "",
+      description: "",
+      status: "draft",
+      triggerType: "message_received",
+      queueId: "",
+      whatsappInstanceId: "",
+      inactivityMinutes: "30",
+      keyword: "",
+      assignmentScope: "any",
+      scheduleTime: "09:00",
+      scheduleDaysOfWeek: [1, 2, 3, 4, 5],
+      actionType: "send_message",
+      actionMessage: "",
+      actionQueueId: "",
+      actionAgentId: "",
+      actionWebhookUrl: "",
+      actionCloseReason: "",
+    });
     setCustomerForm({
       name: "",
       phone: "",
@@ -4761,6 +5078,157 @@ export default function HomePage() {
     }
   }
 
+  async function handleCreateAutomation(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const conditions: AutomationCondition[] = [];
+
+    if (automationForm.keyword.trim()) {
+      conditions.push({
+        field: "message.keyword",
+        operator: "contains",
+        value: automationForm.keyword.trim(),
+        valueLabel: automationForm.keyword.trim(),
+      });
+    }
+
+    if (automationForm.assignmentScope !== "any") {
+      conditions.push({
+        field: "ticket.assignment",
+        operator: "equals",
+        value: automationForm.assignmentScope,
+        valueLabel: automationForm.assignmentScope === "unassigned" ? "Sem agente" : "Com agente",
+      });
+    }
+
+    if (automationForm.triggerType === "ticket_inactive") {
+      const inactivityMinutes = Number.parseInt(automationForm.inactivityMinutes, 10);
+      if (!Number.isFinite(inactivityMinutes) || inactivityMinutes <= 0) {
+        setPanelMessage("Informe um tempo de inatividade válido em minutos.");
+        return;
+      }
+
+      conditions.push({
+        field: "ticket.inactivityMinutes",
+        operator: "gte",
+        value: inactivityMinutes,
+        valueLabel: String(inactivityMinutes),
+      });
+    }
+
+    const actions: AutomationAction[] = [];
+
+    if (automationForm.actionType === "send_message") {
+      if (!automationForm.actionMessage.trim()) {
+        setPanelMessage("Escreva a mensagem que a automação deve enviar.");
+        return;
+      }
+
+      actions.push({
+        type: "send_message",
+        config: {
+          message: automationForm.actionMessage.trim(),
+        },
+        summary: `Enviar: ${automationForm.actionMessage.trim()}`,
+      });
+    }
+
+    if (automationForm.actionType === "transfer_queue") {
+      const queue = queues.find((item) => item.id === automationForm.actionQueueId);
+      if (!queue) {
+        setPanelMessage("Selecione a fila para a transferência automática.");
+        return;
+      }
+
+      actions.push({
+        type: "transfer_queue",
+        config: {
+          queueId: queue.id,
+          queueName: queue.name,
+        },
+        summary: `Transferir para ${queue.name}`,
+      });
+    }
+
+    if (automationForm.actionType === "assign_agent") {
+      const agent = agents.find((item) => item.id === automationForm.actionAgentId);
+      if (!agent) {
+        setPanelMessage("Selecione o agente para a atribuição automática.");
+        return;
+      }
+
+      actions.push({
+        type: "assign_agent",
+        config: {
+          agentId: agent.id,
+          agentName: agent.name,
+        },
+        summary: `Atribuir ${agent.name}`,
+      });
+    }
+
+    if (automationForm.actionType === "close_ticket") {
+      actions.push({
+        type: "close_ticket",
+        config: {
+          reason: automationForm.actionCloseReason.trim() || null,
+        },
+        summary: automationForm.actionCloseReason.trim()
+          ? `Encerrar: ${automationForm.actionCloseReason.trim()}`
+          : "Encerrar ticket automaticamente",
+      });
+    }
+
+    if (automationForm.actionType === "webhook") {
+      if (!automationForm.actionWebhookUrl.trim()) {
+        setPanelMessage("Informe a URL do webhook.");
+        return;
+      }
+
+      actions.push({
+        type: "webhook",
+        config: {
+          url: automationForm.actionWebhookUrl.trim(),
+        },
+        summary: `Webhook: ${automationForm.actionWebhookUrl.trim()}`,
+      });
+    }
+
+    const scheduleConfig =
+      automationForm.triggerType === "scheduled_time"
+        ? {
+            time: automationForm.scheduleTime,
+            daysOfWeek: automationForm.scheduleDaysOfWeek,
+          }
+        : null;
+
+    setAutomationLoading(true);
+    try {
+      await apiFetch(editingAutomationId ? `/automations/${editingAutomationId}` : "/automations", {
+        method: editingAutomationId ? "PUT" : "POST",
+        body: JSON.stringify({
+          name: automationForm.name,
+          description: automationForm.description.trim() || null,
+          status: automationForm.status,
+          triggerType: automationForm.triggerType,
+          queueId: automationForm.queueId || null,
+          whatsappInstanceId: automationForm.whatsappInstanceId || null,
+          conditions,
+          actions,
+          scheduleConfig,
+        }),
+      });
+      resetAutomationForm();
+      closeManagementModal();
+      setPanelMessage(editingAutomationId ? "Automação atualizada." : "Automação criada.");
+      await Promise.all([refreshAutomations(), refreshAutomationExecutions()]);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao salvar automação.");
+    } finally {
+      setAutomationLoading(false);
+    }
+  }
+
   async function handleCreateCustomer(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setCustomerLoading(true);
@@ -4878,6 +5346,41 @@ export default function HomePage() {
     }
   }
 
+  async function handleDeleteAutomation(automationId: string, automationName: string) {
+    if (!canManageAutomations) return;
+
+    const confirmed = await openConfirmDialog({
+      title: "Excluir automação",
+      description: `Deseja realmente excluir a automação ${automationName}?`,
+      confirmLabel: "Excluir automação",
+      cancelLabel: "Cancelar",
+      tone: "danger",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setAutomationLoading(true);
+      await apiFetch(`/automations/${automationId}`, {
+        method: "DELETE",
+      });
+
+      if (editingAutomationId === automationId) {
+        resetAutomationForm();
+        closeManagementModal();
+      }
+
+      setPanelMessage("Automação excluída.");
+      await Promise.all([refreshAutomations(), refreshAutomationExecutions()]);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao excluir automação.");
+    } finally {
+      setAutomationLoading(false);
+    }
+  }
+
   async function handleCreateConversation(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setConversationLoading(true);
@@ -4888,7 +5391,7 @@ export default function HomePage() {
       if (existingOpenConversationTicket) {
         await openAlertDialog({
           title: "Ticket já existente",
-          description: `Já existe um ticket aberto com ${existingOpenConversationTicket.customerName} nesta instância para este número.`,
+          description: `Já existe um ticket aberto para este número com ${existingOpenConversationTicket.currentAgent?.name ?? "outro usuário"}.`,
           confirmLabel: "Abrir ticket",
           tone: "default",
         });
@@ -4916,7 +5419,7 @@ export default function HomePage() {
       if (!payload.created) {
         await openAlertDialog({
           title: "Ticket já existente",
-          description: `Já existe um ticket aberto com ${payload.item.customerName} nesta instância para este número.`,
+          description: `Já existe um ticket aberto para este número com ${payload.item.currentAgent?.name ?? "outro usuário"}.`,
           confirmLabel: "Abrir ticket",
           tone: "default",
         });
@@ -5275,7 +5778,7 @@ export default function HomePage() {
               : activeWorkspace === "calendar"
                   ? "Lista operacional de acompanhamentos e próximos passos."
                   : activeWorkspace === "automations"
-                    ? "Webhook, tempo real e fluxo da integração."
+                    ? "Regras automatizadas, filtros operacionais e histórico de execuções."
                     : "Ajustes administrativos e visão de ambiente.";
 
   const workspacePanel = (() => {
@@ -6547,29 +7050,216 @@ export default function HomePage() {
     if (activeWorkspace === "automations") {
       return (
         <div className="flex h-full flex-col gap-4 p-6">
-          <WorkspaceSection title="Fluxo da integração" description="Como a operação conversa com a API e com a Evolution.">
-            <DataTable columns={["Etapa", "Canal", "Detalhe"]} emptyMessage="Nenhum fluxo configurado.">
-              <DataRow>
-                <DataCell>Entrada</DataCell>
-                <DataCell subtle>Webhook da Evolution</DataCell>
-                <DataCell subtle>POST /api/webhooks/evolution</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Saída</DataCell>
-                <DataCell subtle>Envio via API própria</DataCell>
-                <DataCell subtle>POST /api/tickets/:ticketId/messages</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Tempo real</DataCell>
-                <DataCell subtle>Socket.IO</DataCell>
-                <DataCell subtle>{SOCKET_URL ?? "Configure a variável NEXT_PUBLIC_SOCKET_URL"}</DataCell>
-              </DataRow>
-              <DataRow>
-                <DataCell>Proxy</DataCell>
-                <DataCell subtle>Frontend</DataCell>
-                <DataCell subtle>/api-proxy mantendo segredos no backend</DataCell>
-              </DataRow>
-            </DataTable>
+          <div className="grid gap-4 xl:grid-cols-3">
+            <WorkspaceStatCard
+              title="Automações"
+              value={String(automations.length)}
+              description="Regras configuradas para acionar fluxos automáticos."
+              accent="blue"
+            />
+            <WorkspaceStatCard
+              title="Ativas"
+              value={String(automations.filter((item) => item.status === "active").length)}
+              description="Automações prontas para execução na operação."
+              accent="emerald"
+            />
+            <WorkspaceStatCard
+              title="Execuções recentes"
+              value={String(automationExecutions.length)}
+              description="Últimos disparos registrados pelo módulo."
+              accent="amber"
+            />
+          </div>
+
+          <WorkspaceSection
+            title="Automações"
+            description="Monte regras com gatilho, filtros e ação para o atendimento operacional."
+          >
+            <ModuleToolbar
+              title={automationView === "rules" ? "Regras automatizadas" : "Execuções"}
+              count={automationView === "rules" ? filteredAutomations.length : filteredAutomationExecutions.length}
+              searchValue={searchQuery}
+              searchPlaceholder={
+                automationView === "rules"
+                  ? "Pesquisar regra, gatilho, fila ou ação"
+                  : "Pesquisar automação, status ou resultado"
+              }
+              onSearchChange={setSearchQuery}
+              actionLabel={automationView === "rules" && canManageAutomations ? "Nova automação" : undefined}
+              onActionClick={automationView === "rules" && canManageAutomations ? openCreateAutomationModal : undefined}
+              actionIcon={Workflow}
+            />
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setAutomationView("rules")}
+                className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
+                  automationView === "rules"
+                    ? "border-[#1A1C32] bg-[#1A1C32] text-white"
+                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                Regras
+              </button>
+              <button
+                type="button"
+                onClick={() => setAutomationView("executions")}
+                className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
+                  automationView === "executions"
+                    ? "border-[#1A1C32] bg-[#1A1C32] text-white"
+                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                Execuções
+              </button>
+            </div>
+
+            {automationView === "rules" ? (
+              automationLoading ? (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-8 text-sm text-slate-500">
+                  Carregando automações...
+                </div>
+              ) : filteredAutomations.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-sm text-slate-500">
+                  Nenhuma automação cadastrada ainda. Crie a primeira regra para começar a automatizar o atendimento.
+                </div>
+              ) : (
+                <div className="grid gap-4 xl:grid-cols-2">
+                  {filteredAutomations.map((item) => (
+                    <article key={item.id} className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <StatusChip
+                              tone={item.status === "active" ? "success" : item.status === "inactive" ? "warning" : "default"}
+                            >
+                              {translateAutomationStatus(item.status)}
+                            </StatusChip>
+                            <StatusChip>{translateAutomationTrigger(item.triggerType)}</StatusChip>
+                          </div>
+                          <h4 className="text-lg font-semibold text-slate-900">{item.name}</h4>
+                          {item.description ? <p className="text-sm text-slate-500">{item.description}</p> : null}
+                        </div>
+                        <div className="text-right text-xs text-slate-400">
+                          <div>Atualizada em</div>
+                          <div className="mt-1 font-semibold text-slate-500">{formatDateTime(item.updatedAt)}</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-3 md:grid-cols-2">
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Escopo</div>
+                          <div className="mt-2 text-sm font-semibold text-slate-800">{item.queue?.name ?? "Todas as filas"}</div>
+                          <div className="mt-1 text-xs text-slate-500">{item.whatsappInstance?.name ?? "Todas as instâncias"}</div>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Ação principal</div>
+                          <div className="mt-2 text-sm font-semibold text-slate-800">
+                            {item.actions[0] ? formatAutomationActionSummary(item.actions[0]) : "Sem ação"}
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {item.executionCount} execução(ões) registrada(s)
+                          </div>
+                        </div>
+                      </div>
+
+                      {item.conditions.length > 0 ? (
+                        <div className="mt-4">
+                          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Condições</div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {item.conditions.map((condition, index) => (
+                              <span
+                                key={`${item.id}-condition-${index}`}
+                                className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600"
+                              >
+                                {formatAutomationCondition(condition)}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {item.latestExecution ? (
+                        <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-semibold text-slate-800">Última execução</span>
+                            <StatusChip
+                              tone={
+                                item.latestExecution.status === "success"
+                                  ? "success"
+                                  : item.latestExecution.status === "failed"
+                                    ? "danger"
+                                    : "warning"
+                              }
+                            >
+                              {translateAutomationExecutionStatus(item.latestExecution.status)}
+                            </StatusChip>
+                          </div>
+                          <div className="mt-2 text-xs text-slate-500">{formatDateTime(item.latestExecution.executedAt)}</div>
+                          {item.latestExecution.message ? (
+                            <div className="mt-2 text-sm text-slate-600">{item.latestExecution.message}</div>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {canManageAutomations ? (
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => startEditAutomation(item)}
+                            className="inline-flex h-10 items-center justify-center rounded-2xl border border-slate-200 px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteAutomation(item.id, item.name)}
+                            className="inline-flex h-10 items-center justify-center rounded-2xl border border-rose-200 bg-rose-50 px-4 text-sm font-semibold text-rose-700 transition hover:bg-rose-100"
+                          >
+                            Excluir
+                          </button>
+                        </div>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              )
+            ) : (
+              <DataTable
+                columns={["Automação", "Gatilho", "Status", "Executada em", "Resultado"]}
+                emptyMessage={automationExecutionLoading ? "Carregando execuções..." : "Nenhuma execução registrada."}
+              >
+                {filteredAutomationExecutions.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-8 text-sm text-slate-500">
+                      {automationExecutionLoading ? "Carregando execuções..." : "Nenhuma execução registrada."}
+                    </td>
+                  </tr>
+                ) : (
+                  filteredAutomationExecutions.map((item) => (
+                    <DataRow key={item.id}>
+                      <DataCell>
+                        <div className="font-semibold text-slate-900">{item.automation.name}</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {translateAutomationStatus(item.automation.status)}
+                        </div>
+                      </DataCell>
+                      <DataCell subtle>{translateAutomationTrigger(item.automation.triggerType)}</DataCell>
+                      <DataCell>
+                        <StatusChip
+                          tone={item.status === "success" ? "success" : item.status === "failed" ? "danger" : "warning"}
+                        >
+                          {translateAutomationExecutionStatus(item.status)}
+                        </StatusChip>
+                      </DataCell>
+                      <DataCell subtle>{formatDateTime(item.executedAt)}</DataCell>
+                      <DataCell subtle>{item.message ?? "Execução registrada sem observações."}</DataCell>
+                    </DataRow>
+                  ))
+                )}
+              </DataTable>
+            )}
           </WorkspaceSection>
         </div>
       );
@@ -8260,7 +8950,7 @@ export default function HomePage() {
             </div>
             {existingOpenConversationTicket ? (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                Ja existe um ticket aberto com <span className="font-semibold">{existingOpenConversationTicket.customerName}</span> nesta instancia para este numero. Ao continuar, o sistema abrira o ticket existente.
+                Ja existe um ticket aberto para este numero com <span className="font-semibold">{existingOpenConversationTicket.currentAgent?.name ?? "outro usuario"}</span>. Ao continuar, o sistema abrira o ticket existente.
               </div>
             ) : null}
             <div className="space-y-3">
@@ -8346,6 +9036,329 @@ export default function HomePage() {
               </button>
               <PrimaryAction disabled={conversationLoading} className="sm:w-auto sm:px-6">
                 {customerLoading ? "Salvando..." : editingCustomerId ? "Salvar alterações" : "Cadastrar contato"}
+              </PrimaryAction>
+            </div>
+          </form>
+        ),
+      };
+    }
+
+    if (managementModal === "automation") {
+      if (!canManageAutomations) {
+        return null;
+      }
+
+      const weekDayLabels = [
+        { value: 0, label: "Dom" },
+        { value: 1, label: "Seg" },
+        { value: 2, label: "Ter" },
+        { value: 3, label: "Qua" },
+        { value: 4, label: "Qui" },
+        { value: 5, label: "Sex" },
+        { value: 6, label: "Sab" },
+      ];
+
+      return {
+        title: editingAutomationId ? "Editar automação" : "Nova automação",
+        description: "Configure gatilho, filtros e ação principal para transformar o módulo em uma operação útil no dia a dia.",
+        content: (
+          <form onSubmit={handleCreateAutomation} className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <CompactField
+                label="Nome"
+                value={automationForm.name}
+                onChange={(value) => setAutomationForm((current) => ({ ...current, name: value }))}
+                placeholder="Ex.: Follow-up de inatividade"
+              />
+              <label className="block text-sm font-medium text-slate-600">
+                Status
+                <select
+                  value={automationForm.status}
+                  onChange={(event) =>
+                    setAutomationForm((current) => ({
+                      ...current,
+                      status: event.target.value as "draft" | "active" | "inactive",
+                    }))
+                  }
+                  className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                >
+                  <option value="draft">Rascunho</option>
+                  <option value="active">Ativa</option>
+                  <option value="inactive">Inativa</option>
+                </select>
+              </label>
+            </div>
+
+            <label className="block text-sm font-medium text-slate-600">
+              Descrição
+              <textarea
+                value={automationForm.description}
+                onChange={(event) => setAutomationForm((current) => ({ ...current, description: event.target.value }))}
+                rows={3}
+                placeholder="Explique em uma frase quando esta automação deve agir."
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+              />
+            </label>
+
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">Gatilho</div>
+              <div className="mt-1 text-sm text-slate-500">Defina quando a automação deve ser avaliada.</div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <label className="block text-sm font-medium text-slate-600 md:col-span-2">
+                  Tipo de gatilho
+                  <select
+                    value={automationForm.triggerType}
+                    onChange={(event) =>
+                      setAutomationForm((current) => ({
+                        ...current,
+                        triggerType: event.target.value as "message_received" | "ticket_created" | "ticket_inactive" | "scheduled_time",
+                      }))
+                    }
+                    className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                  >
+                    <option value="message_received">Nova mensagem recebida</option>
+                    <option value="ticket_created">Ticket criado</option>
+                    <option value="ticket_inactive">Ticket sem resposta</option>
+                    <option value="scheduled_time">Horário agendado</option>
+                  </select>
+                </label>
+
+                <label className="block text-sm font-medium text-slate-600">
+                  Fila
+                  <select
+                    value={automationForm.queueId}
+                    onChange={(event) => setAutomationForm((current) => ({ ...current, queueId: event.target.value }))}
+                    className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                  >
+                    <option value="">Todas as filas</option>
+                    {queues.map((queue) => (
+                      <option key={queue.id} value={queue.id}>
+                        {queue.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <label className="block text-sm font-medium text-slate-600">
+                  Instância
+                  <select
+                    value={automationForm.whatsappInstanceId}
+                    onChange={(event) => setAutomationForm((current) => ({ ...current, whatsappInstanceId: event.target.value }))}
+                    className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                  >
+                    <option value="">Todas as instâncias</option>
+                    {instances.map((instance) => (
+                      <option key={instance.id} value={instance.id}>
+                        {instance.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block text-sm font-medium text-slate-600">
+                  Escopo do ticket
+                  <select
+                    value={automationForm.assignmentScope}
+                    onChange={(event) =>
+                      setAutomationForm((current) => ({
+                        ...current,
+                        assignmentScope: event.target.value as "any" | "assigned" | "unassigned",
+                      }))
+                    }
+                    className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                  >
+                    <option value="any">Qualquer situação</option>
+                    <option value="unassigned">Somente sem agente</option>
+                    <option value="assigned">Somente com agente</option>
+                  </select>
+                </label>
+              </div>
+
+              {automationForm.triggerType === "message_received" ? (
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <CompactField
+                    label="Palavra-chave"
+                    value={automationForm.keyword}
+                    onChange={(value) => setAutomationForm((current) => ({ ...current, keyword: value }))}
+                    placeholder="Ex.: segunda via"
+                  />
+                  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
+                    Se a palavra-chave ficar vazia, a regra será avaliada para qualquer mensagem recebida.
+                  </div>
+                </div>
+              ) : null}
+
+              {automationForm.triggerType === "ticket_inactive" ? (
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <CompactField
+                    label="Minutos de inatividade"
+                    value={automationForm.inactivityMinutes}
+                    onChange={(value) => setAutomationForm((current) => ({ ...current, inactivityMinutes: value.replace(/\D/g, "") }))}
+                    placeholder="30"
+                  />
+                  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
+                    A automação será acionada quando o ticket atingir esse tempo mínimo sem resposta.
+                  </div>
+                </div>
+              ) : null}
+
+              {automationForm.triggerType === "scheduled_time" ? (
+                <div className="mt-4 space-y-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className="block text-sm font-medium text-slate-600">
+                      Horário
+                      <input
+                        type="time"
+                        value={automationForm.scheduleTime}
+                        onChange={(event) => setAutomationForm((current) => ({ ...current, scheduleTime: event.target.value }))}
+                        className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                      />
+                    </label>
+                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
+                      Se nenhum dia for selecionado, a automação será executada todos os dias.
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {weekDayLabels.map((day) => {
+                      const active = automationForm.scheduleDaysOfWeek.includes(day.value);
+                      return (
+                        <button
+                          key={day.value}
+                          type="button"
+                          onClick={() =>
+                            setAutomationForm((current) => ({
+                              ...current,
+                              scheduleDaysOfWeek: active
+                                ? current.scheduleDaysOfWeek.filter((item) => item !== day.value)
+                                : [...current.scheduleDaysOfWeek, day.value].sort((a, b) => a - b),
+                            }))
+                          }
+                          className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition ${
+                            active
+                              ? "border-[#1A1C32] bg-[#1A1C32] text-white"
+                              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                          }`}
+                        >
+                          {day.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">Ação principal</div>
+              <div className="mt-1 text-sm text-slate-500">Escolha o que o sistema deve fazer quando a regra for atendida.</div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <label className="block text-sm font-medium text-slate-600">
+                  Tipo de ação
+                  <select
+                    value={automationForm.actionType}
+                    onChange={(event) =>
+                      setAutomationForm((current) => ({
+                        ...current,
+                        actionType: event.target.value as "send_message" | "transfer_queue" | "assign_agent" | "close_ticket" | "webhook",
+                      }))
+                    }
+                    className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                  >
+                    <option value="send_message">Enviar mensagem</option>
+                    <option value="transfer_queue">Transferir para fila</option>
+                    <option value="assign_agent">Atribuir agente</option>
+                    <option value="close_ticket">Encerrar ticket</option>
+                    <option value="webhook">Chamar webhook</option>
+                  </select>
+                </label>
+              </div>
+
+              {automationForm.actionType === "send_message" ? (
+                <label className="mt-4 block text-sm font-medium text-slate-600">
+                  Mensagem
+                  <textarea
+                    value={automationForm.actionMessage}
+                    onChange={(event) => setAutomationForm((current) => ({ ...current, actionMessage: event.target.value }))}
+                    rows={4}
+                    placeholder="Digite a mensagem que o ChatFlow deve enviar automaticamente."
+                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                  />
+                </label>
+              ) : null}
+
+              {automationForm.actionType === "transfer_queue" ? (
+                <label className="mt-4 block text-sm font-medium text-slate-600">
+                  Fila de destino
+                  <select
+                    value={automationForm.actionQueueId}
+                    onChange={(event) => setAutomationForm((current) => ({ ...current, actionQueueId: event.target.value }))}
+                    className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                  >
+                    <option value="">Selecione a fila</option>
+                    {queues.map((queue) => (
+                      <option key={queue.id} value={queue.id}>
+                        {queue.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+
+              {automationForm.actionType === "assign_agent" ? (
+                <label className="mt-4 block text-sm font-medium text-slate-600">
+                  Agente de destino
+                  <select
+                    value={automationForm.actionAgentId}
+                    onChange={(event) => setAutomationForm((current) => ({ ...current, actionAgentId: event.target.value }))}
+                    className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                  >
+                    <option value="">Selecione o agente</option>
+                    {agents.map((agent) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+
+              {automationForm.actionType === "close_ticket" ? (
+                <div className="mt-4">
+                  <CompactField
+                    label="Motivo do encerramento"
+                    value={automationForm.actionCloseReason}
+                    onChange={(value) => setAutomationForm((current) => ({ ...current, actionCloseReason: value }))}
+                    placeholder="Opcional"
+                  />
+                </div>
+              ) : null}
+
+              {automationForm.actionType === "webhook" ? (
+                <div className="mt-4">
+                  <CompactField
+                    label="URL do webhook"
+                    value={automationForm.actionWebhookUrl}
+                    onChange={(value) => setAutomationForm((current) => ({ ...current, actionWebhookUrl: value }))}
+                    placeholder="https://seu-endpoint.com/webhook"
+                  />
+                </div>
+              ) : null}
+            </div>
+
+            <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={closeManagementModal}
+                className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <PrimaryAction disabled={automationLoading} className="sm:w-auto sm:px-6">
+                {automationLoading ? "Salvando..." : editingAutomationId ? "Salvar automação" : "Criar automação"}
               </PrimaryAction>
             </div>
           </form>
@@ -8805,11 +9818,10 @@ export default function HomePage() {
         <section className="relative z-10 w-full max-w-[430px]">
           <div className="rounded-[30px] border border-white/80 bg-white/88 px-6 py-7 shadow-[0_18px_48px_rgba(8,68,132,0.08)] backdrop-blur-lg sm:px-7 sm:py-8">
             <div className="flex flex-col items-center text-center">
-              <div className="rounded-[22px] border border-[#084484]/7 bg-white/92 px-4 py-3 shadow-[0_10px_24px_rgba(8,68,132,0.05)]">
-                <img src={loginBrandImageSrc} alt="Logo da SERMST" className="max-h-12 w-auto object-contain sm:max-h-14" />
+              <div className="rounded-[20px] border border-[#084484]/7 bg-white/92 px-4 py-3 shadow-[0_8px_20px_rgba(8,68,132,0.04)]">
+                <img src={loginBrandImageSrc} alt="Logo da SERMST" className="max-h-11 w-auto object-contain sm:max-h-12" />
               </div>
-              <div className="mt-5 text-[10px] font-bold uppercase tracking-[0.22em] text-[#084484]/48">Painel de atendimento</div>
-              <h1 className="mt-3 text-[28px] font-semibold leading-none tracking-[-0.06em] text-[#0f172a]">
+              <h1 className="mt-5 text-[28px] font-semibold leading-none tracking-[-0.06em] text-[#0f172a]">
                 {mode === "login" ? "Acesse sua conta" : "Criar acesso inicial"}
               </h1>
             </div>
