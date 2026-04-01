@@ -89,6 +89,26 @@ function formatAgentSignedBody(agentName: string, body: string) {
   return `*${agentName}*\n${trimmedBody}`;
 }
 
+function shouldSignOutboundBody(params: {
+  isInternalNote: boolean;
+  isGroup: boolean;
+  actorIsBotAgent: boolean;
+}) {
+  if (params.isInternalNote) {
+    return false;
+  }
+
+  if (params.isGroup) {
+    return false;
+  }
+
+  if (params.actorIsBotAgent) {
+    return false;
+  }
+
+  return true;
+}
+
 function withInternalNote(rawPayload: Prisma.JsonValue | null | undefined) {
   const payload = rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
     ? { ...(rawPayload as Record<string, unknown>) }
@@ -120,6 +140,7 @@ export async function deliverOutboundMessage(app: FastifyInstance, params: Deliv
         select: {
           id: true,
           name: true,
+          isBotAgent: true,
         },
       },
     },
@@ -150,11 +171,13 @@ export async function deliverOutboundMessage(app: FastifyInstance, params: Deliv
     : null;
 
   const actorName = actor.agent?.name ?? actor.email;
-  const signedBody = isInternalNote
-    ? trimmedBody
-    : ticket.isGroup
-      ? trimmedBody
-      : (trimmedBody ? formatAgentSignedBody(actorName, trimmedBody) : '');
+  const signedBody = shouldSignOutboundBody({
+    isInternalNote,
+    isGroup: ticket.isGroup,
+    actorIsBotAgent: actor.agent?.isBotAgent === true,
+  })
+    ? (trimmedBody ? formatAgentSignedBody(actorName, trimmedBody) : '')
+    : trimmedBody;
 
   const parsedAttachment = attachmentInput ? parseDataUrl(attachmentInput.dataUrl) : null;
 

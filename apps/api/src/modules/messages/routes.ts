@@ -455,6 +455,26 @@ function formatAgentSignedBody(agentName: string, body: string) {
   return `*${agentName}*\n${trimmedBody}`;
 }
 
+function shouldSignOutboundBody(params: {
+  isInternalNote: boolean;
+  isGroup: boolean;
+  currentAgentIsBot: boolean;
+}) {
+  if (params.isInternalNote) {
+    return false;
+  }
+
+  if (params.isGroup) {
+    return false;
+  }
+
+  if (params.currentAgentIsBot) {
+    return false;
+  }
+
+  return true;
+}
+
 function normalizeStoredReactions(value: unknown) {
   if (!Array.isArray(value)) {
     return [] as Array<{
@@ -886,7 +906,13 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const agentSignature = ticket.currentAgent?.name ?? message.senderNameSnapshot ?? session.email;
-    const signedBody = isInternalNote ? body.body.trim() : formatAgentSignedBody(agentSignature, body.body);
+    const signedBody = shouldSignOutboundBody({
+      isInternalNote,
+      isGroup: ticket.isGroup,
+      currentAgentIsBot: ticket.currentAgent?.isBotAgent === true,
+    })
+      ? formatAgentSignedBody(agentSignature, body.body)
+      : body.body.trim();
 
     if (!isInternalNote) {
       const decryptedApiKey = decryptSecret(ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
@@ -1347,11 +1373,13 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.badRequest('O ticket nao possui um destino do WhatsApp configurado.');
     }
 
-    const signedBody = isInternalNote
-      ? trimmedBody
-      : ticket.isGroup
-        ? trimmedBody
-        : (trimmedBody ? formatAgentSignedBody(agentSignature, trimmedBody) : '');
+    const signedBody = shouldSignOutboundBody({
+      isInternalNote,
+      isGroup: ticket.isGroup,
+      currentAgentIsBot: ticket.currentAgent?.isBotAgent === true,
+    })
+      ? (trimmedBody ? formatAgentSignedBody(agentSignature, trimmedBody) : '')
+      : trimmedBody;
     const parsedAttachment = attachmentInput ? parseDataUrl(attachmentInput.dataUrl) : null;
 
     let externalMessageId: string | null = null;
