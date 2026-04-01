@@ -16,6 +16,7 @@ const createAgentSchema = z.object({
   role: z.enum(['admin', 'agent']).default('agent'),
   queueIds: z.array(z.string().uuid()).default([]),
   permissions: z.record(z.string(), z.boolean()).optional(),
+  isBotAgent: z.boolean().optional(),
   blocked: z.boolean().optional(),
   accessStartTime: z.union([accessTimeSchema, z.literal(''), z.null()]).optional(),
   accessEndTime: z.union([accessTimeSchema, z.literal(''), z.null()]).optional(),
@@ -47,6 +48,7 @@ const updateAgentSchema = z.object({
   role: z.enum(['admin', 'agent']).default('agent'),
   queueIds: z.array(z.string().uuid()).default([]),
   permissions: z.record(z.string(), z.boolean()).optional(),
+  isBotAgent: z.boolean().optional(),
   blocked: z.boolean().optional(),
   accessStartTime: z.union([accessTimeSchema, z.literal(''), z.null()]).optional(),
   accessEndTime: z.union([accessTimeSchema, z.literal(''), z.null()]).optional(),
@@ -97,9 +99,13 @@ function normalizeAccessWindow(startTime?: string | null, endTime?: string | nul
 
 export const agentRoutes: FastifyPluginAsync = async (app) => {
   app.get('/agents', async (request, reply) => {
-    if (!(await requirePermission(app, request, reply, 'team.view'))) return;
+    const access = await requirePermission(app, request, reply, 'team.view');
+    if (!access) return;
+
+    const canViewBotAgents = access.user.role === 'admin' || access.permissions['agents.viewBot'];
 
     const items = await app.prisma.agent.findMany({
+      where: canViewBotAgents ? undefined : { isBotAgent: false },
       include: {
         user: true,
         queueLinks: {
@@ -122,6 +128,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         status: agent.user.status,
         accessStartTime: agent.user.accessStartTime,
         accessEndTime: agent.user.accessEndTime,
+        isBotAgent: agent.isBotAgent,
         presence: agent.presence,
         queues: agent.queueLinks.map((link: any) => ({ id: link.queue.id, name: link.queue.name })),
         createdAt: agent.createdAt,
@@ -137,6 +144,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     const normalizedPassword = body.password.trim();
     const userId = randomUUID();
     const accessWindow = normalizeAccessWindow(body.accessStartTime, body.accessEndTime);
+    const isBotAgent = access.user.role === 'admin' ? body.isBotAgent === true : false;
 
     if (access.user.role !== 'admin' && (body.blocked || accessWindow.accessStartTime || accessWindow.accessEndTime)) {
       return reply.forbidden('Somente administradores podem bloquear usuários ou definir horários de acesso.');
@@ -156,6 +164,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
           create: {
             name: body.name,
             presence: 'offline',
+            isBotAgent,
             queueLinks: {
               create: body.queueIds.map((queueId) => ({ queueId })),
             },
@@ -194,6 +203,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         status: created.status,
         accessStartTime: created.accessStartTime,
         accessEndTime: created.accessEndTime,
+        isBotAgent: created.agent?.isBotAgent ?? isBotAgent,
         presence: created.agent?.presence ?? 'offline',
         queues: created.agent?.queueLinks.map((link: any) => ({ id: link.queue.id, name: link.queue.name })) ?? [],
       },
@@ -242,6 +252,9 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     const nextStatus = access.user.role === 'admin'
       ? (body.blocked ? 'inactive' : 'active')
       : existing.user.status;
+    const nextIsBotAgent = access.user.role === 'admin'
+      ? body.isBotAgent === true
+      : existing.isBotAgent;
     const nextAccessStartTime = access.user.role === 'admin'
       ? accessWindow.accessStartTime
       : existing.user.accessStartTime;
@@ -267,6 +280,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         where: { id: params.agentId },
         data: {
           name: body.name,
+          isBotAgent: nextIsBotAgent,
           queueLinks: {
             deleteMany: {},
             create: body.queueIds.map((queueId) => ({ queueId })),
@@ -298,6 +312,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         status: nextStatus,
         accessStartTime: nextAccessStartTime,
         accessEndTime: nextAccessEndTime,
+        isBotAgent: updated?.isBotAgent ?? nextIsBotAgent,
         queues: updated?.queueLinks.map((link: any) => ({ id: link.queue.id, name: link.queue.name })) ?? [],
       },
     });

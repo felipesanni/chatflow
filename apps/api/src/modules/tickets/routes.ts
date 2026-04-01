@@ -939,11 +939,15 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     if (body.agentId) {
       const targetAgent = await app.prisma.agent.findUnique({
         where: { id: body.agentId },
-        select: { id: true },
+        select: { id: true, isBotAgent: true },
       });
 
       if (!targetAgent) {
         return reply.badRequest('Agente de destino nao encontrado.');
+      }
+
+      if (targetAgent.isBotAgent) {
+        return reply.badRequest('Agente de automacao nao pode ser usado em transferencias manuais.');
       }
     }
 

@@ -194,10 +194,15 @@ const operationalStatements = [
       name TEXT NOT NULL,
       avatar_url TEXT,
       presence "AgentPresence" NOT NULL DEFAULT 'offline',
+      is_bot_agent BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       last_active_at TIMESTAMPTZ
     );
+  `,
+  `
+    ALTER TABLE agents
+      ADD COLUMN IF NOT EXISTS is_bot_agent BOOLEAN NOT NULL DEFAULT FALSE;
   `,
   `
     CREATE TABLE IF NOT EXISTS customers (

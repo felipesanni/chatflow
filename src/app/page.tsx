@@ -199,6 +199,7 @@ type AgentItem = {
   status: "active" | "inactive";
   accessStartTime: string | null;
   accessEndTime: string | null;
+  isBotAgent: boolean;
   presence: string;
   queues: Array<{ id: string; name: string }>;
   createdAt: string;
@@ -483,6 +484,7 @@ const permissionDefinitions = [
   { key: "agents.manage", group: "Equipe e filas", label: "Cadastrar e editar usuários" },
   { key: "agents.delete", group: "Equipe e filas", label: "Excluir usuários" },
   { key: "agents.password.manage", group: "Equipe e filas", label: "Alterar senhas de usuários" },
+  { key: "agents.viewBot", group: "Equipe e filas", label: "Visualizar agentes de automação (bot)" },
   { key: "queues.manage", group: "Equipe e filas", label: "Cadastrar e editar filas" },
   { key: "queues.assign", group: "Equipe e filas", label: "Associar agentes às filas" },
   { key: "queues.viewBot", group: "Equipe e filas", label: "Visualizar filas de automação (bot)" },
@@ -552,6 +554,7 @@ function defaultPermissionsForRole(role: "admin" | "agent"): PermissionMap {
     "agents.manage": false,
     "agents.delete": false,
     "agents.password.manage": false,
+    "agents.viewBot": false,
     "queues.manage": false,
     "queues.assign": false,
     "queues.viewBot": false,
@@ -1831,6 +1834,7 @@ export default function HomePage() {
     role: "agent" as "admin" | "agent",
     queueIds: [] as string[],
     permissions: defaultPermissionsForRole("agent"),
+    isBotAgent: false,
     blocked: false,
     accessScheduleEnabled: false,
     accessStartTime: "08:00",
@@ -4562,6 +4566,7 @@ export default function HomePage() {
       role: "agent",
       queueIds: [],
       permissions: defaultPermissionsForRole("agent"),
+      isBotAgent: false,
       blocked: false,
       accessScheduleEnabled: false,
       accessStartTime: "08:00",
@@ -4667,6 +4672,7 @@ export default function HomePage() {
       role: agent.role,
       queueIds: agent.queues.map((queue) => queue.id),
       permissions: normalizePermissions(agent.role, agent.permissions),
+      isBotAgent: agent.isBotAgent,
       blocked: agent.status === "inactive",
       accessScheduleEnabled: Boolean(agent.accessStartTime && agent.accessEndTime),
       accessStartTime: agent.accessStartTime ?? "08:00",
@@ -4689,6 +4695,7 @@ export default function HomePage() {
       role: agent.role,
       queueIds: agent.queues.map((queue) => queue.id),
       permissions: normalizePermissions(agent.role, agent.permissions),
+      isBotAgent: agent.isBotAgent,
       blocked: false,
       accessScheduleEnabled: Boolean(agent.accessStartTime && agent.accessEndTime),
       accessStartTime: agent.accessStartTime ?? "08:00",
@@ -4868,6 +4875,7 @@ export default function HomePage() {
       role: "agent",
       queueIds: [],
       permissions: defaultPermissionsForRole("agent"),
+      isBotAgent: false,
       blocked: false,
       accessScheduleEnabled: false,
       accessStartTime: "08:00",
@@ -5000,6 +5008,7 @@ export default function HomePage() {
         role: agentForm.role,
         queueIds: agentForm.role === "admin" ? queues.map((queue) => queue.id) : agentForm.queueIds,
         permissions: agentForm.permissions,
+        ...(currentUser.role === "admin" ? { isBotAgent: agentForm.isBotAgent } : {}),
         ...(canManageUserAccess
           ? {
               blocked: agentForm.blocked,
@@ -6446,7 +6455,16 @@ export default function HomePage() {
                   ) : (
                     filteredAgents.map((agent) => (
                       <DataRow key={agent.id}>
-                        <DataCell>{agent.name}</DataCell>
+                        <DataCell>
+                          <div className="flex items-center gap-2">
+                            <span>{agent.name}</span>
+                            {agent.isBotAgent ? (
+                              <span className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-sky-700">
+                                BOT
+                              </span>
+                            ) : null}
+                          </div>
+                        </DataCell>
                         <DataCell subtle><span className="font-mono text-xs">{agent.publicId}</span></DataCell>
                         <DataCell subtle>{agent.email}</DataCell>
                       <DataCell>
@@ -7490,7 +7508,16 @@ export default function HomePage() {
                   ) : (
                     filteredAgents.map((agent) => (
                       <DataRow key={agent.id}>
-                        <DataCell>{agent.name}</DataCell>
+                        <DataCell>
+                          <div className="flex items-center gap-2">
+                            <span>{agent.name}</span>
+                            {agent.isBotAgent ? (
+                              <span className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-sky-700">
+                                BOT
+                              </span>
+                            ) : null}
+                          </div>
+                        </DataCell>
                         <DataCell subtle><span className="font-mono text-xs">{agent.publicId}</span></DataCell>
                         <DataCell subtle>{agent.email}</DataCell>
                       <DataCell>
@@ -8587,7 +8614,7 @@ export default function HomePage() {
                             className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
                           >
                           <option value="">Sem agente definido</option>
-                          {agents.map((agent) => (
+                          {agents.filter((agent) => !agent.isBotAgent).map((agent) => (
                             <option key={agent.id} value={agent.id}>
                               {agent.name}
                             </option>
@@ -9649,6 +9676,22 @@ export default function HomePage() {
                       <option value="admin">Administrador</option>
                     </select>
                   </label>
+                  {currentUser.role === "admin" ? (
+                    <label className={`flex items-start gap-3 rounded-2xl border px-4 py-4 text-sm transition md:col-span-2 ${agentForm.isBotAgent ? "border-sky-200 bg-sky-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                      <input
+                        type="checkbox"
+                        checked={agentForm.isBotAgent}
+                        onChange={(event) => setAgentForm((current) => ({ ...current, isBotAgent: event.target.checked }))}
+                        className="mt-1 h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                      />
+                      <span>
+                        <span className="block font-medium text-slate-800">Agente de automação (bot)</span>
+                        <span className="mt-1 block text-xs text-slate-500">
+                          Agentes marcados como bot ficam ocultos da operação manual e continuam disponíveis para API e automações.
+                        </span>
+                      </span>
+                    </label>
+                  ) : null}
                 </div>
 
                 {canAssignQueues ? (
