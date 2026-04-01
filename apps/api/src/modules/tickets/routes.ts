@@ -950,11 +950,15 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     if (body.queueId) {
       const targetQueue = await app.prisma.queue.findUnique({
         where: { id: body.queueId },
-        select: { id: true },
+        select: { id: true, isBotQueue: true },
       });
 
       if (!targetQueue) {
         return reply.badRequest('Fila de destino nao encontrada.');
+      }
+
+      if (targetQueue.isBotQueue) {
+        return reply.badRequest('Fila de automacao nao pode ser usada em transferencias manuais.');
       }
     }
 

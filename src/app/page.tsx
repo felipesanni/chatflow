@@ -8603,7 +8603,7 @@ export default function HomePage() {
                           className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
                         >
                           <option value="">Sem fila</option>
-                          {queues.map((queue) => (
+                          {queues.filter((queue) => !queue.isBotQueue).map((queue) => (
                             <option key={queue.id} value={queue.id}>
                               {queue.name}
                             </option>
