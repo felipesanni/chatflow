@@ -24,7 +24,7 @@ const scheduleConfigSchema = z.object({
 
 const automationPayloadSchema = z.object({
   name: z.string().trim().min(2, 'Informe o nome da automação.'),
-  description: z.string().trim().max(300).optional().or(z.literal('')),
+  description: z.string().trim().max(300).optional().nullable().or(z.literal('')),
   status: z.enum(['draft', 'active', 'inactive']).default('draft'),
   triggerType: z.enum(['message_received', 'ticket_created', 'ticket_inactive', 'scheduled_time']),
   queueId: z.string().uuid().optional().nullable(),
