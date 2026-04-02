@@ -1126,6 +1126,129 @@ const CHATFLOW_API_REFERENCE_MODULES: ApiModuleDoc[] = [
     description: "A integração externa fala com o ChatFlow usando Bearer token. Evolution continua apenas como gateway interno de WhatsApp.",
     endpoints: [
       {
+        key: "external-list-tickets",
+        method: "GET",
+        module: "Tickets externos",
+        title: "Listar tickets",
+        summary: "Busca tickets do ChatFlow pela API externa, com filtros por status, telefone, agente, fila, instância e texto.",
+        publicPath: "/api/external/tickets",
+        testerPath: "/external/tickets?status=open&limit=20",
+        auth: "bearer",
+        successExample: JSON.stringify(
+          {
+            items: [
+              {
+                id: "UUID_DO_TICKET",
+                status: "open",
+                customerName: "Contato da integração",
+                externalContactId: "5511999999999",
+                currentAgent: { id: "UUID_DO_AGENTE", name: "Bot" },
+                currentQueue: { id: "UUID_DA_FILA", name: "Financeiro", color: "#22c55e" },
+                whatsappInstance: { id: "UUID_DA_INSTANCIA", name: "Instância principal" },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        notes: [
+          "Aceita filtros: status, phone, search, queueId, agentId, whatsappInstanceId e limit.",
+          "queueId, agentId e whatsappInstanceId aceitam publicId numérico ou UUID.",
+        ],
+      },
+      {
+        key: "external-list-customers",
+        method: "GET",
+        module: "Contatos externos",
+        title: "Listar contatos",
+        summary: "Busca contatos do ChatFlow por telefone ou texto livre, retornando os dados principais do cadastro.",
+        publicPath: "/api/external/customers",
+        testerPath: "/external/customers?search=Felipe&limit=20",
+        auth: "bearer",
+        successExample: JSON.stringify(
+          {
+            items: [
+              {
+                id: "UUID_DO_CONTATO",
+                name: "Felipe Sannino",
+                phone: "5511945744352",
+                email: "felipe@empresa.com.br",
+                companyName: "SERMST",
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        notes: [
+          "Aceita filtros: search, phone e limit.",
+        ],
+      },
+      {
+        key: "external-list-users",
+        method: "GET",
+        module: "Usuários externos",
+        title: "Listar usuários",
+        summary: "Retorna os agentes/usuários do sistema para uso em integrações, inclusive bots quando existirem.",
+        publicPath: "/api/external/users",
+        testerPath: "/external/users?search=Felipe&limit=20",
+        auth: "bearer",
+        successExample: JSON.stringify(
+          {
+            items: [
+              {
+                id: "UUID_DO_AGENTE",
+                publicId: 14,
+                name: "Felipe Sannino",
+                presence: "online",
+                isBotAgent: false,
+                user: {
+                  id: "UUID_DO_USUARIO",
+                  email: "felipe@sermst.com.br",
+                  role: "admin",
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        notes: [
+          "Aceita filtros: search e limit.",
+          "Use publicId ou UUID ao montar chamadas que precisem apontar para um agente específico.",
+        ],
+      },
+      {
+        key: "external-list-queues",
+        method: "GET",
+        module: "Filas externas",
+        title: "Listar filas",
+        summary: "Retorna as filas disponíveis no ChatFlow para integrações, incluindo indicação de fila bot quando aplicável.",
+        publicPath: "/api/external/queues",
+        testerPath: "/external/queues?search=Financeiro&limit=20",
+        auth: "bearer",
+        successExample: JSON.stringify(
+          {
+            items: [
+              {
+                id: "UUID_DA_FILA",
+                publicId: 7,
+                name: "Financeiro",
+                color: "#22c55e",
+                isActive: true,
+                isBotQueue: false,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        notes: [
+          "Aceita filtros: search e limit.",
+          "Use publicId ou UUID para referenciar a fila em mensagens e transferências.",
+        ],
+      },
+      {
         key: "external-send-message",
         method: "POST",
         module: "Mensagens externas",
@@ -1161,11 +1284,48 @@ const CHATFLOW_API_REFERENCE_MODULES: ApiModuleDoc[] = [
           },
           null,
           2,
+          ),
+          notes: [
+            "Use Authorization: Bearer SEU_TOKEN.",
+            "Fila, agente e instância são definidos na própria chamada.",
+            "Se já existir ticket aberto ou pendente, a API reutiliza o ticket atual.",
+          ],
+        },
+      {
+        key: "external-transfer-ticket",
+        method: "POST",
+        module: "Tickets externos",
+        title: "Transferir ticket",
+        summary: "Transfere um ticket existente para agente, fila ou ambos, com observação interna opcional.",
+        publicPath: "/api/external/tickets/:ticketId/transfer",
+        testerPath: "/external/tickets/UUID_DO_TICKET/transfer",
+        auth: "bearer",
+        bodyExample: JSON.stringify(
+          {
+            queueId: 7,
+            agentId: 14,
+            note: "Transferido via integração externa",
+          },
+          null,
+          2,
+        ),
+        successExample: JSON.stringify(
+          {
+            item: {
+              id: "UUID_DO_TICKET",
+              status: "open",
+              customerName: "Contato da integração",
+              currentAgent: { id: "UUID_DO_AGENTE", name: "Felipe Sannino" },
+              currentQueue: { id: "UUID_DA_FILA", name: "Financeiro", color: "#22c55e" },
+            },
+          },
+          null,
+          2,
         ),
         notes: [
-          "Use Authorization: Bearer SEU_TOKEN.",
-          "Fila, agente e instância são definidos na própria chamada.",
-          "Se já existir ticket aberto ou pendente, a API responde 409 com code=ticket_open_exists.",
+          "Informe queueId, agentId ou ambos.",
+          "queueId e agentId aceitam publicId numérico ou UUID.",
+          "ticketId na rota deve ser o UUID interno do ticket.",
         ],
       },
     ],
