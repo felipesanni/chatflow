@@ -613,6 +613,7 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
         ticketId: ticketResult.ticket.id,
         actorUserId,
         body: body.body,
+        suppressSignature: true,
       });
 
       return reply.code(201).send({
@@ -677,6 +678,7 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
         body: body.body,
         replyToMessageId: body.replyToMessageId ?? null,
         internalNote: body.internalNote,
+        suppressSignature: true,
       });
 
       return reply.code(201).send({

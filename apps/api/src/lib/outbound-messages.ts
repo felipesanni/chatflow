@@ -24,6 +24,7 @@ type DeliverOutboundMessageParams = {
   internalNote?: boolean;
   preserveCurrentAgent?: boolean;
   preserveCurrentStatus?: boolean;
+  suppressSignature?: boolean;
 };
 
 function parseDataUrl(input: string) {
@@ -93,7 +94,12 @@ function shouldSignOutboundBody(params: {
   isInternalNote: boolean;
   isGroup: boolean;
   actorIsBotAgent: boolean;
+  suppressSignature: boolean;
 }) {
+  if (params.suppressSignature) {
+    return false;
+  }
+
   if (params.isInternalNote) {
     return false;
   }
@@ -175,6 +181,7 @@ export async function deliverOutboundMessage(app: FastifyInstance, params: Deliv
     isInternalNote,
     isGroup: ticket.isGroup,
     actorIsBotAgent: actor.agent?.isBotAgent === true,
+    suppressSignature: params.suppressSignature === true,
   })
     ? (trimmedBody ? formatAgentSignedBody(actorName, trimmedBody) : '')
     : trimmedBody;
