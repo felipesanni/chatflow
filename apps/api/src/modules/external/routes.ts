@@ -47,6 +47,16 @@ const externalSendMessageBodySchema = z.object({
   customerName: z.string().trim().min(1).max(160).nullable().optional(),
 });
 
+const externalSendTicketMessageParamsSchema = z.object({
+  ticketId: z.string().uuid(),
+});
+
+const externalSendTicketMessageBodySchema = z.object({
+  body: z.string().trim().min(1, 'Informe a mensagem.'),
+  replyToMessageId: z.string().uuid().optional().nullable(),
+  internalNote: z.boolean().optional().default(false),
+});
+
 const externalListQuerySchema = z.object({
   search: z.string().trim().min(1).optional(),
   limit: z.coerce.number().int().positive().max(200).default(50),
@@ -631,6 +641,64 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(502).send({
         code: 'external_delivery_failed',
         message: 'Nao foi possivel enviar a mensagem pela instância selecionada.',
+      });
+    }
+  });
+
+  app.post('/external/tickets/:ticketId/messages', async (request, reply) => {
+    const accessToken = await requireApiAccessToken(app, request, reply);
+    if (!accessToken) return;
+
+    const params = externalSendTicketMessageParamsSchema.parse(request.params);
+    const body = externalSendTicketMessageBodySchema.parse(request.body ?? {});
+
+    const ticket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      select: {
+        id: true,
+        currentAgentId: true,
+      },
+    });
+
+    if (!ticket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    const actorUserId = accessToken.createdByUser?.id ?? ticket.currentAgentId ?? null;
+
+    if (!actorUserId) {
+      return reply.forbidden('O token nao possui um usuario responsavel para enviar mensagem neste ticket.');
+    }
+
+    try {
+      const delivered = await deliverOutboundMessage(app, {
+        ticketId: ticket.id,
+        actorUserId,
+        body: body.body,
+        replyToMessageId: body.replyToMessageId ?? null,
+        internalNote: body.internalNote,
+      });
+
+      return reply.code(201).send({
+        item: {
+          id: delivered.message.id,
+          ticketId: delivered.message.ticketId,
+          body: delivered.message.body,
+          createdAt: delivered.message.createdAt,
+          externalMessageId: delivered.message.externalMessageId,
+        },
+      });
+    } catch (error) {
+      app.log.error({
+        action: 'external_ticket_message_send_failed',
+        tokenId: accessToken.id,
+        ticketId: ticket.id,
+        error,
+      }, 'Falha ao enviar mensagem via API externa para ticket especifico.');
+
+      return reply.code(502).send({
+        code: 'external_delivery_failed',
+        message: 'Nao foi possivel enviar a mensagem para o ticket informado.',
       });
     }
   });

@@ -1253,7 +1253,7 @@ const CHATFLOW_API_REFERENCE_MODULES: ApiModuleDoc[] = [
         method: "POST",
         module: "Mensagens externas",
         title: "Enviar mensagem operacional",
-        summary: "Cria um ticket novo quando não existir atendimento aberto para o número informado. Se já existir ticket open ou pending na mesma instância, retorna 409 informando que já existe ticket aberto.",
+        summary: "Envia mensagem por telefone. Quando já existir ticket open ou pending na mesma instância, a API reaproveita o ticket atual em vez de criar outro.",
         publicPath: "/api/external/messages/send",
         testerPath: "/external/messages/send",
         auth: "bearer",
@@ -1291,6 +1291,43 @@ const CHATFLOW_API_REFERENCE_MODULES: ApiModuleDoc[] = [
             "Se já existir ticket aberto ou pendente, a API reutiliza o ticket atual.",
           ],
         },
+      {
+        key: "external-send-ticket-message",
+        method: "POST",
+        module: "Mensagens externas",
+        title: "Enviar mensagem para ticket",
+        summary: "Envia uma mensagem diretamente para um ticket específico já existente, sem depender de busca por telefone.",
+        publicPath: "/api/external/tickets/:ticketId/messages",
+        testerPath: "/external/tickets/UUID_DO_TICKET/messages",
+        auth: "bearer",
+        bodyExample: JSON.stringify(
+          {
+            body: "Mensagem enviada para um ticket específico",
+            replyToMessageId: null,
+            internalNote: false,
+          },
+          null,
+          2,
+        ),
+        successExample: JSON.stringify(
+          {
+            item: {
+              id: "UUID_DA_MENSAGEM",
+              ticketId: "UUID_DO_TICKET",
+              body: "Mensagem enviada para um ticket específico",
+              createdAt: new Date().toISOString(),
+              externalMessageId: "wamid.HBgLN...",
+            },
+          },
+          null,
+          2,
+        ),
+        notes: [
+          "ticketId na rota deve ser o UUID interno do ticket.",
+          "Se o token tiver um usuário vinculado, ele será usado como remetente; caso contrário, a API tenta usar o agente atual do ticket.",
+          "Use internalNote=true para registrar observação interna em vez de mensagem operacional.",
+        ],
+      },
       {
         key: "external-transfer-ticket",
         method: "POST",
