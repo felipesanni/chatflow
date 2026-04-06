@@ -528,12 +528,14 @@ function inferForwardAttachmentKind(messageContentType: string, mimeType: string
   return 'document' as const;
 }
 
-async function resolveAttachmentDataUrlForForward(attachment: {
+async function resolveAttachmentDataUrlForForward(
+  attachment: {
   publicUrl: string | null;
   storageKey: string;
   mimeType: string;
   fileName: string | null;
   sizeBytes: number | bigint | null;
+  },
   message: {
     externalMessageId: string | null;
     direction: 'inbound' | 'outbound' | 'system';
@@ -545,26 +547,27 @@ async function resolveAttachmentDataUrlForForward(attachment: {
         evolutionInstanceName: string;
       };
     };
-  };
-}) {
+    };
+  },
+) {
   const source = attachment.publicUrl ?? attachment.storageKey;
 
   if (source?.startsWith('data:')) {
     return source;
   }
 
-  const decryptedApiKey = decryptSecret(attachment.message.ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
+  const decryptedApiKey = decryptSecret(message.ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
   let fallbackDataUrl: string | null = null;
 
-  if (attachment.message.externalMessageId && attachment.message.ticket.externalChatId) {
+  if (message.externalMessageId && message.ticket.externalChatId) {
     fallbackDataUrl = await fetchEvolutionAttachmentDataUrl({
-      baseUrl: attachment.message.ticket.whatsappInstance.baseUrl,
+      baseUrl: message.ticket.whatsappInstance.baseUrl,
       apiKey: decryptedApiKey,
-      instanceName: attachment.message.ticket.whatsappInstance.evolutionInstanceName,
-      remoteJid: attachment.message.ticket.externalChatId,
-      externalMessageId: attachment.message.externalMessageId,
+      instanceName: message.ticket.whatsappInstance.evolutionInstanceName,
+      remoteJid: message.ticket.externalChatId,
+      externalMessageId: message.externalMessageId,
       mimeType: attachment.mimeType,
-      fromMe: attachment.message.direction === 'outbound',
+      fromMe: message.direction === 'outbound',
     });
   }
 
@@ -572,7 +575,7 @@ async function resolveAttachmentDataUrlForForward(attachment: {
     return fallbackDataUrl;
   }
 
-  const targetUrl = resolveExternalAttachmentUrl(attachment.message.ticket.whatsappInstance.baseUrl, source ?? null);
+  const targetUrl = resolveExternalAttachmentUrl(message.ticket.whatsappInstance.baseUrl, source ?? null);
   if (!targetUrl) {
     return null;
   }
@@ -1064,7 +1067,13 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const sourceAttachment = sourceMessage.attachments?.[0] ?? null;
-    const attachmentDataUrl = sourceAttachment ? await resolveAttachmentDataUrlForForward(sourceAttachment) : null;
+    const attachmentDataUrl = sourceAttachment
+      ? await resolveAttachmentDataUrlForForward(sourceAttachment, {
+          externalMessageId: sourceMessage.externalMessageId,
+          direction: sourceMessage.direction,
+          ticket: sourceMessage.ticket,
+        })
+      : null;
 
     if (sourceAttachment && !attachmentDataUrl) {
       return reply.code(400).send({
