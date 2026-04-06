@@ -94,6 +94,53 @@ function normalizeDestination(remoteJid: string) {
   return remoteJid.split('@')[0] ?? remoteJid;
 }
 
+function payloadIndicatesEvolutionFailure(payload: any) {
+  if (!payload || typeof payload !== 'object') {
+    return false;
+  }
+
+  const directStatuses = [
+    payload?.status,
+    payload?.data?.status,
+    payload?.response?.status,
+  ];
+
+  for (const status of directStatuses) {
+    if (status === false) {
+      return true;
+    }
+
+    if (typeof status === 'string') {
+      const normalized = status.trim().toLowerCase();
+      if (normalized === 'error' || normalized === 'failed' || normalized === 'failure' || normalized === 'fail') {
+        return true;
+      }
+    }
+  }
+
+  if (payload?.error === true || payload?.data?.error === true) {
+    return true;
+  }
+
+  if (typeof payload?.error === 'string' && payload.error.trim()) {
+    return true;
+  }
+
+  if (typeof payload?.data?.error === 'string' && payload.data.error.trim()) {
+    return true;
+  }
+
+  if (Array.isArray(payload?.errors) && payload.errors.length > 0) {
+    return true;
+  }
+
+  if (Array.isArray(payload?.data?.errors) && payload.data.errors.length > 0) {
+    return true;
+  }
+
+  return false;
+}
+
 function pickProfilePictureUrl(payload: any) {
   return payload?.profilePictureUrl
     ?? payload?.pictureUrl
@@ -198,7 +245,7 @@ export async function sendEvolutionText(params: SendTextParams) {
   }
 
   return {
-    ok: response.ok,
+    ok: response.ok && !payloadIndicatesEvolutionFailure(payload),
     status: response.status,
     payload,
     messageId: payload?.key?.id ?? payload?.message?.key?.id ?? randomUUID(),
@@ -227,7 +274,7 @@ export async function sendEvolutionUpdateMessage(params: UpdateTextParams) {
     }
 
     return {
-      ok: response.ok,
+      ok: response.ok && !payloadIndicatesEvolutionFailure(payload),
       status: response.status,
       payload,
       messageId: params.externalMessageId,
@@ -340,7 +387,7 @@ export async function sendEvolutionMedia(params: SendMediaParams) {
   }
 
   return {
-    ok: response.ok,
+    ok: response.ok && !payloadIndicatesEvolutionFailure(payload),
     status: response.status,
     payload,
     messageId: payload?.key?.id ?? payload?.message?.key?.id ?? randomUUID(),
@@ -373,7 +420,7 @@ export async function sendEvolutionAudio(params: SendAudioParams) {
   }
 
   return {
-    ok: response.ok,
+    ok: response.ok && !payloadIndicatesEvolutionFailure(payload),
     status: response.status,
     payload,
     messageId: payload?.key?.id ?? payload?.message?.key?.id ?? randomUUID(),
