@@ -528,6 +528,23 @@ function inferForwardAttachmentKind(messageContentType: string, mimeType: string
   return 'document' as const;
 }
 
+function normalizeForwardAttachmentFileName(fileName: string | null, mimeType: string, kind: 'image' | 'audio' | 'document') {
+  const fallbackExtension = mimeType.split('/')[1]?.split(';')[0]?.trim().toLowerCase()
+    || (kind === 'image' ? 'jpg' : kind === 'audio' ? 'ogg' : 'bin');
+  const normalizedBaseName = (fileName ?? '').trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ');
+
+  if (!normalizedBaseName) {
+    return `arquivo-${Date.now()}.${fallbackExtension}`;
+  }
+
+  const hasExtension = /\.[a-z0-9]{2,8}$/i.test(normalizedBaseName);
+  if (hasExtension) {
+    return normalizedBaseName;
+  }
+
+  return `${normalizedBaseName}.${fallbackExtension}`;
+}
+
 async function resolveAttachmentDataUrlForForward(
   attachment: {
   publicUrl: string | null;
@@ -1080,15 +1097,19 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
+    const forwardAttachmentKind = sourceAttachment
+      ? inferForwardAttachmentKind(sourceMessage.contentType, sourceAttachment.mimeType)
+      : null;
+
     const delivered = await deliverOutboundMessage(app, {
       ticketId: targetTicket.id,
       actorUserId: session.userId,
       body: buildForwardBodyFromSourceMessage(sourceMessage),
       internalNote: false,
-      attachment: sourceAttachment && attachmentDataUrl
+      attachment: sourceAttachment && attachmentDataUrl && forwardAttachmentKind
         ? {
-            kind: inferForwardAttachmentKind(sourceMessage.contentType, sourceAttachment.mimeType),
-            fileName: sourceAttachment.fileName ?? `arquivo-${Date.now()}`,
+            kind: forwardAttachmentKind,
+            fileName: normalizeForwardAttachmentFileName(sourceAttachment.fileName, sourceAttachment.mimeType, forwardAttachmentKind),
             mimeType: sourceAttachment.mimeType,
             sizeBytes: normalizeSizeBytes(sourceAttachment.sizeBytes) ?? undefined,
             dataUrl: attachmentDataUrl,
