@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { Prisma } from '@prisma/client';
+import { loadEnv } from '../config/env.js';
 import { deliverOutboundMessage } from './outbound-messages.js';
 
 type AutomationCondition = {
@@ -21,6 +22,8 @@ type ScheduleConfig = {
   daysOfWeek?: number[];
 };
 
+const env = loadEnv();
+
 type AutomationWithRuntime = {
   id: string;
   name: string;
@@ -39,8 +42,11 @@ type AutomationTicketContext = {
   id: string;
   status: string;
   currentAgentId: string | null;
+  currentAgentName?: string | null;
   currentQueueId: string | null;
+  currentQueueName?: string | null;
   whatsappInstanceId: string;
+  whatsappInstanceName?: string | null;
   lastMessageAt: Date;
   createdAt: Date;
   customerNameSnapshot: string;
@@ -49,11 +55,24 @@ type AutomationTicketContext = {
   isGroup: boolean;
 };
 
+type AutomationMessageAttachmentContext = {
+  id: string;
+  fileName: string | null;
+  mimeType: string;
+  sizeBytes: number | null;
+  contentUrl: string;
+  publicUrl: string | null;
+};
+
 type AutomationMessageContext = {
   id: string;
   direction: string;
+  contentType?: string | null;
   body: string | null;
+  senderName?: string | null;
+  externalMessageId?: string | null;
   createdAt: Date;
+  attachments?: AutomationMessageAttachmentContext[];
 };
 
 type TriggerExecutionContext = {
@@ -517,11 +536,11 @@ async function executeAction(
     const timeout = setTimeout(() => controller.abort(), 10_000);
 
     try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
         body: JSON.stringify({
           automation: {
             id: params.automation.id,
@@ -530,7 +549,13 @@ async function executeAction(
           },
           trigger: params.context.triggerType,
           ticket: params.context.ticket,
-          message: params.context.message ?? null,
+          message: params.context.message
+            ? {
+                ...params.context.message,
+                hasAttachments: (params.context.message.attachments?.length ?? 0) > 0,
+                primaryAttachment: params.context.message.attachments?.[0] ?? null,
+              }
+            : null,
         }),
         signal: controller.signal,
       });
@@ -690,8 +715,23 @@ export async function processAutomationMessageReceived(
         id: true,
         status: true,
         currentAgentId: true,
+        currentAgent: {
+          select: {
+            name: true,
+          },
+        },
         currentQueueId: true,
+        currentQueue: {
+          select: {
+            name: true,
+          },
+        },
         whatsappInstanceId: true,
+        whatsappInstance: {
+          select: {
+            name: true,
+          },
+        },
         lastMessageAt: true,
         createdAt: true,
         customerNameSnapshot: true,
@@ -705,8 +745,20 @@ export async function processAutomationMessageReceived(
       select: {
         id: true,
         direction: true,
+        contentType: true,
         body: true,
+        senderNameSnapshot: true,
+        externalMessageId: true,
         createdAt: true,
+        attachments: {
+          select: {
+            id: true,
+            fileName: true,
+            mimeType: true,
+            sizeBytes: true,
+            publicUrl: true,
+          },
+        },
       },
     }),
     loadActiveAutomations(app, 'message_received'),
@@ -719,8 +771,26 @@ export async function processAutomationMessageReceived(
   for (const automation of automations) {
     await runAutomationAgainstContext(app, automation, {
       triggerType: 'message_received',
-      ticket,
-      message,
+      ticket: {
+        ...ticket,
+        currentAgentName: ticket.currentAgent?.name ?? null,
+        currentQueueName: ticket.currentQueue?.name ?? null,
+        whatsappInstanceName: ticket.whatsappInstance?.name ?? null,
+      },
+      message: {
+        ...message,
+        contentType: message.contentType,
+        senderName: message.senderNameSnapshot,
+        externalMessageId: message.externalMessageId,
+        attachments: message.attachments.map((attachment) => ({
+          id: attachment.id,
+          fileName: attachment.fileName,
+          mimeType: attachment.mimeType,
+          sizeBytes: typeof attachment.sizeBytes === 'bigint' ? Number(attachment.sizeBytes) : attachment.sizeBytes,
+          publicUrl: attachment.publicUrl,
+          contentUrl: `${env.WEB_APP_URL.replace(/\/$/, '')}/api/tickets/${ticket.id}/attachments/${attachment.id}/content`,
+        })),
+      },
       now: new Date(),
     });
   }
