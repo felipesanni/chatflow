@@ -4232,6 +4232,22 @@ export default function HomePage() {
     const attachment = message.attachments?.[0];
     if (!selectedTicketId || !attachment) return null;
 
+    if (attachment.publicUrl?.startsWith("data:")) {
+      const mimeType = (attachment.mimeType || "application/octet-stream").trim();
+      const extension = mimeType.split("/")[1]?.split(";")[0] ?? "bin";
+      return {
+        kind: mimeType.startsWith("image/")
+          ? "image"
+          : mimeType.startsWith("audio/")
+            ? "audio"
+            : "document",
+        fileName: attachment.fileName ?? `arquivo-${Date.now()}.${extension}`,
+        mimeType,
+        sizeBytes: attachment.sizeBytes ?? 0,
+        dataUrl: attachment.publicUrl,
+      } satisfies ComposerAttachment;
+    }
+
     const response = await fetch(`${API_URL}/tickets/${selectedTicketId}/attachments/${attachment.id}/content`, {
       method: "GET",
       credentials: "include",
@@ -4341,32 +4357,22 @@ export default function HomePage() {
       for (const destination of selectedForwardDestinations) {
         const targetTicketId = await resolveForwardDestinationTicketId(destination);
 
-        if (attachment) {
-          await apiFetch(`/tickets/${targetTicketId}/messages`, {
-            method: "POST",
-            body: JSON.stringify({
-              body: "",
-              internalNote: false,
-              attachment: {
-                kind: attachment.kind,
-                fileName: attachment.fileName,
-                mimeType: attachment.mimeType,
-                sizeBytes: attachment.sizeBytes,
-                dataUrl: attachment.dataUrl,
-              },
-            }),
-          });
-        }
-
-        if (body) {
-          await apiFetch(`/tickets/${targetTicketId}/messages`, {
-            method: "POST",
-            body: JSON.stringify({
-              body,
-              internalNote: false,
-            }),
-          });
-        }
+        await apiFetch(`/tickets/${targetTicketId}/messages`, {
+          method: "POST",
+          body: JSON.stringify({
+            body,
+            internalNote: false,
+            attachment: attachment
+              ? {
+                  kind: attachment.kind,
+                  fileName: attachment.fileName,
+                  mimeType: attachment.mimeType,
+                  sizeBytes: attachment.sizeBytes,
+                  dataUrl: attachment.dataUrl,
+                }
+              : undefined,
+          }),
+        });
       }
 
       resetForwardState();
