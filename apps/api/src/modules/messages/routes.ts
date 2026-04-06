@@ -547,7 +547,6 @@ async function resolveAttachmentDataUrlForForward(
         evolutionInstanceName: string;
       };
     };
-    };
   },
 ) {
   const source = attachment.publicUrl ?? attachment.storageKey;
