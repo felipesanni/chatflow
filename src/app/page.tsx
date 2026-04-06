@@ -4228,45 +4228,6 @@ export default function HomePage() {
     }
   }
 
-  async function buildForwardAttachmentFromMessage(message: MessageItem) {
-    const attachment = message.attachments?.[0];
-    if (!selectedTicketId || !attachment) return null;
-
-    if (attachment.publicUrl?.startsWith("data:")) {
-      const mimeType = (attachment.mimeType || "application/octet-stream").trim();
-      const extension = mimeType.split("/")[1]?.split(";")[0] ?? "bin";
-      return {
-        kind: mimeType.startsWith("image/")
-          ? "image"
-          : mimeType.startsWith("audio/")
-            ? "audio"
-            : "document",
-        fileName: attachment.fileName ?? `arquivo-${Date.now()}.${extension}`,
-        mimeType,
-        sizeBytes: attachment.sizeBytes ?? 0,
-        dataUrl: attachment.publicUrl,
-      } satisfies ComposerAttachment;
-    }
-
-    const response = await fetch(`${API_URL}/tickets/${selectedTicketId}/attachments/${attachment.id}/content`, {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-    });
-
-    if (!response.ok) {
-      const rawBody = await response.text();
-      throw new Error(rawBody || "Falha ao carregar o anexo para encaminhamento.");
-    }
-
-    const blob = await response.blob();
-    const mimeType = blob.type || attachment.mimeType || "application/octet-stream";
-    const extension = mimeType.split("/")[1]?.split(";")[0] ?? "bin";
-    const fileName = attachment.fileName ?? `arquivo-${Date.now()}.${extension}`;
-    const file = new File([blob], fileName, { type: mimeType });
-    return buildComposerAttachmentFromFile(file);
-  }
-
   function buildForwardBodyFromMessage(message: MessageItem) {
     const rawBody = (message.body ?? "").trim();
     if (!rawBody) return "";
@@ -4338,7 +4299,7 @@ export default function HomePage() {
   }
 
   async function handleConfirmForwardMessage() {
-    if (!forwardSourceMessage) return;
+    if (!forwardSourceMessage || !selectedTicketId) return;
 
     setForwardLoading(true);
     try {
@@ -4349,28 +4310,13 @@ export default function HomePage() {
         throw new Error("Selecione ao menos um destino para encaminhar.");
       }
 
-      const attachment = forwardSourceMessage.attachments?.length
-        ? await buildForwardAttachmentFromMessage(forwardSourceMessage)
-        : null;
-      const body = buildForwardBodyFromMessage(forwardSourceMessage);
-
       for (const destination of selectedForwardDestinations) {
         const targetTicketId = await resolveForwardDestinationTicketId(destination);
 
-        await apiFetch(`/tickets/${targetTicketId}/messages`, {
+        await apiFetch(`/tickets/${selectedTicketId}/messages/${forwardSourceMessage.id}/forward`, {
           method: "POST",
           body: JSON.stringify({
-            body,
-            internalNote: false,
-            attachment: attachment
-              ? {
-                  kind: attachment.kind,
-                  fileName: attachment.fileName,
-                  mimeType: attachment.mimeType,
-                  sizeBytes: attachment.sizeBytes,
-                  dataUrl: attachment.dataUrl,
-                }
-              : undefined,
+            targetTicketId,
           }),
         });
       }

@@ -14,6 +14,7 @@ import {
 import { loadEnv } from '../../config/env.js';
 import { decryptSecret, encryptSecret } from '../../lib/secrets.js';
 import type { PermissionMap } from '../../lib/permissions.js';
+import { deliverOutboundMessage } from '../../lib/outbound-messages.js';
 
 const outgoingAttachmentSchema = z.object({
   kind: z.enum(['image', 'audio', 'document']),
@@ -56,6 +57,10 @@ const createReactionBodySchema = z.object({
 
 const bulkDeleteMessagesBodySchema = z.object({
   messageIds: z.array(z.string().uuid()).min(1, 'Selecione ao menos uma mensagem.').max(200, 'Limite de 200 mensagens por lote.'),
+});
+
+const forwardMessageBodySchema = z.object({
+  targetTicketId: z.string().uuid('Informe o ticket de destino.'),
 });
 
 const env = loadEnv();
@@ -455,6 +460,160 @@ function formatAgentSignedBody(agentName: string, body: string) {
   return `*${agentName}*\n${trimmedBody}`;
 }
 
+function parseMessageSignature(body: string | null | undefined) {
+  const rawBody = body ?? '';
+  const signatureMatch = rawBody.match(/^\*([^*\n]+)\*(?:\n\s*\n?|\s+)?([\s\S]*)$/);
+
+  if (!signatureMatch) {
+    return {
+      signature: null as string | null,
+      body: rawBody,
+    };
+  }
+
+  return {
+    signature: signatureMatch[1].trim() || null,
+    body: signatureMatch[2].replace(/^\s+/, ''),
+  };
+}
+
+function isInternalNotePayload(rawPayload: Prisma.JsonValue | null | undefined) {
+  if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
+    return false;
+  }
+
+  return (rawPayload as Record<string, unknown>).chatflowInternalNote === true;
+}
+
+function buildForwardBodyFromSourceMessage(message: {
+  body: string | null;
+  direction: 'inbound' | 'outbound' | 'system';
+  rawPayload: Prisma.JsonValue | null;
+  attachments?: Array<{ id: string }>;
+}) {
+  const rawBody = (message.body ?? '').trim();
+  if (!rawBody) return '';
+
+  const normalizedBody = message.direction === 'outbound' && !isInternalNotePayload(message.rawPayload)
+    ? parseMessageSignature(rawBody).body.trim()
+    : rawBody;
+
+  if (!(message.attachments?.length ?? 0)) {
+    return normalizedBody;
+  }
+
+  if (
+    /^imagem recebida$/i.test(normalizedBody)
+    || /^audio recebido$/i.test(normalizedBody)
+    || /^video recebido$/i.test(normalizedBody)
+    || /^documento recebido$/i.test(normalizedBody)
+    || /^sticker recebido$/i.test(normalizedBody)
+    || /^\[(image|audio|document|video)\]\s/i.test(normalizedBody)
+  ) {
+    return '';
+  }
+
+  return normalizedBody;
+}
+
+function inferForwardAttachmentKind(messageContentType: string, mimeType: string) {
+  if (messageContentType === 'audio' || mimeType.startsWith('audio/')) {
+    return 'audio' as const;
+  }
+
+  if (messageContentType === 'image' || mimeType.startsWith('image/')) {
+    return 'image' as const;
+  }
+
+  return 'document' as const;
+}
+
+async function resolveAttachmentDataUrlForForward(attachment: {
+  publicUrl: string | null;
+  storageKey: string;
+  mimeType: string;
+  fileName: string | null;
+  sizeBytes: number | bigint | null;
+  message: {
+    externalMessageId: string | null;
+    direction: 'inbound' | 'outbound' | 'system';
+    ticket: {
+      externalChatId: string | null;
+      whatsappInstance: {
+        baseUrl: string;
+        apiKeyEncrypted: string;
+        evolutionInstanceName: string;
+      };
+    };
+  };
+}) {
+  const source = attachment.publicUrl ?? attachment.storageKey;
+
+  if (source?.startsWith('data:')) {
+    return source;
+  }
+
+  const decryptedApiKey = decryptSecret(attachment.message.ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
+  let fallbackDataUrl: string | null = null;
+
+  if (attachment.message.externalMessageId && attachment.message.ticket.externalChatId) {
+    fallbackDataUrl = await fetchEvolutionAttachmentDataUrl({
+      baseUrl: attachment.message.ticket.whatsappInstance.baseUrl,
+      apiKey: decryptedApiKey,
+      instanceName: attachment.message.ticket.whatsappInstance.evolutionInstanceName,
+      remoteJid: attachment.message.ticket.externalChatId,
+      externalMessageId: attachment.message.externalMessageId,
+      mimeType: attachment.mimeType,
+      fromMe: attachment.message.direction === 'outbound',
+    });
+  }
+
+  if (fallbackDataUrl) {
+    return fallbackDataUrl;
+  }
+
+  const targetUrl = resolveExternalAttachmentUrl(attachment.message.ticket.whatsappInstance.baseUrl, source ?? null);
+  if (!targetUrl) {
+    return null;
+  }
+
+  let mediaResponse: Response | null = null;
+
+  try {
+    mediaResponse = await fetch(targetUrl, {
+      headers: {
+        apikey: decryptedApiKey,
+      },
+    });
+  } catch {
+    mediaResponse = null;
+  }
+
+  if (!mediaResponse?.ok) {
+    return null;
+  }
+
+  const responseContentType = mediaResponse.headers.get('content-type');
+  const dataUrlFromDirectResponse = await parseMediaResponseAsDataUrl(mediaResponse.clone(), attachment.mimeType);
+
+  if (dataUrlFromDirectResponse) {
+    return dataUrlFromDirectResponse;
+  }
+
+  if (!canTrustDirectMediaResponse(attachment.mimeType, responseContentType)) {
+    return null;
+  }
+
+  const arrayBuffer = await mediaResponse.arrayBuffer();
+  if (!arrayBuffer.byteLength) {
+    return null;
+  }
+
+  const contentType = responseContentType ?? attachment.mimeType ?? 'application/octet-stream';
+  const binaryBase64 = Buffer.from(arrayBuffer).toString('base64');
+  return `data:${contentType};base64,${binaryBase64}`;
+}
+
 function shouldSignOutboundBody(params: {
   isInternalNote: boolean;
   isGroup: boolean;
@@ -844,6 +1003,101 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         role: session.role,
       },
     };
+  });
+
+  app.post('/tickets/:ticketId/messages/:messageId/forward', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.reply');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({
+      ticketId: z.string().uuid(),
+      messageId: z.string().uuid(),
+    }).parse(request.params);
+    const body = forwardMessageBodySchema.parse(request.body);
+
+    const sourceMessage = await app.prisma.ticketMessage.findFirst({
+      where: {
+        id: params.messageId,
+        ticketId: params.ticketId,
+      },
+      include: {
+        attachments: true,
+        ticket: {
+          include: {
+            whatsappInstance: true,
+          },
+        },
+      },
+    });
+
+    if (!sourceMessage) {
+      return reply.notFound('Mensagem de origem nao encontrada.');
+    }
+
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, sourceMessage.ticket)) {
+      return reply.forbidden('Voce nao possui permissao para visualizar a mensagem de origem.');
+    }
+
+    if (sourceMessage.direction === 'system' || isInternalNotePayload(sourceMessage.rawPayload)) {
+      return reply.badRequest('Nao e possivel encaminhar este tipo de mensagem.');
+    }
+
+    if ((sourceMessage.attachments?.length ?? 0) > 1) {
+      return reply.badRequest('O encaminhamento ainda aceita apenas um anexo por mensagem.');
+    }
+
+    const targetTicket = await app.prisma.ticket.findUnique({
+      where: { id: body.targetTicketId },
+      include: {
+        currentAgent: true,
+        whatsappInstance: true,
+      },
+    });
+
+    if (!targetTicket) {
+      return reply.notFound('Ticket de destino nao encontrado.');
+    }
+
+    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, targetTicket)) {
+      return reply.forbidden('Apenas o agente responsavel pode responder este ticket.');
+    }
+
+    const sourceAttachment = sourceMessage.attachments?.[0] ?? null;
+    const attachmentDataUrl = sourceAttachment ? await resolveAttachmentDataUrlForForward(sourceAttachment) : null;
+
+    if (sourceAttachment && !attachmentDataUrl) {
+      return reply.code(400).send({
+        message: 'Falha ao carregar o anexo da mensagem original para encaminhamento.',
+      });
+    }
+
+    const delivered = await deliverOutboundMessage(app, {
+      ticketId: targetTicket.id,
+      actorUserId: session.userId,
+      body: buildForwardBodyFromSourceMessage(sourceMessage),
+      internalNote: false,
+      attachment: sourceAttachment && attachmentDataUrl
+        ? {
+            kind: inferForwardAttachmentKind(sourceMessage.contentType, sourceAttachment.mimeType),
+            fileName: sourceAttachment.fileName ?? `arquivo-${Date.now()}`,
+            mimeType: sourceAttachment.mimeType,
+            sizeBytes: normalizeSizeBytes(sourceAttachment.sizeBytes) ?? undefined,
+            dataUrl: attachmentDataUrl,
+          }
+        : null,
+    });
+
+    return reply.code(201).send({
+      item: {
+        id: delivered.message.id,
+        ticketId: delivered.message.ticketId,
+        body: delivered.message.body,
+        contentType: delivered.message.contentType,
+        createdAt: delivered.message.createdAt,
+        externalMessageId: delivered.message.externalMessageId,
+      },
+    });
   });
 
   app.patch('/tickets/:ticketId/messages/:messageId', async (request, reply) => {
