@@ -4341,22 +4341,32 @@ export default function HomePage() {
       for (const destination of selectedForwardDestinations) {
         const targetTicketId = await resolveForwardDestinationTicketId(destination);
 
-        await apiFetch(`/tickets/${targetTicketId}/messages`, {
-          method: "POST",
-          body: JSON.stringify({
-            body,
-            internalNote: false,
-            attachment: attachment
-              ? {
-                  kind: attachment.kind,
-                  fileName: attachment.fileName,
-                  mimeType: attachment.mimeType,
-                  sizeBytes: attachment.sizeBytes,
-                  dataUrl: attachment.dataUrl,
-                }
-              : undefined,
-          }),
-        });
+        if (attachment) {
+          await apiFetch(`/tickets/${targetTicketId}/messages`, {
+            method: "POST",
+            body: JSON.stringify({
+              body: "",
+              internalNote: false,
+              attachment: {
+                kind: attachment.kind,
+                fileName: attachment.fileName,
+                mimeType: attachment.mimeType,
+                sizeBytes: attachment.sizeBytes,
+                dataUrl: attachment.dataUrl,
+              },
+            }),
+          });
+        }
+
+        if (body) {
+          await apiFetch(`/tickets/${targetTicketId}/messages`, {
+            method: "POST",
+            body: JSON.stringify({
+              body,
+              internalNote: false,
+            }),
+          });
+        }
       }
 
       resetForwardState();

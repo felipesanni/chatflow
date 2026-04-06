@@ -141,6 +141,18 @@ function payloadIndicatesEvolutionFailure(payload: any) {
   return false;
 }
 
+function pickDeliveryMessageId(payload: any) {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  return payload?.key?.id
+    ?? payload?.message?.key?.id
+    ?? payload?.data?.key?.id
+    ?? payload?.data?.message?.key?.id
+    ?? null;
+}
+
 function pickProfilePictureUrl(payload: any) {
   return payload?.profilePictureUrl
     ?? payload?.pictureUrl
@@ -244,11 +256,13 @@ export async function sendEvolutionText(params: SendTextParams) {
     payload = null;
   }
 
+  const messageId = pickDeliveryMessageId(payload);
+
   return {
-    ok: response.ok && !payloadIndicatesEvolutionFailure(payload),
+    ok: response.ok && !payloadIndicatesEvolutionFailure(payload) && Boolean(messageId),
     status: response.status,
     payload,
-    messageId: payload?.key?.id ?? payload?.message?.key?.id ?? randomUUID(),
+    messageId: messageId ?? randomUUID(),
   };
 }
 
@@ -386,11 +400,13 @@ export async function sendEvolutionMedia(params: SendMediaParams) {
     payload = null;
   }
 
+  const messageId = pickDeliveryMessageId(payload);
+
   return {
-    ok: response.ok && !payloadIndicatesEvolutionFailure(payload),
+    ok: response.ok && !payloadIndicatesEvolutionFailure(payload) && Boolean(messageId),
     status: response.status,
     payload,
-    messageId: payload?.key?.id ?? payload?.message?.key?.id ?? randomUUID(),
+    messageId: messageId ?? randomUUID(),
   };
 }
 
@@ -419,11 +435,13 @@ export async function sendEvolutionAudio(params: SendAudioParams) {
     payload = null;
   }
 
+  const messageId = pickDeliveryMessageId(payload);
+
   return {
-    ok: response.ok && !payloadIndicatesEvolutionFailure(payload),
+    ok: response.ok && !payloadIndicatesEvolutionFailure(payload) && Boolean(messageId),
     status: response.status,
     payload,
-    messageId: payload?.key?.id ?? payload?.message?.key?.id ?? randomUUID(),
+    messageId: messageId ?? randomUUID(),
   };
 }
 
