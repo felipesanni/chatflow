@@ -243,8 +243,8 @@ function pickMetadataObject(value: Prisma.JsonValue | null | undefined) {
   return value as Record<string, unknown>;
 }
 
-function resolveActorName(actorUser?: { name?: string | null; email?: string | null } | null) {
-  return actorUser?.name ?? actorUser?.email ?? 'Sistema';
+function resolveActorName(actorUser?: { email?: string | null; agent?: { name?: string | null } | null } | null) {
+  return actorUser?.agent?.name ?? actorUser?.email ?? 'Sistema';
 }
 
 function serializeTicketHistoryEvent(event: any) {
@@ -258,7 +258,7 @@ function serializeTicketHistoryEvent(event: any) {
     actorUser: event.actorUser
       ? {
           id: event.actorUser.id,
-          name: event.actorUser.name,
+          name: event.actorUser.agent?.name ?? event.actorUser.email,
           email: event.actorUser.email,
         }
       : null,
@@ -286,7 +286,7 @@ function serializeTicketHistoryAssignment(assignment: any) {
     actorUser: assignment.createdByUser
       ? {
           id: assignment.createdByUser.id,
-          name: assignment.createdByUser.name,
+          name: assignment.createdByUser.agent?.name ?? assignment.createdByUser.email,
           email: assignment.createdByUser.email,
         }
       : null,
@@ -651,8 +651,12 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
           actorUser: {
             select: {
               id: true,
-              name: true,
               email: true,
+              agent: {
+                select: {
+                  name: true,
+                },
+              },
             },
           },
         },
@@ -668,8 +672,12 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
           createdByUser: {
             select: {
               id: true,
-              name: true,
               email: true,
+              agent: {
+                select: {
+                  name: true,
+                },
+              },
             },
           },
           fromAgent: {
@@ -1118,7 +1126,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         select: {
           id: true,
           isBotAgent: true,
-          queues: {
+          queueLinks: {
             select: {
               queueId: true,
             },
@@ -1134,7 +1142,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         return reply.badRequest('Agente de automacao nao pode ser usado em transferencias manuais.');
       }
 
-      const agentQueueIds = new Set(targetAgent.queues.map((item) => item.queueId));
+      const agentQueueIds = new Set(targetAgent.queueLinks.map((item: { queueId: string }) => item.queueId));
       if (!agentQueueIds.has(body.queueId)) {
         return reply.badRequest('Selecione uma fila vinculada ao agente de destino.');
       }

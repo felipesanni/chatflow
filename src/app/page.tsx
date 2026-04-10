@@ -2136,6 +2136,11 @@ export default function HomePage() {
     queueId: "",
     customerSearch: "",
   });
+  const [transferForm, setTransferForm] = React.useState({
+    agentId: "",
+    queueId: "",
+    note: "",
+  });
   const normalizedConversationPhone = onlyPhoneDigits(conversationForm.phone);
   const selectedTransferAgent = React.useMemo(
     () => agents.find((agent) => agent.id === transferForm.agentId) ?? null,
@@ -2185,11 +2190,6 @@ export default function HomePage() {
     companyName: "",
     notes: "",
     dashboardExcluded: false,
-  });
-  const [transferForm, setTransferForm] = React.useState({
-    agentId: "",
-    queueId: "",
-    note: "",
   });
   const socketRef = React.useRef<Socket | null>(null);
   const selectedTicketIdRef = React.useRef<string | null>(null);
