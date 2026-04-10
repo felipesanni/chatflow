@@ -80,6 +80,20 @@ type TicketItem = {
   whatsappInstance: { id: string; name: string };
 };
 
+type TicketHistoryItem = {
+  id: string;
+  type: "created" | "accepted" | "transferred" | "closed" | "reopened";
+  createdAt: string;
+  actorName: string;
+  summary: string;
+  reason?: string | null;
+  note?: string | null;
+  fromAgent?: { id: string; name: string } | null;
+  toAgent?: { id: string; name: string } | null;
+  fromQueue?: { id: string; name: string; color?: string | null } | null;
+  toQueue?: { id: string; name: string; color?: string | null } | null;
+};
+
 type MessageItem = {
   id: string;
   direction: "inbound" | "outbound" | "system";
@@ -1329,6 +1343,58 @@ const CHATFLOW_API_REFERENCE_MODULES: ApiModuleDoc[] = [
         ],
       },
       {
+        key: "external-list-ticket-messages",
+        method: "GET",
+        module: "Mensagens externas",
+        title: "Listar mensagens do ticket",
+        summary: "Retorna as mensagens de um ticket específico, incluindo anexos, resposta citada, reações e remetente.",
+        publicPath: "/api/external/tickets/:ticketId/messages",
+        testerPath: "/external/tickets/UUID_DO_TICKET/messages?limit=200",
+        auth: "bearer",
+        successExample: JSON.stringify(
+          {
+            items: [
+              {
+                id: "UUID_DA_MENSAGEM",
+                ticketId: "UUID_DO_TICKET",
+                direction: "inbound",
+                contentType: "image",
+                body: "Segue o comprovante.",
+                senderName: "Felipe",
+                externalMessageId: "3A5FAD64B1DA1057D1B3",
+                internalNote: false,
+                createdAt: new Date().toISOString(),
+                reactions: [],
+                deleted: {
+                  isDeleted: false,
+                  deletedAt: null,
+                  deletedByAgentId: null,
+                },
+                senderAgent: null,
+                replyToMessage: null,
+                attachments: [
+                  {
+                    id: "UUID_DO_ANEXO",
+                    fileName: "comprovante.jpg",
+                    mimeType: "image/jpeg",
+                    sizeBytes: 183245,
+                    publicUrl: "https://chatflow.sermst.app.br/storage/comprovante.jpg",
+                    storageKey: "tickets/UUID_DO_TICKET/comprovante.jpg",
+                  },
+                ],
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        notes: [
+          "ticketId na rota deve ser o UUID interno do ticket.",
+          "Aceita o filtro limit, com padrao 200 e maximo 500.",
+          "O retorno inclui mensagens inbound, outbound, observacoes internas e anexos relacionados ao ticket.",
+        ],
+      },
+      {
         key: "external-transfer-ticket",
         method: "POST",
         module: "Tickets externos",
@@ -1962,6 +2028,12 @@ export default function HomePage() {
   const [showArchivedTickets, setShowArchivedTickets] = React.useState(false);
   const [selectedQueueFilter, setSelectedQueueFilter] = React.useState<string>("all");
   const [showTicketDetails, setShowTicketDetails] = React.useState(false);
+  const [ticketHistoryViewer, setTicketHistoryViewer] = React.useState<null | {
+    ticketId: string;
+    customerName: string;
+    loading: boolean;
+    items: TicketHistoryItem[];
+  }>(null);
   const [showTransferPanel, setShowTransferPanel] = React.useState(false);
   const [mobileTicketActionsOpen, setMobileTicketActionsOpen] = React.useState(false);
   const [showGroupNameModal, setShowGroupNameModal] = React.useState(false);
@@ -2065,6 +2137,19 @@ export default function HomePage() {
     customerSearch: "",
   });
   const normalizedConversationPhone = onlyPhoneDigits(conversationForm.phone);
+  const selectedTransferAgent = React.useMemo(
+    () => agents.find((agent) => agent.id === transferForm.agentId) ?? null,
+    [agents, transferForm.agentId],
+  );
+  const transferQueues = React.useMemo(() => {
+    const visibleQueues = queues.filter((queue) => !queue.isBotQueue);
+    if (!selectedTransferAgent) {
+      return visibleQueues;
+    }
+
+    const agentQueueIds = new Set(selectedTransferAgent.queues.map((queue) => queue.id));
+    return visibleQueues.filter((queue) => agentQueueIds.has(queue.id));
+  }, [queues, selectedTransferAgent]);
   const matchingConversationCustomer = React.useMemo(
     () => customers.find((customer) => customer.phone && onlyPhoneDigits(customer.phone) === normalizedConversationPhone) ?? null,
     [customers, normalizedConversationPhone],
@@ -2970,12 +3055,30 @@ export default function HomePage() {
 
   React.useEffect(() => {
     setShowTransferPanel(false);
+    setTicketHistoryViewer(null);
     setTransferForm({
       agentId: "",
       queueId: "",
       note: "",
     });
   }, [selectedTicketId]);
+
+  React.useEffect(() => {
+    if (!showTransferPanel) {
+      return;
+    }
+
+    setTransferForm((current) => {
+      if (transferQueues.some((queue) => queue.id === current.queueId)) {
+        return current;
+      }
+
+      return {
+        ...current,
+        queueId: transferQueues[0]?.id ?? "",
+      };
+    });
+  }, [showTransferPanel, transferQueues]);
 
   React.useEffect(() => {
     if (activeTab === "grupos" && !canViewGroups) {
@@ -4450,6 +4553,30 @@ export default function HomePage() {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao transferir ticket.");
     } finally {
       setTransferLoading(false);
+    }
+  }
+
+  async function openTicketHistoryViewer(ticket: TicketItem) {
+    setTicketHistoryViewer({
+      ticketId: ticket.id,
+      customerName: ticket.customerName,
+      loading: true,
+      items: [],
+    });
+
+    try {
+      const response = await apiFetch(`/tickets/${ticket.id}/history`);
+      const data = await response.json();
+
+      setTicketHistoryViewer({
+        ticketId: ticket.id,
+        customerName: data?.item?.customerName ?? ticket.customerName,
+        loading: false,
+        items: Array.isArray(data?.items) ? data.items : [],
+      });
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar o histórico do ticket.");
+      setTicketHistoryViewer(null);
     }
   }
 
@@ -7960,12 +8087,12 @@ export default function HomePage() {
                             type="button"
                             onClick={() => {
                               setMobileTicketActionsOpen(false);
-                              setShowTicketDetails((current) => !current);
+                              void openTicketHistoryViewer(selectedTicket);
                             }}
                             className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-slate-700 transition hover:bg-slate-50"
                           >
                             <Info className="h-4 w-4" />
-                            <span>{showTicketDetails ? "Ocultar detalhes" : "Mostrar detalhes"}</span>
+                            <span>Histórico do ticket</span>
                           </button>
                         </div>
                       </div>
@@ -8036,7 +8163,7 @@ export default function HomePage() {
                         Fechar
                       </button>
                     )}
-                    <button type="button" aria-label={showTicketDetails ? "Ocultar detalhes do atendimento" : "Mostrar detalhes do atendimento"} title={showTicketDetails ? "Ocultar detalhes" : "Mostrar detalhes"} onClick={() => setShowTicketDetails((current) => !current)} className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700">
+                    <button type="button" aria-label="Abrir histórico do ticket" title="Histórico do ticket" onClick={() => void openTicketHistoryViewer(selectedTicket)} className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700">
                       <Info className="h-4 w-4" />
                     </button>
                   </div>
@@ -8800,7 +8927,10 @@ export default function HomePage() {
                           Agente de destino
                           <select
                             value={transferForm.agentId}
-                            onChange={(event) => setTransferForm((current) => ({ ...current, agentId: event.target.value }))}
+                            onChange={(event) => {
+                              const nextAgentId = event.target.value;
+                              setTransferForm((current) => ({ ...current, agentId: nextAgentId }));
+                            }}
                             className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
                           >
                           <option value="">Sem agente definido</option>
@@ -8819,13 +8949,17 @@ export default function HomePage() {
                             onChange={(event) => setTransferForm((current) => ({ ...current, queueId: event.target.value }))}
                           className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
                         >
-                          <option value="">Sem fila</option>
-                          {queues.filter((queue) => !queue.isBotQueue).map((queue) => (
+                          {transferQueues.map((queue) => (
                             <option key={queue.id} value={queue.id}>
                               {queue.name}
                             </option>
                             ))}
                             </select>
+                            {transferForm.agentId && transferQueues.length === 0 ? (
+                              <div className="mt-2 text-xs text-amber-600">
+                                O agente selecionado não possui filas vinculadas.
+                              </div>
+                            ) : null}
                           </label>
                         </div>
                         <label className="block text-sm font-medium text-slate-600">
@@ -8853,13 +8987,91 @@ export default function HomePage() {
                       </button>
                       <button
                         type="submit"
-                        disabled={transferLoading || (!transferForm.agentId && !transferForm.queueId)}
+                        disabled={transferLoading || !transferForm.queueId}
                         className="inline-flex h-11 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#0f766e,#155e75)] px-5 text-sm font-semibold text-white shadow-[0_16px_30px_rgba(14,116,144,0.24)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
                       >
                         {transferLoading ? "Transferindo..." : "Confirmar"}
                       </button>
                     </div>
                   </form>
+                </div>
+              </div>
+            ) : null}
+            {ticketHistoryViewer ? (
+              <div className="absolute inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+                <div className="my-auto flex w-full max-w-3xl max-h-[calc(100vh-3rem)] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)] sm:max-h-[calc(100vh-5rem)]">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Histórico do ticket</div>
+                      <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{ticketHistoryViewer.customerName}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setTicketHistoryViewer(null)}
+                      className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+                    {ticketHistoryViewer.loading ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                        Carregando histórico...
+                      </div>
+                    ) : ticketHistoryViewer.items.length === 0 ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                        Nenhum evento operacional registrado para este ticket.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {ticketHistoryViewer.items.map((item) => (
+                          <div key={item.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-semibold text-slate-900">{item.summary}</div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {item.actorName} • {formatDateTime(item.createdAt)}
+                                </div>
+                              </div>
+                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
+                                {item.type === "created"
+                                  ? "Criado"
+                                  : item.type === "accepted"
+                                    ? "Aceite"
+                                    : item.type === "transferred"
+                                      ? "Transferência"
+                                      : item.type === "closed"
+                                        ? "Encerrado"
+                                        : "Reaberto"}
+                              </span>
+                            </div>
+                            {item.type === "transferred" ? (
+                              <div className="mt-3 grid gap-2 text-sm text-slate-600 md:grid-cols-2">
+                                <div>
+                                  <span className="font-semibold text-slate-700">De:</span>{" "}
+                                  {item.fromAgent?.name ?? "Sem agente"}{item.fromQueue?.name ? ` • ${item.fromQueue.name}` : ""}
+                                </div>
+                                <div>
+                                  <span className="font-semibold text-slate-700">Para:</span>{" "}
+                                  {item.toAgent?.name ?? "Sem agente"}{item.toQueue?.name ? ` • ${item.toQueue.name}` : ""}
+                                </div>
+                              </div>
+                            ) : null}
+                            {item.reason ? (
+                              <div className="mt-3 text-sm text-slate-600">
+                                <span className="font-semibold text-slate-700">Motivo:</span> {item.reason}
+                              </div>
+                            ) : null}
+                            {item.note ? (
+                              <div className="mt-3 rounded-2xl bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                                {item.note}
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             ) : null}

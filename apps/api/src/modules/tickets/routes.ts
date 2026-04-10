@@ -49,10 +49,8 @@ const createTicketBodySchema = z.object({
 
 const transferTicketBodySchema = z.object({
   agentId: z.string().uuid().optional().nullable(),
-  queueId: z.string().uuid().optional().nullable(),
+  queueId: z.string().uuid('Selecione uma fila valida.'),
   note: z.string().trim().optional().default(''),
-}).refine((value) => value.agentId || value.queueId, {
-  message: 'Informe um agente, uma fila ou ambos para transferir o ticket.',
 });
 
 const bulkDeleteTicketsBodySchema = z.object({
@@ -234,6 +232,81 @@ function serializeTicket(ticket: any) {
     whatsappInstance: { id: ticket.whatsappInstance.id, name: ticket.whatsappInstance.name },
     isGroup: ticket.isGroup,
     updatedAt: ticket.updatedAt,
+  };
+}
+
+function pickMetadataObject(value: Prisma.JsonValue | null | undefined) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function resolveActorName(actorUser?: { name?: string | null; email?: string | null } | null) {
+  return actorUser?.name ?? actorUser?.email ?? 'Sistema';
+}
+
+function serializeTicketHistoryEvent(event: any) {
+  const metadata = pickMetadataObject(event.metadata);
+
+  return {
+    id: event.id,
+    type: event.eventType,
+    createdAt: event.createdAt,
+    actorName: resolveActorName(event.actorUser),
+    actorUser: event.actorUser
+      ? {
+          id: event.actorUser.id,
+          name: event.actorUser.name,
+          email: event.actorUser.email,
+        }
+      : null,
+    summary:
+      event.eventType === 'created'
+        ? 'Ticket criado'
+        : event.eventType === 'accepted'
+          ? 'Ticket assumido'
+          : event.eventType === 'closed'
+            ? 'Ticket encerrado'
+            : event.eventType === 'reopened'
+              ? 'Ticket reaberto'
+              : 'Evento registrado',
+    reason: typeof metadata?.reason === 'string' ? metadata.reason : null,
+    details: metadata,
+  };
+}
+
+function serializeTicketHistoryAssignment(assignment: any) {
+  return {
+    id: assignment.id,
+    type: 'transferred',
+    createdAt: assignment.createdAt,
+    actorName: resolveActorName(assignment.createdByUser),
+    actorUser: assignment.createdByUser
+      ? {
+          id: assignment.createdByUser.id,
+          name: assignment.createdByUser.name,
+          email: assignment.createdByUser.email,
+        }
+      : null,
+    summary: assignment.toAgent
+      ? 'Ticket transferido para outro agente'
+      : 'Ticket transferido para fila sem agente',
+    reason: assignment.reason ?? null,
+    note: null,
+    fromAgent: assignment.fromAgent
+      ? { id: assignment.fromAgent.id, name: assignment.fromAgent.name }
+      : null,
+    toAgent: assignment.toAgent
+      ? { id: assignment.toAgent.id, name: assignment.toAgent.name }
+      : null,
+    fromQueue: assignment.fromQueue
+      ? { id: assignment.fromQueue.id, name: assignment.fromQueue.name, color: assignment.fromQueue.color }
+      : null,
+    toQueue: assignment.toQueue
+      ? { id: assignment.toQueue.id, name: assignment.toQueue.name, color: assignment.toQueue.color }
+      : null,
   };
 }
 
@@ -542,6 +615,109 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         id: session.userId,
         role: session.role,
       },
+    };
+  });
+
+  app.get('/tickets/:ticketId/history', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.view');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const ticket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      include: {
+        currentAgent: true,
+        currentQueue: true,
+        whatsappInstance: true,
+      },
+    });
+
+    if (!ticket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+      return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
+    }
+
+    const [events, assignments] = await Promise.all([
+      app.prisma.ticketEvent.findMany({
+        where: {
+          ticketId: ticket.id,
+          eventType: { in: ['created', 'accepted', 'closed', 'reopened'] },
+        },
+        include: {
+          actorUser: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+      app.prisma.ticketAssignment.findMany({
+        where: {
+          ticketId: ticket.id,
+        },
+        include: {
+          createdByUser: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          fromAgent: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          toAgent: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          fromQueue: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+            },
+          },
+          toQueue: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+    ]);
+
+    const items = [
+      ...assignments.map((assignment) => serializeTicketHistoryAssignment(assignment)),
+      ...events.map((event) => serializeTicketHistoryEvent(event)),
+    ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    return {
+      item: {
+        id: ticket.id,
+        customerName: (ticket.isGroup && typeof ticket.title === 'string' && ticket.title.trim().length > 0)
+          ? ticket.title.trim()
+          : ticket.customerNameSnapshot,
+      },
+      items,
     };
   });
 
@@ -939,7 +1115,15 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     if (body.agentId) {
       const targetAgent = await app.prisma.agent.findUnique({
         where: { id: body.agentId },
-        select: { id: true, isBotAgent: true },
+        select: {
+          id: true,
+          isBotAgent: true,
+          queues: {
+            select: {
+              queueId: true,
+            },
+          },
+        },
       });
 
       if (!targetAgent) {
@@ -949,21 +1133,24 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       if (targetAgent.isBotAgent) {
         return reply.badRequest('Agente de automacao nao pode ser usado em transferencias manuais.');
       }
+
+      const agentQueueIds = new Set(targetAgent.queues.map((item) => item.queueId));
+      if (!agentQueueIds.has(body.queueId)) {
+        return reply.badRequest('Selecione uma fila vinculada ao agente de destino.');
+      }
     }
 
-    if (body.queueId) {
-      const targetQueue = await app.prisma.queue.findUnique({
-        where: { id: body.queueId },
-        select: { id: true, isBotQueue: true },
-      });
+    const targetQueue = await app.prisma.queue.findUnique({
+      where: { id: body.queueId },
+      select: { id: true, isBotQueue: true },
+    });
 
-      if (!targetQueue) {
-        return reply.badRequest('Fila de destino nao encontrada.');
-      }
+    if (!targetQueue) {
+      return reply.badRequest('Fila de destino nao encontrada.');
+    }
 
-      if (targetQueue.isBotQueue) {
-        return reply.badRequest('Fila de automacao nao pode ser usada em transferencias manuais.');
-      }
+    if (targetQueue.isBotQueue) {
+      return reply.badRequest('Fila de automacao nao pode ser usada em transferencias manuais.');
     }
 
     const reason = body.agentId
@@ -974,7 +1161,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       where: { id: params.ticketId },
       data: {
         currentAgentId: body.agentId ?? null,
-        currentQueueId: body.queueId ?? currentTicket.currentQueueId ?? null,
+        currentQueueId: body.queueId,
         status: body.agentId ? 'open' : 'pending',
       },
       include: {
@@ -991,7 +1178,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         fromAgentId: currentTicket.currentAgentId,
         toAgentId: body.agentId ?? null,
         fromQueueId: currentTicket.currentQueueId,
-        toQueueId: body.queueId ?? currentTicket.currentQueueId ?? null,
+        toQueueId: body.queueId,
         reason,
         createdByUserId: session.userId,
       },
@@ -1008,7 +1195,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
             fromAgentId: currentTicket.currentAgentId,
             toAgentId: body.agentId ?? null,
             fromQueueId: currentTicket.currentQueueId,
-            toQueueId: body.queueId ?? currentTicket.currentQueueId ?? null,
+            toQueueId: body.queueId,
             note: body.note.trim() || null,
           },
         },

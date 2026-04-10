@@ -51,6 +51,14 @@ const externalSendTicketMessageParamsSchema = z.object({
   ticketId: z.string().uuid(),
 });
 
+const externalListTicketMessagesParamsSchema = z.object({
+  ticketId: z.string().uuid(),
+});
+
+const externalListTicketMessagesQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(500).default(200),
+});
+
 const externalSendTicketMessageBodySchema = z.object({
   body: z.string().trim().min(1, 'Informe a mensagem.'),
   replyToMessageId: z.string().uuid().optional().nullable(),
@@ -239,6 +247,139 @@ function serializeExternalQueue(queue: {
     color: queue.color,
     isActive: queue.isActive,
     isBotQueue: queue.isBotQueue,
+  };
+}
+
+function normalizeSizeBytes(value: unknown) {
+  if (typeof value === 'bigint') {
+    const normalized = Number(value);
+    return Number.isSafeInteger(normalized) ? normalized : null;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  return null;
+}
+
+function normalizeStoredReactions(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as Array<{
+      emoji: string;
+      actorType: 'agent' | 'contact';
+      actorId: string | null;
+      actorName: string | null;
+      createdAt: string;
+    }>;
+  }
+
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object') {
+      return [];
+    }
+
+    const record = item as Record<string, unknown>;
+    const emoji = typeof record.emoji === 'string' ? record.emoji.trim() : '';
+    if (!emoji) {
+      return [];
+    }
+
+    return [{
+      emoji,
+      actorType: record.actorType === 'agent' ? 'agent' : 'contact',
+      actorId: typeof record.actorId === 'string' ? record.actorId : null,
+      actorName: typeof record.actorName === 'string' ? record.actorName : null,
+      createdAt: typeof record.createdAt === 'string' ? record.createdAt : new Date().toISOString(),
+    }];
+  });
+}
+
+function serializeMessageReactions(rawPayload: unknown) {
+  if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
+    return [];
+  }
+
+  return normalizeStoredReactions((rawPayload as Record<string, unknown>).chatflowReactions);
+}
+
+function serializeDeletedState(rawPayload: unknown) {
+  if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
+    return null;
+  }
+
+  const deleted = (rawPayload as Record<string, unknown>).chatflowDeleted;
+  if (!deleted || typeof deleted !== 'object' || Array.isArray(deleted)) {
+    return null;
+  }
+
+  const record = deleted as Record<string, unknown>;
+  if (record.isDeleted !== true) {
+    return null;
+  }
+
+  return {
+    isDeleted: true,
+    deletedAt: typeof record.deletedAt === 'string' ? record.deletedAt : null,
+    scope: typeof record.scope === 'string' ? record.scope : null,
+  };
+}
+
+function serializeInternalNoteState(rawPayload: unknown) {
+  if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
+    return false;
+  }
+
+  return (rawPayload as Record<string, unknown>).chatflowInternalNote === true;
+}
+
+function serializeExternalMessage(message: any) {
+  return {
+    id: message.id,
+    ticketId: message.ticketId,
+    direction: message.direction,
+    contentType: message.contentType,
+    body: message.body,
+    senderName: message.senderNameSnapshot,
+    externalMessageId: message.externalMessageId,
+    editedAt: message.editedAt,
+    internalNote: serializeInternalNoteState(message.rawPayload),
+    createdAt: message.createdAt,
+    reactions: serializeMessageReactions(message.rawPayload),
+    deleted: serializeDeletedState(message.rawPayload),
+    replyToMessage: message.replyToMessage
+      ? {
+          id: message.replyToMessage.id,
+          direction: message.replyToMessage.direction,
+          contentType: message.replyToMessage.contentType,
+          body: message.replyToMessage.body,
+          senderName: message.replyToMessage.senderNameSnapshot,
+          createdAt: message.replyToMessage.createdAt,
+          internalNote: serializeInternalNoteState(message.replyToMessage.rawPayload),
+          deleted: serializeDeletedState(message.replyToMessage.rawPayload),
+          attachments: message.replyToMessage.attachments.map((attachment: any) => ({
+            id: attachment.id,
+            fileName: attachment.fileName,
+            mimeType: attachment.mimeType,
+            sizeBytes: normalizeSizeBytes(attachment.sizeBytes),
+            storage: attachment.storage,
+            storageKey: attachment.storageKey,
+            publicUrl: attachment.publicUrl,
+            createdAt: attachment.createdAt,
+          })),
+        }
+      : null,
+    senderAgent: message.senderAgent ? { id: message.senderAgent.id, name: message.senderAgent.name } : null,
+    attachments: message.attachments.map((attachment: any) => ({
+      id: attachment.id,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      sizeBytes: normalizeSizeBytes(attachment.sizeBytes),
+      storage: attachment.storage,
+      storageKey: attachment.storageKey,
+      publicUrl: attachment.publicUrl,
+      createdAt: attachment.createdAt,
+    })),
   };
 }
 
@@ -703,6 +844,48 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
         message: 'Nao foi possivel enviar a mensagem para o ticket informado.',
       });
     }
+  });
+
+  app.get('/external/tickets/:ticketId/messages', async (request, reply) => {
+    const accessToken = await requireApiAccessToken(app, request, reply);
+    if (!accessToken) return;
+
+    const params = externalListTicketMessagesParamsSchema.parse(request.params);
+    const query = externalListTicketMessagesQuerySchema.parse(request.query ?? {});
+
+    const ticket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!ticket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    const items = await app.prisma.ticketMessage.findMany({
+      where: {
+        ticketId: params.ticketId,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+      take: query.limit,
+      include: {
+        senderAgent: true,
+        attachments: true,
+        replyToMessage: {
+          include: {
+            attachments: true,
+          },
+        },
+      },
+    });
+
+    return reply.code(200).send({
+      items: items.map((item) => serializeExternalMessage(item)),
+    });
   });
 
   app.post('/external/tickets/:ticketId/transfer', async (request, reply) => {
