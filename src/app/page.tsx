@@ -4565,8 +4565,10 @@ export default function HomePage() {
     });
 
     try {
-      const response = (await apiFetch(`/tickets/${ticket.id}/history`)) as Response;
-      const data = await response.json();
+      const data = await apiFetch<{
+        item?: { customerName?: string | null };
+        items?: TicketHistoryItem[];
+      }>(`/tickets/${ticket.id}/history`);
 
       setTicketHistoryViewer({
         ticketId: ticket.id,
