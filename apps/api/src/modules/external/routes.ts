@@ -754,6 +754,8 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
         ticketId: ticketResult.ticket.id,
         actorUserId,
         body: body.body,
+        preserveCurrentAgent: true,
+        preserveCurrentStatus: true,
         suppressSignature: true,
       });
 
@@ -819,6 +821,8 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
         body: body.body,
         replyToMessageId: body.replyToMessageId ?? null,
         internalNote: body.internalNote,
+        preserveCurrentAgent: true,
+        preserveCurrentStatus: true,
         suppressSignature: true,
       });
 
