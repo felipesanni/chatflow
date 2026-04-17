@@ -1680,109 +1680,8 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       throw error;
     }
 
-    const signedBody = shouldSignOutboundBody({
-      isInternalNote,
-      isGroup: ticket.isGroup,
-      currentAgentIsBot: ticket.currentAgent?.isBotAgent === true,
-    })
-      ? (trimmedBody ? formatAgentSignedBody(agentSignature, trimmedBody) : '')
-      : trimmedBody;
-    const parsedAttachment = attachmentInput ? parseDataUrl(attachmentInput.dataUrl) : null;
 
-    let externalMessageId: string | null = null;
-    let deliveryPayload: any = null;
-
-    if (!isInternalNote) {
-      const decryptedApiKey = decryptSecret(ticket.whatsappInstance.apiKeyEncrypted, env.SESSION_SECRET);
-
-      if (!ticket.whatsappInstance.apiKeyEncrypted.startsWith('enc:')) {
-        await app.prisma.whatsAppInstance.update({
-          where: { id: ticket.whatsappInstance.id },
-          data: {
-            apiKeyEncrypted: encryptSecret(decryptedApiKey, env.SESSION_SECRET),
-          },
-        });
-      }
-
-      const delivery = attachmentInput
-        ? attachmentInput.kind === 'audio'
-          ? await sendEvolutionAudio({
-              baseUrl: ticket.whatsappInstance.baseUrl,
-              apiKey: decryptedApiKey,
-              instanceName: ticket.whatsappInstance.evolutionInstanceName,
-              remoteJid: ticket.externalChatId!,
-              base64: parsedAttachment?.base64 ?? '',
-              quotedMessageId: quotedMessage?.externalMessageId ?? undefined,
-            })
-          : await sendEvolutionMedia({
-              baseUrl: ticket.whatsappInstance.baseUrl,
-              apiKey: decryptedApiKey,
-              instanceName: ticket.whatsappInstance.evolutionInstanceName,
-              remoteJid: ticket.externalChatId!,
-              mediaType: attachmentInput.kind === 'image' ? 'image' : 'document',
-              fileName: attachmentInput.fileName,
-              mimeType: attachmentInput.mimeType || parsedAttachment?.mimeType || 'application/octet-stream',
-              base64: parsedAttachment?.base64 ?? '',
-              caption: signedBody || undefined,
-              quotedMessageId: quotedMessage?.externalMessageId ?? undefined,
-            })
-        : await sendEvolutionText({
-            baseUrl: ticket.whatsappInstance.baseUrl,
-            apiKey: decryptedApiKey,
-            instanceName: ticket.whatsappInstance.evolutionInstanceName,
-            remoteJid: ticket.externalChatId!,
-            text: signedBody,
-            quotedMessageId: quotedMessage?.externalMessageId ?? undefined,
-          });
-
-      if (!delivery.ok) {
-        return reply.code(400).send({
-          message: 'Falha ao enviar a mensagem para a Evolution API.',
-          status: delivery.status,
-          payload: delivery.payload,
-        });
-      }
-
-      deliveryPayload = delivery.payload;
-      externalMessageId = pickDeliveryMessageId(delivery.payload, delivery.messageId);
-    }
-
-    const message = await app.prisma.ticketMessage.create({
-      data: {
-        id: randomUUID(),
-        ticketId: ticket.id,
-        senderAgentId: session.userId,
-        externalMessageId,
-        direction: 'outbound',
-        contentType: attachmentInput?.kind ?? 'text',
-        body: signedBody || (attachmentInput ? `[${attachmentInput.kind}] ${attachmentInput.fileName}` : null),
-        senderNameSnapshot: ticket.currentAgent?.name ?? session.email,
-        replyToMessageId: body.replyToMessageId,
-        deliveredAt: isInternalNote ? null : new Date(),
-        rawPayload: isInternalNote ? withInternalNote(null) : undefined,
-      },
-    });
-
-    if (attachmentInput && !isInternalNote) {
-      const fallbackPublicUrl = attachmentInput.kind === 'image' || attachmentInput.kind === 'audio'
-        ? attachmentInput.dataUrl
-        : null;
-      const resolvedPublicUrl = pickAttachmentPublicUrl(deliveryPayload) ?? fallbackPublicUrl;
-
-      await app.prisma.attachment.create({
-        data: {
-          id: randomUUID(),
-          messageId: message.id,
-          fileName: attachmentInput.fileName,
-          mimeType: attachmentInput.mimeType || parsedAttachment?.mimeType || 'application/octet-stream',
-          sizeBytes: normalizeSizeBytes(attachmentInput.sizeBytes),
-          storage: 'external',
-          storageKey: resolvedPublicUrl ?? `outbound:${message.id}:${attachmentInput.fileName}`,
-          publicUrl: resolvedPublicUrl,
-        },
-      });
-    }
-
+    /*
     await app.prisma.ticket.update({
       where: { id: ticket.id },
       data: {
@@ -1827,5 +1726,6 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return reply.code(201).send({ item: message });
+    */
   });
 };
