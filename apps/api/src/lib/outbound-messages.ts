@@ -27,6 +27,24 @@ type DeliverOutboundMessageParams = {
   suppressSignature?: boolean;
 };
 
+type MessageTemplateContext = {
+  ticket: {
+    id: string;
+    status: string;
+    customerNameSnapshot: string;
+    title: string | null;
+    externalContactId: string | null;
+    isGroup: boolean;
+    currentAgent: { name: string } | null;
+    currentQueue: { name: string } | null;
+    whatsappInstance: { name: string };
+  };
+  actor: {
+    email: string;
+    agent: { name: string | null } | null;
+  };
+};
+
 function parseDataUrl(input: string) {
   const match = input.match(/^data:([^,]+),(.+)$/);
 
@@ -124,11 +142,53 @@ function withInternalNote(rawPayload: Prisma.JsonValue | null | undefined) {
   return payload as Prisma.InputJsonValue;
 }
 
+function resolveTemplateCustomerName(context: MessageTemplateContext) {
+  const groupName = context.ticket.title?.trim();
+  if (context.ticket.isGroup && groupName) {
+    return groupName;
+  }
+
+  return context.ticket.customerNameSnapshot.trim();
+}
+
+function resolveTemplateFirstName(customerName: string) {
+  const [firstName = ''] = customerName.split(/\s+/);
+  return firstName.trim();
+}
+
+function resolveTemplateAgentName(context: MessageTemplateContext) {
+  return context.ticket.currentAgent?.name?.trim()
+    || context.actor.agent?.name?.trim()
+    || context.actor.email.trim();
+}
+
+export function renderMessageTemplate(template: string, context: MessageTemplateContext) {
+  if (!template.includes('{{')) {
+    return template;
+  }
+
+  const customerName = resolveTemplateCustomerName(context);
+  const firstName = resolveTemplateFirstName(customerName);
+  const replacements: Record<string, string> = {
+    customerName,
+    firstName,
+    phone: context.ticket.externalContactId?.trim() ?? '',
+    agentName: resolveTemplateAgentName(context),
+    queueName: context.ticket.currentQueue?.name?.trim() ?? '',
+    instanceName: context.ticket.whatsappInstance.name.trim(),
+    ticketId: context.ticket.id,
+    ticketStatus: context.ticket.status,
+  };
+
+  return template.replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_match, token: string) => replacements[token] ?? '');
+}
+
 export async function deliverOutboundMessage(app: FastifyInstance, params: DeliverOutboundMessageParams) {
   const ticket = await app.prisma.ticket.findUnique({
     where: { id: params.ticketId },
     include: {
       currentAgent: true,
+      currentQueue: true,
       whatsappInstance: true,
     },
   });
@@ -156,7 +216,24 @@ export async function deliverOutboundMessage(app: FastifyInstance, params: Deliv
     throw new Error('Usuario responsavel nao encontrado.');
   }
 
-  const trimmedBody = (params.body ?? '').trim();
+  const renderedBody = renderMessageTemplate(params.body ?? '', {
+    ticket: {
+      id: ticket.id,
+      status: ticket.status,
+      customerNameSnapshot: ticket.customerNameSnapshot,
+      title: ticket.title,
+      externalContactId: ticket.externalContactId,
+      isGroup: ticket.isGroup,
+      currentAgent: ticket.currentAgent ? { name: ticket.currentAgent.name } : null,
+      currentQueue: ticket.currentQueue ? { name: ticket.currentQueue.name } : null,
+      whatsappInstance: { name: ticket.whatsappInstance.name },
+    },
+    actor: {
+      email: actor.email,
+      agent: actor.agent ? { name: actor.agent.name } : null,
+    },
+  });
+  const trimmedBody = renderedBody.trim();
   const attachmentInput = params.attachment ?? null;
   const isInternalNote = params.internalNote === true;
 

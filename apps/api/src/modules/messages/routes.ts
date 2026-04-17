@@ -1656,6 +1656,30 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.badRequest('O ticket nao possui um destino do WhatsApp configurado.');
     }
 
+    try {
+      const delivered = await deliverOutboundMessage(app, {
+        ticketId: ticket.id,
+        actorUserId: session.userId,
+        body: body.body,
+        replyToMessageId: quotedMessage?.id ?? undefined,
+        attachment: body.attachment,
+        internalNote: isInternalNote,
+      });
+
+      return reply.code(201).send({ item: delivered.message });
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Falha ao enviar a mensagem para a Evolution API.') {
+        const cause = (error as Error & { cause?: { status?: number; payload?: unknown } }).cause;
+        return reply.code(400).send({
+          message: error.message,
+          status: cause?.status ?? 400,
+          payload: cause?.payload ?? null,
+        });
+      }
+
+      throw error;
+    }
+
     const signedBody = shouldSignOutboundBody({
       isInternalNote,
       isGroup: ticket.isGroup,

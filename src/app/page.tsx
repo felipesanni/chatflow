@@ -452,6 +452,21 @@ type ApiTesterResult = {
   body: string;
 };
 
+type SearchScopeKey =
+  | "tickets"
+  | "channels"
+  | "quickReplies"
+  | "apiReference"
+  | "teamAgents"
+  | "teamQueues"
+  | "contacts"
+  | "calendar"
+  | "automationsRules"
+  | "automationsExecutions"
+  | "settingsInstances"
+  | "settingsAgents"
+  | "settingsQueues";
+
 type ApiAccessTokenItem = {
   id: string;
   name: string;
@@ -2010,7 +2025,21 @@ export default function HomePage() {
   const [replyToMessageId, setReplyToMessageId] = React.useState<string | null>(null);
   const [composerInternalNoteMode, setComposerInternalNoteMode] = React.useState(false);
   const [groupNameInput, setGroupNameInput] = React.useState("");
-  const [searchQuery, setSearchQuery] = React.useState("");
+  const [moduleSearchQueries, setModuleSearchQueries] = React.useState<Record<SearchScopeKey, string>>({
+    tickets: "",
+    channels: "",
+    quickReplies: "",
+    apiReference: "",
+    teamAgents: "",
+    teamQueues: "",
+    contacts: "",
+    calendar: "",
+    automationsRules: "",
+    automationsExecutions: "",
+    settingsInstances: "",
+    settingsAgents: "",
+    settingsQueues: "",
+  });
   const [activeTab, setActiveTab] = React.useState<"atendendo" | "aguardando" | "grupos">("atendendo");
   const [activeWorkspace, setActiveWorkspace] = React.useState<"dashboard" | "tickets" | "closedTickets" | "channels" | "quickReplies" | "team" | "api" | "contacts" | "profile" | "calendar" | "automations" | "settings">("tickets");
   const [adminSection, setAdminSection] = React.useState<"branding" | "instances" | "agents" | "queues">("instances");
@@ -2063,6 +2092,55 @@ export default function HomePage() {
   const [scheduledMessageDeleteTarget, setScheduledMessageDeleteTarget] = React.useState<ScheduledMessageItem | null>(null);
   const [forwardLoading, setForwardLoading] = React.useState(false);
   const [customerTicketsViewer, setCustomerTicketsViewer] = React.useState<CustomerTicketsViewerState | null>(null);
+  const currentSearchScope = React.useMemo<SearchScopeKey>(() => {
+    if (activeWorkspace === "tickets" || activeWorkspace === "closedTickets") {
+      return "tickets";
+    }
+
+    if (activeWorkspace === "channels") {
+      return "channels";
+    }
+
+    if (activeWorkspace === "quickReplies") {
+      return "quickReplies";
+    }
+
+    if (activeWorkspace === "api") {
+      return "apiReference";
+    }
+
+    if (activeWorkspace === "team") {
+      return adminSection === "agents" ? "teamAgents" : "teamQueues";
+    }
+
+    if (activeWorkspace === "contacts") {
+      return "contacts";
+    }
+
+    if (activeWorkspace === "calendar") {
+      return "calendar";
+    }
+
+    if (activeWorkspace === "automations") {
+      return automationView === "rules" ? "automationsRules" : "automationsExecutions";
+    }
+
+    if (activeWorkspace === "settings") {
+      if (adminSection === "agents") return "settingsAgents";
+      if (adminSection === "queues") return "settingsQueues";
+      return "settingsInstances";
+    }
+
+    return "tickets";
+  }, [activeWorkspace, adminSection, automationView]);
+  const searchQuery = moduleSearchQueries[currentSearchScope] ?? "";
+  const setSearchQuery = React.useCallback((value: string) => {
+    setModuleSearchQueries((current) => (
+      current[currentSearchScope] === value
+        ? current
+        : { ...current, [currentSearchScope]: value }
+    ));
+  }, [currentSearchScope]);
   const [forwardMessageId, setForwardMessageId] = React.useState<string | null>(null);
   const [forwardSearch, setForwardSearch] = React.useState("");
   const [selectedForwardDestinationKeys, setSelectedForwardDestinationKeys] = React.useState<string[]>([]);
@@ -2546,6 +2624,18 @@ export default function HomePage() {
     return ticket.isGroup ? baseName : (matchedCustomer?.companyName ? `${baseName} - ${matchedCustomer.companyName}` : baseName);
   }
 
+  function formatCustomerDisplayName(customer: CustomerItem) {
+    const baseName = customer.name.trim();
+    const companyName = customer.companyName?.trim();
+    return companyName ? `${baseName} - ${companyName}` : baseName;
+  }
+
+  function findCustomerForTicket(ticket: TicketItem) {
+    return ticket.customerId
+      ? customers.find((customer) => customer.id === ticket.customerId) ?? null
+      : customers.find((customer) => onlyPhoneDigits(customer.phone ?? "") === onlyPhoneDigits(ticket.externalContactId ?? ticket.externalChatId)) ?? null;
+  }
+
   const canViewGroups = currentUser.permissions["tickets.groups"];
   const canViewChannels = currentUser.permissions["channels.view"];
   const canViewQuickReplies = currentUser.permissions["quickReplies.view"];
@@ -2673,6 +2763,8 @@ export default function HomePage() {
     const search = searchQuery.trim().toLowerCase();
 
     return tickets.filter((ticket) => {
+      const matchedCustomer = findCustomerForTicket(ticket);
+
       if (
         !isClosedTicketsWorkspace
         && (!showAllTickets || !canViewOtherTickets)
@@ -2700,7 +2792,12 @@ export default function HomePage() {
 
       return [
         ticket.customerName,
+        matchedCustomer?.name ?? "",
+        matchedCustomer?.companyName ?? "",
+        matchedCustomer?.email ?? "",
+        matchedCustomer?.phone ?? "",
         ticket.externalChatId,
+        ticket.externalContactId ?? "",
         ticket.lastMessagePreview ?? "",
         ticket.currentAgent?.name ?? "",
         ticket.currentQueue?.name ?? "",
@@ -2709,7 +2806,7 @@ export default function HomePage() {
         .toLowerCase()
         .includes(search);
     });
-  }, [canViewOtherTickets, isClosedTicketsWorkspace, searchQuery, selectedQueueFilter, showAllTickets, showOnlyUnread, tickets, user?.id]);
+  }, [canViewOtherTickets, customers, isClosedTicketsWorkspace, searchQuery, selectedQueueFilter, showAllTickets, showOnlyUnread, tickets, user?.id]);
 
   const visibleTickets = React.useMemo(() => {
     return scopedTickets.filter((ticket) => {
@@ -9438,7 +9535,7 @@ export default function HomePage() {
               {matchingConversationCustomer ? (
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
                   <div className="font-semibold">Contato encontrado</div>
-                  <div className="mt-1">{matchingConversationCustomer.name}</div>
+                  <div className="mt-1">{formatCustomerDisplayName(matchingConversationCustomer)}</div>
                   <div className="text-[12px] text-emerald-700">{formatPhoneInput(matchingConversationCustomer.phone ?? "")}</div>
                 </div>
               ) : null}
@@ -9450,13 +9547,13 @@ export default function HomePage() {
                       type="button"
                       onClick={() => setConversationForm((current) => ({
                         ...current,
-                        customerSearch: customer.name,
+                        customerSearch: formatCustomerDisplayName(customer),
                         phone: onlyPhoneDigits(customer.phone ?? ""),
                       }))}
                       className="flex w-full items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 hover:bg-slate-50"
                     >
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-slate-900">{customer.name}</div>
+                        <div className="truncate text-sm font-semibold text-slate-900">{formatCustomerDisplayName(customer)}</div>
                         <div className="truncate text-[12px] text-slate-500">{formatPhoneInput(customer.phone ?? "")}</div>
                       </div>
                       <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">Usar</span>
