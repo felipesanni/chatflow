@@ -1775,7 +1775,7 @@ function formatAutomationCondition(condition: AutomationCondition) {
   }
 
   if (condition.field === "ticket.inactivityMinutes") {
-    return `Inatividade de ${condition.valueLabel ?? condition.value ?? ""} min`;
+    return `Sem resposta ao agente por ${condition.valueLabel ?? condition.value ?? ""} min`;
   }
 
   return condition.valueLabel ?? String(condition.value ?? condition.field);
@@ -5850,7 +5850,7 @@ export default function HomePage() {
     if (automationForm.triggerType === "ticket_inactive") {
       const inactivityMinutes = Number.parseInt(automationForm.inactivityMinutes, 10);
       if (!Number.isFinite(inactivityMinutes) || inactivityMinutes <= 0) {
-        setPanelMessage("Informe um tempo de inatividade válido em minutos.");
+        setPanelMessage("Informe um tempo válido em minutos para aguardar a resposta do cliente.");
         return;
       }
 
@@ -10113,13 +10113,13 @@ export default function HomePage() {
               {automationForm.triggerType === "ticket_inactive" ? (
                 <div className="mt-4 grid gap-4 md:grid-cols-2">
                   <CompactField
-                    label="Minutos de inatividade"
+                    label="Minutos sem resposta ao agente"
                     value={automationForm.inactivityMinutes}
                     onChange={(value) => setAutomationForm((current) => ({ ...current, inactivityMinutes: value.replace(/\D/g, "") }))}
                     placeholder="30"
                   />
                   <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
-                    A automação será acionada quando o ticket atingir esse tempo mínimo sem resposta.
+                    A automação será acionada quando a última mensagem do ticket for do agente e o cliente não responder dentro desse tempo.
                   </div>
                 </div>
               ) : null}

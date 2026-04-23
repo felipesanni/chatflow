@@ -49,6 +49,9 @@ type AutomationTicketContext = {
   whatsappInstanceId: string;
   whatsappInstanceName?: string | null;
   lastMessageAt: Date;
+  latestMessageDirection?: string | null;
+  latestMessageCreatedAt?: Date | null;
+  latestMessageSenderAgentId?: string | null;
   createdAt: Date;
   customerNameSnapshot: string;
   externalChatId: string;
@@ -563,8 +566,16 @@ function evaluateCondition(condition: AutomationCondition, context: TriggerExecu
       return false;
     }
 
+    if (context.ticket.latestMessageDirection !== 'outbound' || !context.ticket.latestMessageCreatedAt) {
+      return false;
+    }
+
+    if (!context.ticket.latestMessageSenderAgentId) {
+      return false;
+    }
+
     const now = context.now ?? new Date();
-    const elapsedMinutes = Math.floor((now.getTime() - context.ticket.lastMessageAt.getTime()) / 60_000);
+    const elapsedMinutes = Math.floor((now.getTime() - context.ticket.latestMessageCreatedAt.getTime()) / 60_000);
     return elapsedMinutes >= expectedMinutes;
   }
 
@@ -593,7 +604,7 @@ function dedupeKeyForContext(automation: AutomationWithRuntime, context: Trigger
   }
 
   if (context.triggerType === 'ticket_inactive') {
-    return `${automation.id}:inactive:${context.ticket.id}:${context.ticket.lastMessageAt.toISOString()}`;
+    return `${automation.id}:inactive:${context.ticket.id}:${context.ticket.latestMessageCreatedAt?.toISOString() ?? context.ticket.lastMessageAt.toISOString()}`;
   }
 
   const parts = getSaoPauloParts(context.now ?? new Date());
@@ -1139,6 +1150,15 @@ export async function processAutomationMessageReceived(
           },
         },
         lastMessageAt: true,
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            direction: true,
+            senderAgentId: true,
+            createdAt: true,
+          },
+        },
         createdAt: true,
         customerNameSnapshot: true,
         externalChatId: true,
@@ -1184,6 +1204,9 @@ export async function processAutomationMessageReceived(
     whatsappInstanceId: ticket.whatsappInstanceId,
     whatsappInstanceName: ticket.whatsappInstance.name ?? null,
     lastMessageAt: ticket.lastMessageAt,
+    latestMessageDirection: ticket.messages[0]?.direction ?? null,
+    latestMessageCreatedAt: ticket.messages[0]?.createdAt ?? null,
+    latestMessageSenderAgentId: ticket.messages[0]?.senderAgentId ?? null,
     createdAt: ticket.createdAt,
     customerNameSnapshot: ticket.customerNameSnapshot,
     externalChatId: ticket.externalChatId,
@@ -1279,6 +1302,15 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
         currentQueueId: true,
         whatsappInstanceId: true,
         lastMessageAt: true,
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            direction: true,
+            senderAgentId: true,
+            createdAt: true,
+          },
+        },
         createdAt: true,
         customerNameSnapshot: true,
         externalChatId: true,
@@ -1294,7 +1326,12 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
       for (const automation of ticketCreatedAutomations) {
         await runAutomationAgainstContext(app, automation, {
           triggerType: 'ticket_created',
-          ticket,
+          ticket: {
+            ...ticket,
+            latestMessageDirection: ticket.messages[0]?.direction ?? null,
+            latestMessageCreatedAt: ticket.messages[0]?.createdAt ?? null,
+            latestMessageSenderAgentId: ticket.messages[0]?.senderAgentId ?? null,
+          },
           now,
         });
       }
@@ -1316,6 +1353,15 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
         currentQueueId: true,
         whatsappInstanceId: true,
         lastMessageAt: true,
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            direction: true,
+            senderAgentId: true,
+            createdAt: true,
+          },
+        },
         createdAt: true,
         customerNameSnapshot: true,
         externalChatId: true,
@@ -1331,7 +1377,12 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
       for (const automation of inactiveAutomations) {
         await runAutomationAgainstContext(app, automation, {
           triggerType: 'ticket_inactive',
-          ticket,
+          ticket: {
+            ...ticket,
+            latestMessageDirection: ticket.messages[0]?.direction ?? null,
+            latestMessageCreatedAt: ticket.messages[0]?.createdAt ?? null,
+            latestMessageSenderAgentId: ticket.messages[0]?.senderAgentId ?? null,
+          },
           now,
         });
       }
@@ -1354,6 +1405,15 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
         currentQueueId: true,
         whatsappInstanceId: true,
         lastMessageAt: true,
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            direction: true,
+            senderAgentId: true,
+            createdAt: true,
+          },
+        },
         createdAt: true,
         customerNameSnapshot: true,
         externalChatId: true,
@@ -1378,7 +1438,12 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
       for (const ticket of scheduledTickets) {
         await runAutomationAgainstContext(app, automation, {
           triggerType: 'scheduled_time',
-          ticket,
+          ticket: {
+            ...ticket,
+            latestMessageDirection: ticket.messages[0]?.direction ?? null,
+            latestMessageCreatedAt: ticket.messages[0]?.createdAt ?? null,
+            latestMessageSenderAgentId: ticket.messages[0]?.senderAgentId ?? null,
+          },
           now,
         });
       }
