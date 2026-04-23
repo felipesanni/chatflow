@@ -82,7 +82,7 @@ type TicketItem = {
 
 type TicketHistoryItem = {
   id: string;
-  type: "created" | "accepted" | "transferred" | "closed" | "reopened";
+  type: "created" | "accepted" | "transferred" | "nudged" | "closed" | "reopened";
   createdAt: string;
   actorName: string;
   summary: string;
@@ -503,6 +503,7 @@ const permissionDefinitions = [
   { key: "tickets.accept", group: "Atendimento", label: "Aceitar atendimentos" },
   { key: "tickets.reply", group: "Atendimento", label: "Responder mensagens" },
   { key: "tickets.replyUnassigned", group: "Atendimento", label: "Responder tickets não atribuídos ao usuário" },
+  { key: "tickets.nudge", group: "Atendimento", label: "Chamar atenção do responsável" },
   { key: "tickets.transfer", group: "Atendimento", label: "Transferir atendimentos" },
   { key: "tickets.transferOthers", group: "Atendimento", label: "Transferir tickets de outros usuários" },
   { key: "tickets.close", group: "Atendimento", label: "Encerrar atendimentos" },
@@ -573,6 +574,7 @@ function defaultPermissionsForRole(role: "admin" | "agent"): PermissionMap {
     "tickets.accept": true,
     "tickets.reply": true,
     "tickets.replyUnassigned": false,
+    "tickets.nudge": false,
     "tickets.transfer": true,
     "tickets.transferOthers": false,
     "tickets.close": true,
@@ -2026,6 +2028,7 @@ export default function HomePage() {
   const [apiBearerToken, setApiBearerToken] = React.useState("");
   const [groupNameSaving, setGroupNameSaving] = React.useState(false);
   const [assignmentLoading, setAssignmentLoading] = React.useState<string | null>(null);
+  const [nudgeLoading, setNudgeLoading] = React.useState(false);
   const [editingInstanceId, setEditingInstanceId] = React.useState<string | null>(null);
   const [editingAgentId, setEditingAgentId] = React.useState<string | null>(null);
   const [duplicatingAgentName, setDuplicatingAgentName] = React.useState<string | null>(null);
@@ -2659,6 +2662,7 @@ export default function HomePage() {
   const canViewTeam = currentUser.permissions["team.view"];
   const canTransferTickets = currentUser.permissions["tickets.transfer"];
   const canTransferTicketsFromOthers = currentUser.permissions["tickets.transferOthers"];
+  const canNudgeTickets = currentUser.permissions["tickets.nudge"];
   const canCloseTicketsWithoutAccept = currentUser.permissions["tickets.closeWithoutAccept"];
   const canManageInstances = currentUser.permissions["channels.manage"];
   const canManageQuickReplies = currentUser.permissions["quickReplies.manage"];
@@ -2759,6 +2763,14 @@ export default function HomePage() {
       (canTransferTickets && (isSelectedTicketOwnedByCurrentUser || !selectedTicket.currentAgent))
       || (canTransferTicketsFromOthers && Boolean(selectedTicket.currentAgent) && !isSelectedTicketOwnedByCurrentUser)
     ),
+  );
+  const canNudgeSelectedTicket = Boolean(
+    selectedTicket
+    && !selectedTicket.isGroup
+    && selectedTicket.status !== "closed"
+    && selectedTicket.currentAgent
+    && selectedTicket.currentAgent.id !== currentUser.id
+    && canNudgeTickets,
   );
   const ticketDensity: "compact" = "compact";
 
@@ -3622,6 +3634,67 @@ export default function HomePage() {
     });
     socket.on("ticket.updated", refreshForTicket);
     socket.on("ticket.closed", refreshForTicket);
+    socket.on("ticket.nudged", (payload?: {
+      ticketId?: string;
+      targetUserId?: string | null;
+      actorUserId?: string;
+      actorName?: string | null;
+      customerName?: string | null;
+      note?: string | null;
+    }) => {
+      if (!payload?.ticketId) {
+        return;
+      }
+
+      void refreshTickets();
+
+      if (!user || payload.targetUserId !== user.id || payload.actorUserId === user.id) {
+        return;
+      }
+
+      const actorName = payload.actorName?.trim() || "Supervisão";
+      const customerName = payload.customerName?.trim() || "um atendimento";
+      const message = payload.note?.trim()
+        ? `${actorName} chamou sua atenção em ${customerName}: ${payload.note.trim()}`
+        : `${actorName} chamou sua atenção em ${customerName}.`;
+
+      setPanelMessage(message);
+
+      if (!browserNotificationsEnabled) {
+        return;
+      }
+
+      const title = "Atenção solicitada";
+      const notificationBody = message;
+      const notificationTag = `ticket-nudge:${payload.ticketId}`;
+
+      if (typeof document !== "undefined" && document.visibilityState === "hidden" && browserNotificationRegistrationRef.current) {
+        void browserNotificationRegistrationRef.current.showNotification(title, {
+          body: notificationBody,
+          icon: "/favicon.ico",
+          badge: "/favicon.ico",
+          tag: notificationTag,
+          data: {
+            ticketId: payload.ticketId,
+          },
+        }).catch(() => {
+          const fallbackNotification = new Notification(title, {
+            body: notificationBody,
+            icon: "/favicon.ico",
+            tag: notificationTag,
+          });
+          fallbackNotification.onclick = () => fallbackNotification.close();
+        });
+        return;
+      }
+
+      const notification = new Notification(title, {
+        body: notificationBody,
+        icon: "/favicon.ico",
+        tag: notificationTag,
+      });
+      notification.onclick = () => notification.close();
+    });
     socket.on("message.created", async (payload?: { ticketId?: string; direction?: "inbound" | "outbound" | "system" }) => {
       const refreshedTickets = await refreshTickets();
       const ticketIdToRefresh = payload?.ticketId ?? selectedTicketIdRef.current;
@@ -4685,6 +4758,34 @@ export default function HomePage() {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao transferir ticket.");
     } finally {
       setTransferLoading(false);
+    }
+  }
+
+  async function handleNudgeTicket() {
+    if (!selectedTicketId || !selectedTicket || !canNudgeSelectedTicket) return;
+
+    const note =
+      typeof window !== "undefined"
+        ? window.prompt("Observação opcional para o responsável:", "") ?? null
+        : "";
+
+    if (note === null) {
+      return;
+    }
+
+    setNudgeLoading(true);
+    try {
+      await apiFetch(`/tickets/${selectedTicketId}/nudge`, {
+        method: "POST",
+        body: JSON.stringify({
+          note: note.trim(),
+        }),
+      });
+      setPanelMessage(`Alerta enviado para ${selectedTicket.currentAgent?.name ?? "o responsável"}.`);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao chamar a atenção do responsável.");
+    } finally {
+      setNudgeLoading(false);
     }
   }
 
@@ -8194,6 +8295,20 @@ export default function HomePage() {
                               <span>Transferir</span>
                             </button>
                           ) : null}
+                          {canNudgeSelectedTicket ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMobileTicketActionsOpen(false);
+                                void handleNudgeTicket();
+                              }}
+                              disabled={nudgeLoading}
+                              className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                            >
+                              <Zap className="h-4 w-4" />
+                              <span>{nudgeLoading ? "Enviando alerta..." : "Chamar atenção"}</span>
+                            </button>
+                          ) : null}
                           {selectedTicket.status === "closed" ? (
                             <button
                               type="button"
@@ -8288,6 +8403,19 @@ export default function HomePage() {
                       >
                         <ArrowRightLeft className="h-3.5 w-3.5" />
                         Transferir
+                      </button>
+                    ) : null}
+                    {canNudgeSelectedTicket ? (
+                      <button
+                        type="button"
+                        aria-label="Chamar atenção do responsável"
+                        title="Chamar atenção do responsável"
+                        onClick={() => void handleNudgeTicket()}
+                        disabled={nudgeLoading}
+                        className="inline-flex h-9 items-center gap-2 rounded-full border border-amber-200 bg-white px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+                      >
+                        <Zap className="h-3.5 w-3.5" />
+                        {nudgeLoading ? "Enviando..." : "Chamar atenção"}
                       </button>
                     ) : null}
                     {selectedTicket.status === "closed" ? (
@@ -9197,6 +9325,8 @@ export default function HomePage() {
                                   ? "Criado"
                                   : item.type === "accepted"
                                     ? "Aceite"
+                                    : item.type === "nudged"
+                                      ? "Alerta"
                                     : item.type === "transferred"
                                       ? "Transferência"
                                       : item.type === "closed"

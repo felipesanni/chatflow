@@ -53,6 +53,10 @@ const transferTicketBodySchema = z.object({
   note: z.string().trim().optional().default(''),
 });
 
+const nudgeTicketBodySchema = z.object({
+  note: z.string().trim().max(500, 'A observacao deve ter no maximo 500 caracteres.').optional().default(''),
+});
+
 const bulkDeleteTicketsBodySchema = z.object({
   ticketIds: z.array(z.string().uuid()).min(1, 'Selecione ao menos um ticket.').max(100, 'Limite de 100 tickets por lote.'),
 });
@@ -265,14 +269,17 @@ function serializeTicketHistoryEvent(event: any) {
     summary:
       event.eventType === 'created'
         ? 'Ticket criado'
-        : event.eventType === 'accepted'
+      : event.eventType === 'accepted'
           ? 'Ticket assumido'
-          : event.eventType === 'closed'
+        : event.eventType === 'nudged'
+          ? 'Atencao solicitada ao responsavel'
+        : event.eventType === 'closed'
             ? 'Ticket encerrado'
             : event.eventType === 'reopened'
               ? 'Ticket reaberto'
               : 'Evento registrado',
     reason: typeof metadata?.reason === 'string' ? metadata.reason : null,
+    note: typeof metadata?.note === 'string' ? metadata.note : null,
     details: metadata,
   };
 }
@@ -372,6 +379,30 @@ function canTransferTicket(
   }
 
   return permissions['tickets.transferOthers'];
+}
+
+function canNudgeTicket(
+  viewerId: string,
+  permissions: PermissionMap,
+  ticket: { currentAgentId: string | null; isGroup?: boolean | null; status?: string | null },
+) {
+  if (ticket.isGroup) {
+    return false;
+  }
+
+  if (ticket.status === 'closed') {
+    return false;
+  }
+
+  if (!ticket.currentAgentId) {
+    return false;
+  }
+
+  if (ticket.currentAgentId === viewerId) {
+    return false;
+  }
+
+  return permissions['tickets.nudge'];
 }
 
 function canCloseTicket(
@@ -645,7 +676,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       app.prisma.ticketEvent.findMany({
         where: {
           ticketId: ticket.id,
-          eventType: { in: ['created', 'accepted', 'closed', 'reopened'] },
+          eventType: { in: ['created', 'accepted', 'nudged', 'closed', 'reopened'] },
         },
         include: {
           actorUser: {
@@ -1092,6 +1123,83 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
 
     return {
       item: ticket,
+    };
+  });
+
+  app.post('/tickets/:ticketId/nudge', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.nudge');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const body = nudgeTicketBodySchema.parse(request.body ?? {});
+
+    const currentTicket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      include: {
+        currentAgent: true,
+        currentQueue: true,
+        whatsappInstance: true,
+      },
+    });
+
+    if (!currentTicket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, currentTicket)) {
+      return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
+    }
+
+    if (!canNudgeTicket(session.userId, access.permissions, currentTicket)) {
+      return reply.forbidden('Voce nao possui permissao para chamar a atencao neste ticket.');
+    }
+
+    const trimmedNote = body.note.trim();
+    const actorUser = await app.prisma.user.findUnique({
+      where: { id: session.userId },
+      select: {
+        email: true,
+        agent: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+
+    await app.prisma.ticketEvent.create({
+      data: {
+        id: randomUUID(),
+        ticketId: currentTicket.id,
+        eventType: 'nudged',
+        actorUserId: session.userId,
+        metadata: {
+          targetAgentId: currentTicket.currentAgentId,
+          note: trimmedNote || null,
+        },
+      },
+    });
+
+    app.io.emit('ticket.updated', {
+      ticketId: currentTicket.id,
+      status: currentTicket.status,
+      currentAgentId: currentTicket.currentAgentId,
+    });
+    app.io.emit('ticket.nudged', {
+      ticketId: currentTicket.id,
+      targetUserId: currentTicket.currentAgentId,
+      actorUserId: session.userId,
+      actorName: actorUser?.agent?.name ?? actorUser?.email ?? session.email,
+      customerName: currentTicket.customerNameSnapshot,
+      note: trimmedNote || null,
+    });
+
+    return {
+      ok: true,
+      ticketId: currentTicket.id,
+      targetUserId: currentTicket.currentAgentId,
+      note: trimmedNote || null,
     };
   });
 

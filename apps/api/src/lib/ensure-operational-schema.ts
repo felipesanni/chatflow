@@ -81,6 +81,7 @@ const operationalStatements = [
         'accepted',
         'assigned',
         'transferred',
+        'nudged',
         'queue_changed',
         'message_in',
         'message_out',
@@ -89,6 +90,14 @@ const operationalStatements = [
         'tag_added',
         'tag_removed'
       );
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `,
+  `
+    DO $$
+    BEGIN
+      ALTER TYPE "TicketEventType" ADD VALUE IF NOT EXISTS 'nudged';
     EXCEPTION
       WHEN duplicate_object THEN NULL;
     END $$;
