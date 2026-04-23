@@ -3654,9 +3654,7 @@ export default function HomePage() {
 
       const actorName = payload.actorName?.trim() || "Supervisão";
       const customerName = payload.customerName?.trim() || "um atendimento";
-      const message = payload.note?.trim()
-        ? `${actorName} chamou sua atenção em ${customerName}: ${payload.note.trim()}`
-        : `${actorName} chamou sua atenção em ${customerName}.`;
+      const message = `${actorName} chamou sua atenção para o ticket de ${customerName}.`;
 
       setPanelMessage(message);
 
@@ -4764,21 +4762,12 @@ export default function HomePage() {
   async function handleNudgeTicket() {
     if (!selectedTicketId || !selectedTicket || !canNudgeSelectedTicket) return;
 
-    const note =
-      typeof window !== "undefined"
-        ? window.prompt("Observação opcional para o responsável:", "") ?? null
-        : "";
-
-    if (note === null) {
-      return;
-    }
-
     setNudgeLoading(true);
     try {
       await apiFetch(`/tickets/${selectedTicketId}/nudge`, {
         method: "POST",
         body: JSON.stringify({
-          note: note.trim(),
+          note: "",
         }),
       });
       setPanelMessage(`Alerta enviado para ${selectedTicket.currentAgent?.name ?? "o responsável"}.`);
