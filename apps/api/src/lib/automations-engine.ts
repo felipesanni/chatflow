@@ -52,6 +52,7 @@ type AutomationTicketContext = {
   latestMessageDirection?: string | null;
   latestMessageCreatedAt?: Date | null;
   latestMessageSenderAgentId?: string | null;
+  latestMessageRawPayload?: Prisma.JsonValue | null;
   createdAt: Date;
   customerNameSnapshot: string;
   externalChatId: string;
@@ -471,6 +472,23 @@ function getTicketInactivityMinutes(conditions: AutomationCondition[]) {
   return Number.isFinite(expectedMinutes) && expectedMinutes > 0 ? expectedMinutes : null;
 }
 
+function isAutomationGeneratedMessage(rawPayload: Prisma.JsonValue | null | undefined, automationId?: string) {
+  if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
+    return false;
+  }
+
+  const payload = rawPayload as Record<string, unknown>;
+  if (payload.source !== 'automation') {
+    return false;
+  }
+
+  if (!automationId) {
+    return true;
+  }
+
+  return payload.automationId === automationId;
+}
+
 function formatConditionFailure(
   condition: AutomationCondition,
   context: TriggerExecutionContext,
@@ -539,6 +557,8 @@ function formatConditionFailure(
       }
     } else if (context.ticket.latestMessageDirection !== 'outbound') {
       return 'Última mensagem não foi do agente; a contagem para resposta do cliente não começou.';
+    } else if (isAutomationGeneratedMessage(context.ticket.latestMessageRawPayload)) {
+      return 'Última mensagem foi enviada por automação; o timer não reinicia sobre a própria mensagem automática.';
     }
 
     const now = context.now ?? new Date();
@@ -599,6 +619,26 @@ function getSaoPauloParts(date: Date) {
 }
 
 async function resolveAutomationActorUserId(app: FastifyInstance, automation: AutomationWithRuntime) {
+  const botActor = await app.prisma.user.findFirst({
+    where: {
+      status: 'active',
+      agent: {
+        isBotAgent: true,
+      },
+    },
+    orderBy: [
+      { role: 'asc' },
+      { createdAt: 'asc' },
+    ],
+    select: {
+      id: true,
+    },
+  });
+
+  if (botActor) {
+    return botActor.id;
+  }
+
   const preferredIds = [automation.updatedByUserId, automation.createdByUserId].filter((value): value is string => Boolean(value));
 
   if (preferredIds.length > 0) {
@@ -689,6 +729,13 @@ function evaluateCondition(
     }
 
     if (expectedPendingFrom === 'agent' && !context.ticket.currentAgentId) {
+      return false;
+    }
+
+    if (
+      expectedPendingFrom === 'customer'
+      && isAutomationGeneratedMessage(context.ticket.latestMessageRawPayload, automation.id)
+    ) {
       return false;
     }
 
@@ -851,6 +898,10 @@ async function executeAction(
       body: message,
       preserveCurrentAgent: true,
       preserveCurrentStatus: true,
+      metadata: {
+        source: 'automation',
+        automationId: params.automation.id,
+      },
     });
 
     return {
@@ -1303,6 +1354,7 @@ export async function processAutomationMessageReceived(
             direction: true,
             senderAgentId: true,
             createdAt: true,
+            rawPayload: true,
           },
         },
         createdAt: true,
@@ -1353,6 +1405,7 @@ export async function processAutomationMessageReceived(
     latestMessageDirection: ticket.messages[0]?.direction ?? null,
     latestMessageCreatedAt: ticket.messages[0]?.createdAt ?? null,
     latestMessageSenderAgentId: ticket.messages[0]?.senderAgentId ?? null,
+    latestMessageRawPayload: ticket.messages[0]?.rawPayload ?? null,
     createdAt: ticket.createdAt,
     customerNameSnapshot: ticket.customerNameSnapshot,
     externalChatId: ticket.externalChatId,
@@ -1455,6 +1508,7 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
             direction: true,
             senderAgentId: true,
             createdAt: true,
+            rawPayload: true,
           },
         },
         createdAt: true,
@@ -1477,6 +1531,7 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
             latestMessageDirection: ticket.messages[0]?.direction ?? null,
             latestMessageCreatedAt: ticket.messages[0]?.createdAt ?? null,
             latestMessageSenderAgentId: ticket.messages[0]?.senderAgentId ?? null,
+            latestMessageRawPayload: ticket.messages[0]?.rawPayload ?? null,
           },
           now,
         });
@@ -1509,6 +1564,7 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
             direction: true,
             senderAgentId: true,
             createdAt: true,
+            rawPayload: true,
           },
         },
         createdAt: true,
@@ -1531,6 +1587,7 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
             latestMessageDirection: ticket.messages[0]?.direction ?? null,
             latestMessageCreatedAt: ticket.messages[0]?.createdAt ?? null,
             latestMessageSenderAgentId: ticket.messages[0]?.senderAgentId ?? null,
+            latestMessageRawPayload: ticket.messages[0]?.rawPayload ?? null,
           },
           now,
         });
@@ -1561,6 +1618,7 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
             direction: true,
             senderAgentId: true,
             createdAt: true,
+            rawPayload: true,
           },
         },
         createdAt: true,
@@ -1592,6 +1650,7 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
             latestMessageDirection: ticket.messages[0]?.direction ?? null,
             latestMessageCreatedAt: ticket.messages[0]?.createdAt ?? null,
             latestMessageSenderAgentId: ticket.messages[0]?.senderAgentId ?? null,
+            latestMessageRawPayload: ticket.messages[0]?.rawPayload ?? null,
           },
           now,
         });

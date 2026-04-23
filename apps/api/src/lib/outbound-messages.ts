@@ -25,6 +25,7 @@ type DeliverOutboundMessageParams = {
   preserveCurrentAgent?: boolean;
   preserveCurrentStatus?: boolean;
   suppressSignature?: boolean;
+  metadata?: Record<string, unknown> | null;
 };
 
 type MessageTemplateContext = {
@@ -142,6 +143,18 @@ function withInternalNote(rawPayload: Prisma.JsonValue | null | undefined) {
   return payload as Prisma.InputJsonValue;
 }
 
+function mergeRawPayload(rawPayload: Prisma.JsonValue | null | undefined, metadata?: Record<string, unknown> | null) {
+  const payload = rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
+    ? { ...(rawPayload as Record<string, unknown>) }
+    : {};
+
+  if (metadata && typeof metadata === 'object') {
+    Object.assign(payload, metadata);
+  }
+
+  return Object.keys(payload).length > 0 ? payload as Prisma.InputJsonValue : undefined;
+}
+
 function resolveTemplateCustomerName(context: MessageTemplateContext) {
   const groupName = context.ticket.title?.trim();
   if (context.ticket.isGroup && groupName) {
@@ -236,6 +249,7 @@ export async function deliverOutboundMessage(app: FastifyInstance, params: Deliv
   const trimmedBody = renderedBody.trim();
   const attachmentInput = params.attachment ?? null;
   const isInternalNote = params.internalNote === true;
+  const messageMetadata = params.metadata ?? null;
 
   if (!trimmedBody && !attachmentInput) {
     throw new Error('Informe uma mensagem ou anexe um arquivo para enviar.');
@@ -336,7 +350,7 @@ export async function deliverOutboundMessage(app: FastifyInstance, params: Deliv
       senderNameSnapshot: actorName,
       replyToMessageId: params.replyToMessageId ?? null,
       deliveredAt: isInternalNote ? null : new Date(),
-      rawPayload: isInternalNote ? withInternalNote(null) : undefined,
+      rawPayload: isInternalNote ? withInternalNote(messageMetadata ?? null) : mergeRawPayload(null, messageMetadata),
     },
   });
 
