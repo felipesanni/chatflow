@@ -235,6 +235,13 @@ function serializeTicket(ticket: any) {
     currentQueue: ticket.currentQueue ? { id: ticket.currentQueue.id, name: ticket.currentQueue.name, color: ticket.currentQueue.color } : null,
     whatsappInstance: { id: ticket.whatsappInstance.id, name: ticket.whatsappInstance.name },
     isGroup: ticket.isGroup,
+    latestNudge: Array.isArray(ticket.events) && ticket.events[0]
+      ? {
+          createdAt: ticket.events[0].createdAt,
+          actorUserId: ticket.events[0].actorUserId ?? null,
+          actorName: resolveActorName(ticket.events[0].actorUser),
+        }
+      : null,
     updatedAt: ticket.updatedAt,
   };
 }
@@ -575,6 +582,18 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         currentAgent: true,
         currentQueue: true,
         whatsappInstance: true,
+        events: {
+          where: { eventType: 'nudged' },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          include: {
+            actorUser: {
+              include: {
+                agent: true,
+              },
+            },
+          },
+        },
       },
       orderBy: [
         { lastMessageAt: 'desc' },
@@ -606,6 +625,18 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         currentAgent: true,
         currentQueue: true,
         whatsappInstance: true,
+        events: {
+          where: { eventType: 'nudged' },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          include: {
+            actorUser: {
+              include: {
+                agent: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -1169,7 +1200,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     });
     const actorName = actorUser?.agent?.name ?? actorUser?.email ?? session.email;
 
-    await app.prisma.ticketEvent.create({
+    const nudgeEvent = await app.prisma.ticketEvent.create({
       data: {
         id: randomUUID(),
         ticketId: currentTicket.id,
@@ -1193,6 +1224,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       actorUserId: session.userId,
       actorName,
       customerName: currentTicket.customerNameSnapshot,
+      createdAt: nudgeEvent.createdAt,
       note: trimmedNote || null,
     });
 
@@ -1200,6 +1232,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       ok: true,
       ticketId: currentTicket.id,
       targetUserId: currentTicket.currentAgentId,
+      createdAt: nudgeEvent.createdAt,
       note: trimmedNote || null,
     };
   });

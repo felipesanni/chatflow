@@ -78,6 +78,11 @@ type TicketItem = {
   currentAgent: { id: string; name: string } | null;
   currentQueue: { id: string; name: string; color?: string | null } | null;
   whatsappInstance: { id: string; name: string };
+  latestNudge?: {
+    createdAt: string;
+    actorUserId?: string | null;
+    actorName: string;
+  } | null;
 };
 
 type TicketHistoryItem = {
@@ -2294,6 +2299,8 @@ export default function HomePage() {
   const activeWorkspaceRef = React.useRef(activeWorkspace);
   const browserNotificationRegistrationRef = React.useRef<ServiceWorkerRegistration | null>(null);
   const appDialogResolverRef = React.useRef<((value: boolean) => void) | null>(null);
+  const seenTicketNudgesRef = React.useRef<Record<string, string>>({});
+  const ticketNudgesPrimedRef = React.useRef(false);
   const userMenuRef = React.useRef<HTMLDivElement | null>(null);
   const mobileTicketActionsRef = React.useRef<HTMLDivElement | null>(null);
   const messageMenuRef = React.useRef<HTMLDivElement | null>(null);
@@ -3318,6 +3325,41 @@ export default function HomePage() {
     }
   }, [isMobileViewport]);
 
+  const openNudgeDialogForTicket = React.useCallback((ticketId: string, actorName: string, customerName: string) => {
+    const message = `${actorName} chamou sua atenção para o ticket de ${customerName}.`;
+    const matchingTicket = tickets.find((ticket) => ticket.id === ticketId);
+
+    const openNudgedTicket = () => {
+      if (matchingTicket) {
+        openTicketFromNotification(matchingTicket);
+        return;
+      }
+
+      setActiveWorkspace("tickets");
+      setSelectedTicketId(ticketId);
+      if (isMobileViewport) {
+        setMobileTicketView("conversation");
+      }
+      if (typeof window !== "undefined") {
+        window.focus();
+      }
+    };
+
+    setPanelMessage(message);
+    void openConfirmDialog({
+      title: "Atenção solicitada",
+      description: message,
+      confirmLabel: "Ir para o ticket",
+      cancelLabel: "Fechar",
+    }).then((shouldOpenTicket) => {
+      if (shouldOpenTicket) {
+        openNudgedTicket();
+      }
+    });
+
+    return openNudgedTicket;
+  }, [isMobileViewport, openTicketFromNotification, tickets]);
+
   const refreshMessages = React.useCallback(async (ticketId: string, options?: { silent?: boolean }) => {
     if (!user) return;
     if (!options?.silent) {
@@ -3582,6 +3624,58 @@ export default function HomePage() {
   }, [messages]);
 
   React.useEffect(() => {
+    if (!user) {
+      seenTicketNudgesRef.current = {};
+      ticketNudgesPrimedRef.current = false;
+      return;
+    }
+
+    if (!ticketNudgesPrimedRef.current) {
+      const initialSeen: Record<string, string> = {};
+      tickets.forEach((ticket) => {
+        if (ticket.latestNudge?.createdAt) {
+          initialSeen[ticket.id] = ticket.latestNudge.createdAt;
+        }
+      });
+      seenTicketNudgesRef.current = initialSeen;
+      ticketNudgesPrimedRef.current = true;
+      return;
+    }
+
+    const nextSeen = { ...seenTicketNudgesRef.current };
+    const pendingNudge = tickets.find((ticket) => {
+      const latestNudge = ticket.latestNudge;
+      if (!latestNudge?.createdAt) {
+        return false;
+      }
+
+      if (ticket.currentAgent?.id !== user.id || latestNudge.actorUserId === user.id) {
+        nextSeen[ticket.id] = latestNudge.createdAt;
+        return false;
+      }
+
+      if (nextSeen[ticket.id] === latestNudge.createdAt) {
+        return false;
+      }
+
+      return true;
+    });
+
+    seenTicketNudgesRef.current = nextSeen;
+
+    if (!pendingNudge?.latestNudge) {
+      return;
+    }
+
+    seenTicketNudgesRef.current[pendingNudge.id] = pendingNudge.latestNudge.createdAt;
+    openNudgeDialogForTicket(
+      pendingNudge.id,
+      pendingNudge.latestNudge.actorName || "Supervisão",
+      pendingNudge.customerName || "um atendimento",
+    );
+  }, [openNudgeDialogForTicket, tickets, user]);
+
+  React.useEffect(() => {
     setMessageBulkSelectionMode(false);
     setSelectedMessageIdsForBulkDelete([]);
   }, [selectedTicketId]);
@@ -3640,13 +3734,14 @@ export default function HomePage() {
       actorUserId?: string;
       actorName?: string | null;
       customerName?: string | null;
+      createdAt?: string;
       note?: string | null;
     }) => {
       if (!payload?.ticketId) {
         return;
       }
 
-      const refreshedTickets = await refreshTickets();
+      await refreshTickets();
 
       if (!user || payload.targetUserId !== user.id || payload.actorUserId === user.id) {
         return;
@@ -3654,44 +3749,15 @@ export default function HomePage() {
 
       const actorName = payload.actorName?.trim() || "Supervisão";
       const customerName = payload.customerName?.trim() || "um atendimento";
-      const message = `${actorName} chamou sua atenção para o ticket de ${customerName}.`;
-      const matchingTicket = refreshedTickets.find((ticket) => ticket.id === payload.ticketId);
-
-      const openNudgedTicket = () => {
-        if (matchingTicket) {
-          openTicketFromNotification(matchingTicket);
-          return;
-        }
-
-        setActiveWorkspace("tickets");
-        setSelectedTicketId(payload.ticketId ?? null);
-        if (isMobileViewport) {
-          setMobileTicketView("conversation");
-        }
-        if (typeof window !== "undefined") {
-          window.focus();
-        }
-      };
-
-      setPanelMessage(message);
-
-      void openConfirmDialog({
-        title: "Atenção solicitada",
-        description: message,
-        confirmLabel: "Ir para o ticket",
-        cancelLabel: "Fechar",
-      }).then((shouldOpenTicket) => {
-        if (shouldOpenTicket) {
-          openNudgedTicket();
-        }
-      });
+      seenTicketNudgesRef.current[payload.ticketId] = payload.createdAt ?? new Date().toISOString();
+      const openNudgedTicket = openNudgeDialogForTicket(payload.ticketId, actorName, customerName);
 
       if (!browserNotificationsEnabled || typeof document === "undefined" || document.visibilityState !== "hidden") {
         return;
       }
 
       const title = "Atenção solicitada";
-      const notificationBody = message;
+      const notificationBody = `${actorName} chamou sua atenção para o ticket de ${customerName}.`;
       const notificationTag = `ticket-nudge:${payload.ticketId}`;
 
       if (browserNotificationRegistrationRef.current) {
@@ -3821,7 +3887,7 @@ export default function HomePage() {
       socket.disconnect();
       socketRef.current = null;
     };
-    }, [browserNotificationsEnabled, browserPushEnabled, isMobileViewport, openTicketFromNotification, refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
+    }, [browserNotificationsEnabled, browserPushEnabled, openNudgeDialogForTicket, refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!user) return;
