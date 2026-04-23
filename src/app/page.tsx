@@ -3675,21 +3675,18 @@ export default function HomePage() {
 
       setPanelMessage(message);
 
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        const shouldOpenTicket = await openConfirmDialog({
-          title: "Atenção solicitada",
-          description: message,
-          confirmLabel: "Ir para o ticket",
-          cancelLabel: "Fechar",
-        });
-
+      void openConfirmDialog({
+        title: "Atenção solicitada",
+        description: message,
+        confirmLabel: "Ir para o ticket",
+        cancelLabel: "Fechar",
+      }).then((shouldOpenTicket) => {
         if (shouldOpenTicket) {
           openNudgedTicket();
         }
-        return;
-      }
+      });
 
-      if (!browserNotificationsEnabled) {
+      if (!browserNotificationsEnabled || typeof document === "undefined" || document.visibilityState !== "hidden") {
         return;
       }
 
@@ -3697,7 +3694,7 @@ export default function HomePage() {
       const notificationBody = message;
       const notificationTag = `ticket-nudge:${payload.ticketId}`;
 
-      if (typeof document !== "undefined" && document.visibilityState === "hidden" && browserNotificationRegistrationRef.current) {
+      if (browserNotificationRegistrationRef.current) {
         void browserNotificationRegistrationRef.current.showNotification(title, {
           body: notificationBody,
           icon: "/favicon.ico",
