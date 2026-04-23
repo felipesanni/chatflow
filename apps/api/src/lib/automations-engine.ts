@@ -734,7 +734,7 @@ function evaluateCondition(
 
     if (
       expectedPendingFrom === 'customer'
-      && isAutomationGeneratedMessage(context.ticket.latestMessageRawPayload, automation.id)
+      && isAutomationGeneratedMessage(context.ticket.latestMessageRawPayload)
     ) {
       return false;
     }
