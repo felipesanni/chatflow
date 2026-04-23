@@ -1759,6 +1759,7 @@ function translateAutomationAction(type: AutomationAction["type"]) {
   if (type === "transfer_queue") return "Transferir para fila";
   if (type === "assign_agent") return "Atribuir agente";
   if (type === "close_ticket") return "Encerrar ticket";
+  if (type === "nudge_ticket") return "Chamar atenção do responsável";
   if (type === "webhook") return "Chamar webhook";
   return type;
 }
@@ -1800,6 +1801,10 @@ function formatAutomationActionSummary(action: AutomationAction) {
 
   if (action.type === "close_ticket") {
     return action.config?.reason ? `Encerrar: ${action.config.reason}` : "Encerrar ticket";
+  }
+
+  if (action.type === "nudge_ticket") {
+    return "Chamar atenção do responsável";
   }
 
   if (action.type === "webhook") {
@@ -2266,7 +2271,7 @@ export default function HomePage() {
     assignmentScope: "any" as "any" | "unassigned" | "assigned",
     scheduleTime: "09:00",
     scheduleDaysOfWeek: [1, 2, 3, 4, 5] as number[],
-    actionType: "send_message" as "send_message" | "transfer_queue" | "assign_agent" | "close_ticket" | "webhook",
+    actionType: "send_message" as "send_message" | "transfer_queue" | "assign_agent" | "close_ticket" | "nudge_ticket" | "webhook",
     actionMessage: "",
     actionQueueId: "",
     actionAgentId: "",
@@ -5456,6 +5461,7 @@ export default function HomePage() {
         || primaryAction?.type === "transfer_queue"
         || primaryAction?.type === "assign_agent"
         || primaryAction?.type === "close_ticket"
+        || primaryAction?.type === "nudge_ticket"
         || primaryAction?.type === "webhook"
           ? primaryAction.type
           : "send_message",
@@ -5916,6 +5922,14 @@ export default function HomePage() {
         summary: automationForm.actionCloseReason.trim()
           ? `Encerrar: ${automationForm.actionCloseReason.trim()}`
           : "Encerrar ticket automaticamente",
+      });
+    }
+
+    if (automationForm.actionType === "nudge_ticket") {
+      actions.push({
+        type: "nudge_ticket",
+        config: {},
+        summary: "Chamar atenção do responsável",
       });
     }
 
@@ -10168,7 +10182,7 @@ export default function HomePage() {
                     onChange={(event) =>
                       setAutomationForm((current) => ({
                         ...current,
-                        actionType: event.target.value as "send_message" | "transfer_queue" | "assign_agent" | "close_ticket" | "webhook",
+                        actionType: event.target.value as "send_message" | "transfer_queue" | "assign_agent" | "close_ticket" | "nudge_ticket" | "webhook",
                       }))
                     }
                     className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
@@ -10177,6 +10191,7 @@ export default function HomePage() {
                     <option value="transfer_queue">Transferir para fila</option>
                     <option value="assign_agent">Atribuir agente</option>
                     <option value="close_ticket">Encerrar ticket</option>
+                    <option value="nudge_ticket">Chamar atenção do responsável</option>
                     <option value="webhook">Chamar webhook</option>
                   </select>
                 </label>

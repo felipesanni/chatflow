@@ -867,6 +867,68 @@ async function executeAction(
     };
   }
 
+  if (params.action.type === 'nudge_ticket') {
+    if (!ticket.currentAgentId) {
+      throw new Error('Ação de chamar atenção exige um ticket com responsável.');
+    }
+
+    if (params.actorUserId && ticket.currentAgentId === params.actorUserId) {
+      throw new Error('A automação não pode chamar a atenção do mesmo usuário responsável pelo ticket.');
+    }
+
+    const actorUser = params.actorUserId
+      ? await app.prisma.user.findUnique({
+          where: { id: params.actorUserId },
+          select: {
+            email: true,
+            agent: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        })
+      : null;
+    const actorName = actorUser?.agent?.name ?? actorUser?.email ?? 'Sistema';
+
+    const nudgeEvent = await app.prisma.ticketEvent.create({
+      data: {
+        id: randomUUID(),
+        ticketId: ticket.id,
+        eventType: 'nudged',
+        actorUserId: params.actorUserId,
+        metadata: {
+          source: 'automation',
+          automationId: params.automation.id,
+          targetAgentId: ticket.currentAgentId,
+          note: null,
+        },
+      },
+    });
+
+    app.io.emit('ticket.updated', {
+      ticketId: ticket.id,
+      status: ticket.status,
+      currentAgentId: ticket.currentAgentId,
+      currentQueueId: ticket.currentQueueId,
+    });
+    app.io.emit('ticket.nudged', {
+      ticketId: ticket.id,
+      targetUserId: ticket.currentAgentId,
+      actorUserId: params.actorUserId,
+      actorName,
+      customerName: ticket.customerNameSnapshot,
+      createdAt: nudgeEvent.createdAt,
+      note: null,
+    });
+
+    return {
+      type: 'nudge_ticket',
+      targetUserId: ticket.currentAgentId,
+      summary: params.action.summary ?? 'Responsável alertado automaticamente',
+    };
+  }
+
   if (params.action.type === 'webhook') {
     const url = typeof params.action.config?.url === 'string' ? params.action.config.url.trim() : '';
     if (!url) {
