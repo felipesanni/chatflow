@@ -465,6 +465,12 @@ function getTicketResponsePendingFrom(conditions: AutomationCondition[], actions
   return primaryAction?.type === 'nudge_ticket' ? 'agent' : 'customer';
 }
 
+function getTicketInactivityMinutes(conditions: AutomationCondition[]) {
+  const condition = conditions.find((item) => item.field === 'ticket.inactivityMinutes');
+  const expectedMinutes = Number(condition?.value);
+  return Number.isFinite(expectedMinutes) && expectedMinutes > 0 ? expectedMinutes : null;
+}
+
 function formatConditionFailure(
   condition: AutomationCondition,
   context: TriggerExecutionContext,
@@ -715,7 +721,12 @@ function automationMatchesScope(automation: AutomationWithRuntime, context: Trig
   return true;
 }
 
-function dedupeKeyForContext(automation: AutomationWithRuntime, context: TriggerExecutionContext) {
+function dedupeKeyForContext(
+  automation: AutomationWithRuntime,
+  context: TriggerExecutionContext,
+  conditions: AutomationCondition[] = [],
+  actions: AutomationAction[] = [],
+) {
   if (context.triggerType === 'message_received') {
     return `${automation.id}:message:${context.message?.id ?? 'unknown'}`;
   }
@@ -725,7 +736,14 @@ function dedupeKeyForContext(automation: AutomationWithRuntime, context: Trigger
   }
 
   if (context.triggerType === 'ticket_inactive') {
-    return `${automation.id}:inactive:${context.ticket.id}:${context.ticket.latestMessageCreatedAt?.toISOString() ?? context.ticket.lastMessageAt.toISOString()}`;
+    const inactivityMinutes = getTicketInactivityMinutes(conditions) ?? 1;
+    const latestMessageKey = context.ticket.latestMessageCreatedAt?.toISOString() ?? context.ticket.lastMessageAt.toISOString();
+    const expectedPendingFrom = getTicketResponsePendingFrom(conditions, actions);
+    const latestMessageAt = context.ticket.latestMessageCreatedAt ?? context.ticket.lastMessageAt;
+    const now = context.now ?? new Date();
+    const elapsedMinutes = Math.max(0, Math.floor((now.getTime() - latestMessageAt.getTime()) / 60_000));
+    const phase = elapsedMinutes >= inactivityMinutes ? 'threshold-reached' : `waiting:${elapsedMinutes}`;
+    return `${automation.id}:inactive:${context.ticket.id}:${latestMessageKey}:${expectedPendingFrom}:${inactivityMinutes}:${phase}`;
   }
 
   const parts = getSaoPauloParts(context.now ?? new Date());
@@ -1127,13 +1145,13 @@ async function runAutomationAgainstContext(
     return null;
   }
 
-  const dedupeKey = dedupeKeyForContext(automation, context);
+  const conditions = asConditions(automation.conditions);
+  const actions = asActions(automation.actions);
+  const dedupeKey = dedupeKeyForContext(automation, context, conditions, actions);
   if (!registerAutomationDedupe(dedupeKey, context.triggerType === 'scheduled_time' ? AUTOMATION_TICK_INTERVAL_MS + 5_000 : 60 * 60 * 1000)) {
     return null;
   }
 
-  const conditions = asConditions(automation.conditions);
-  const actions = asActions(automation.actions);
   const triggerPayload = {
     triggerType: context.triggerType,
     ticketId: context.ticket.id,
