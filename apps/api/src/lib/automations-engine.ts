@@ -566,11 +566,11 @@ function evaluateCondition(condition: AutomationCondition, context: TriggerExecu
       return false;
     }
 
-    if (context.ticket.latestMessageDirection !== 'outbound' || !context.ticket.latestMessageCreatedAt) {
+    if (context.ticket.latestMessageDirection !== 'inbound' || !context.ticket.latestMessageCreatedAt) {
       return false;
     }
 
-    const responsibleAgentId = context.ticket.latestMessageSenderAgentId ?? context.ticket.currentAgentId;
+    const responsibleAgentId = context.ticket.currentAgentId;
     if (!responsibleAgentId) {
       return false;
     }
@@ -1355,6 +1355,9 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
         whatsappInstanceId: true,
         lastMessageAt: true,
         messages: {
+          where: {
+            direction: { in: ['inbound', 'outbound'] },
+          },
           orderBy: { createdAt: 'desc' },
           take: 1,
           select: {
