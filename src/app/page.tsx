@@ -696,6 +696,11 @@ function getDynamicFieldCommandFromText(value: string) {
   return match[1]?.toLowerCase() ?? "";
 }
 
+function getDynamicFieldCommandFromCursor(value: string, cursorPosition: number | null | undefined) {
+  const safeCursor = typeof cursorPosition === "number" ? Math.max(0, Math.min(cursorPosition, value.length)) : value.length;
+  return getDynamicFieldCommandFromText(value.slice(0, safeCursor));
+}
+
 function getDynamicFieldMatchesFromText(value: string) {
   const command = getDynamicFieldCommandFromText(value);
   if (command === null) {
@@ -711,8 +716,31 @@ function getDynamicFieldMatchesFromText(value: string) {
     .slice(0, 6);
 }
 
+function getDynamicFieldMatchesFromCursor(value: string, cursorPosition: number | null | undefined) {
+  const command = getDynamicFieldCommandFromCursor(value, cursorPosition);
+  if (command === null) {
+    return [];
+  }
+
+  return COMPOSER_DYNAMIC_FIELDS
+    .filter((item) =>
+      item.token.toLowerCase().includes(command)
+      || item.label.toLowerCase().includes(command)
+      || item.description.toLowerCase().includes(command),
+    )
+    .slice(0, 6);
+}
+
 function insertDynamicFieldToken(value: string, token: string) {
   return value.replace(/\{\{?([a-z0-9_]*)$/i, `{{${token}}}`);
+}
+
+function insertDynamicFieldTokenAtCursor(value: string, token: string, cursorPosition: number | null | undefined) {
+  const safeCursor = typeof cursorPosition === "number" ? Math.max(0, Math.min(cursorPosition, value.length)) : value.length;
+  const beforeCursor = value.slice(0, safeCursor);
+  const afterCursor = value.slice(safeCursor);
+  const replacedBeforeCursor = beforeCursor.replace(/\{\{?([a-z0-9_]*)$/i, `{{${token}}}`);
+  return `${replacedBeforeCursor}${afterCursor}`;
 }
 
 const API_REFERENCE_MODULES: ApiModuleDoc[] = [
@@ -2116,6 +2144,7 @@ export default function HomePage() {
   const [automationView, setAutomationView] = React.useState<"rules" | "executions">("rules");
 
   const [messageInput, setMessageInput] = React.useState("");
+  const [messageCursorPosition, setMessageCursorPosition] = React.useState<number | null>(null);
   const [editingMessageId, setEditingMessageId] = React.useState<string | null>(null);
   const [replyToMessageId, setReplyToMessageId] = React.useState<string | null>(null);
   const [composerInternalNoteMode, setComposerInternalNoteMode] = React.useState(false);
@@ -2284,6 +2313,7 @@ export default function HomePage() {
   });
   const [queueForm, setQueueForm] = React.useState({ name: "", color: "#1A1C32", isBotQueue: false });
   const [quickReplyForm, setQuickReplyForm] = React.useState({ shortcut: "", content: "", isActive: true });
+  const [quickReplyCursorPosition, setQuickReplyCursorPosition] = React.useState<number | null>(null);
   const [automationForm, setAutomationForm] = React.useState({
     name: "",
     description: "",
@@ -2303,6 +2333,7 @@ export default function HomePage() {
     actionWebhookUrl: "",
     actionCloseReason: "",
   });
+  const [automationMessageCursorPosition, setAutomationMessageCursorPosition] = React.useState<number | null>(null);
   const [conversationForm, setConversationForm] = React.useState({
     phone: "",
     whatsappInstanceId: "",
@@ -2866,22 +2897,22 @@ export default function HomePage() {
   }, [canViewQuickReplies, quickReplies, quickReplyCommand]);
 
   const dynamicFieldCommand = React.useMemo(() => {
-    return getDynamicFieldCommandFromText(messageInput);
-  }, [messageInput]);
+    return getDynamicFieldCommandFromCursor(messageInput, messageCursorPosition);
+  }, [messageCursorPosition, messageInput]);
 
   const dynamicFieldMatches = React.useMemo(() => {
     if (dynamicFieldCommand === null) return [];
-    return getDynamicFieldMatchesFromText(messageInput);
-  }, [dynamicFieldCommand]);
+    return getDynamicFieldMatchesFromCursor(messageInput, messageCursorPosition);
+  }, [dynamicFieldCommand, messageCursorPosition, messageInput]);
 
   const quickReplyDynamicFieldMatches = React.useMemo(
-    () => getDynamicFieldMatchesFromText(quickReplyForm.content),
-    [quickReplyForm.content],
+    () => getDynamicFieldMatchesFromCursor(quickReplyForm.content, quickReplyCursorPosition),
+    [quickReplyCursorPosition, quickReplyForm.content],
   );
 
   const automationDynamicFieldMatches = React.useMemo(
-    () => getDynamicFieldMatchesFromText(automationForm.actionMessage),
-    [automationForm.actionMessage],
+    () => getDynamicFieldMatchesFromCursor(automationForm.actionMessage, automationMessageCursorPosition),
+    [automationForm.actionMessage, automationMessageCursorPosition],
   );
 
   const scopedTickets = React.useMemo(() => {
@@ -4998,21 +5029,36 @@ export default function HomePage() {
   }
 
   function applyDynamicField(item: DynamicFieldSuggestion) {
-    setMessageInput((current) => insertDynamicFieldToken(current, item.token));
+    setMessageInput((current) => {
+      const nextMessage = insertDynamicFieldTokenAtCursor(current, item.token, messageCursorPosition);
+      const nextCursorPosition = nextMessage.lastIndexOf(`{{${item.token}}}`) + item.token.length + 4;
+      setMessageCursorPosition(nextCursorPosition);
+      return nextMessage;
+    });
   }
 
   function applyQuickReplyDynamicField(item: DynamicFieldSuggestion) {
-    setQuickReplyForm((current) => ({
-      ...current,
-      content: insertDynamicFieldToken(current.content, item.token),
-    }));
+    setQuickReplyForm((current) => {
+      const nextContent = insertDynamicFieldTokenAtCursor(current.content, item.token, quickReplyCursorPosition);
+      const nextCursorPosition = nextContent.lastIndexOf(`{{${item.token}}}`) + item.token.length + 4;
+      setQuickReplyCursorPosition(nextCursorPosition);
+      return {
+        ...current,
+        content: nextContent,
+      };
+    });
   }
 
   function applyAutomationDynamicField(item: DynamicFieldSuggestion) {
-    setAutomationForm((current) => ({
-      ...current,
-      actionMessage: insertDynamicFieldToken(current.actionMessage, item.token),
-    }));
+    setAutomationForm((current) => {
+      const nextMessage = insertDynamicFieldTokenAtCursor(current.actionMessage, item.token, automationMessageCursorPosition);
+      const nextCursorPosition = nextMessage.lastIndexOf(`{{${item.token}}}`) + item.token.length + 4;
+      setAutomationMessageCursorPosition(nextCursorPosition);
+      return {
+        ...current,
+        actionMessage: nextMessage,
+      };
+    });
   }
 
   async function handleReactToMessage(messageId: string, emoji: string) {
@@ -9173,7 +9219,13 @@ export default function HomePage() {
                   <div className="order-1 relative flex-1 md:order-2">
                     <textarea
                       value={messageInput}
-                      onChange={(event) => setMessageInput(event.target.value)}
+                      onChange={(event) => {
+                        setMessageInput(event.target.value);
+                        setMessageCursorPosition(event.target.selectionStart);
+                      }}
+                      onSelect={(event) => setMessageCursorPosition(event.currentTarget.selectionStart)}
+                      onClick={(event) => setMessageCursorPosition(event.currentTarget.selectionStart)}
+                      onKeyUp={(event) => setMessageCursorPosition(event.currentTarget.selectionStart)}
                       onKeyDown={handleComposerKeyDown}
                       rows={1}
                       placeholder={canSendToSelectedTicket ? (isEditingMessage ? "Edite a mensagem" : composerPlaceholder) : composerPlaceholder}
@@ -10243,7 +10295,13 @@ export default function HomePage() {
                   <div className="relative mt-2">
                     <textarea
                       value={automationForm.actionMessage}
-                      onChange={(event) => setAutomationForm((current) => ({ ...current, actionMessage: event.target.value }))}
+                      onChange={(event) => {
+                        setAutomationForm((current) => ({ ...current, actionMessage: event.target.value }));
+                        setAutomationMessageCursorPosition(event.target.selectionStart);
+                      }}
+                      onSelect={(event) => setAutomationMessageCursorPosition(event.currentTarget.selectionStart)}
+                      onClick={(event) => setAutomationMessageCursorPosition(event.currentTarget.selectionStart)}
+                      onKeyUp={(event) => setAutomationMessageCursorPosition(event.currentTarget.selectionStart)}
                       rows={4}
                       placeholder="Digite a mensagem que o ChatFlow deve enviar automaticamente."
                       className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
@@ -10477,7 +10535,13 @@ export default function HomePage() {
               <div className="relative mt-2">
                 <textarea
                   value={quickReplyForm.content}
-                  onChange={(event) => setQuickReplyForm((current) => ({ ...current, content: event.target.value }))}
+                  onChange={(event) => {
+                    setQuickReplyForm((current) => ({ ...current, content: event.target.value }));
+                    setQuickReplyCursorPosition(event.target.selectionStart);
+                  }}
+                  onSelect={(event) => setQuickReplyCursorPosition(event.currentTarget.selectionStart)}
+                  onClick={(event) => setQuickReplyCursorPosition(event.currentTarget.selectionStart)}
+                  onKeyUp={(event) => setQuickReplyCursorPosition(event.currentTarget.selectionStart)}
                   rows={6}
                   placeholder="Digite aqui a mensagem que será aplicada quando o agente usar /atalho."
                   className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
