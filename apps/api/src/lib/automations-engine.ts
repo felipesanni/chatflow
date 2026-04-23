@@ -570,7 +570,8 @@ function evaluateCondition(condition: AutomationCondition, context: TriggerExecu
       return false;
     }
 
-    if (!context.ticket.latestMessageSenderAgentId) {
+    const responsibleAgentId = context.ticket.latestMessageSenderAgentId ?? context.ticket.currentAgentId;
+    if (!responsibleAgentId) {
       return false;
     }
 
