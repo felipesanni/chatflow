@@ -631,6 +631,7 @@ const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL ?? null;
 const BRAND_LOGO_STORAGE_KEY = "chatflow.brand.logo";
 const BRAND_MODE_STORAGE_KEY = "chatflow.brand.mode";
 const BRAND_TEXT_STORAGE_KEY = "chatflow.brand.text";
+const TICKET_NUDGE_SEEN_STORAGE_KEY_PREFIX = "chatflow.ticket-nudges.seen";
 const CONFIGURED_PUBLIC_WEB_BASE_URL = process.env.NEXT_PUBLIC_WEB_BASE_URL ?? null;
 const CONFIGURED_PUBLIC_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? null;
 const EMOJI_LIBRARY = ["😀", "😂", "😊", "😍", "🙏", "👍", "👏", "🎉", "❤️", "🔥", "👀", "✅", "😉", "🤝", "😅", "🙌", "🤔", "😎", "📎", "📞"];
@@ -1531,6 +1532,45 @@ function normalizeApiTesterPath(value: string) {
   if (trimmed.startsWith("/api/")) return trimmed.slice(4);
   if (trimmed.startsWith("/")) return trimmed;
   return `/${trimmed}`;
+}
+
+function getTicketNudgeSeenStorageKey(userId: string) {
+  return `${TICKET_NUDGE_SEEN_STORAGE_KEY_PREFIX}.${userId}`;
+}
+
+function readSeenTicketNudges(userId: string) {
+  if (typeof window === "undefined") {
+    return {} as Record<string, string>;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(getTicketNudgeSeenStorageKey(userId));
+    if (!raw) {
+      return {} as Record<string, string>;
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {} as Record<string, string>;
+    }
+
+    return Object.entries(parsed).reduce<Record<string, string>>((accumulator, [ticketId, createdAt]) => {
+      if (typeof createdAt === "string" && createdAt.trim()) {
+        accumulator[ticketId] = createdAt;
+      }
+      return accumulator;
+    }, {});
+  } catch {
+    return {} as Record<string, string>;
+  }
+}
+
+function persistSeenTicketNudges(userId: string, value: Record<string, string>) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(getTicketNudgeSeenStorageKey(userId), JSON.stringify(value));
 }
 
 function urlBase64ToUint8Array(base64String: string) {
@@ -3325,11 +3365,24 @@ export default function HomePage() {
     }
   }, [isMobileViewport]);
 
-  const openNudgeDialogForTicket = React.useCallback((ticketId: string, actorName: string, customerName: string) => {
+  const openNudgeDialogForTicket = React.useCallback((ticketId: string, actorName: string, customerName: string, createdAt?: string) => {
     const message = `${actorName} chamou sua atenção para o ticket de ${customerName}.`;
     const matchingTicket = tickets.find((ticket) => ticket.id === ticketId);
+    const markNudgeAsSeen = () => {
+      if (!user || !createdAt) {
+        return;
+      }
+
+      const nextSeen = {
+        ...seenTicketNudgesRef.current,
+        [ticketId]: createdAt,
+      };
+      seenTicketNudgesRef.current = nextSeen;
+      persistSeenTicketNudges(user.id, nextSeen);
+    };
 
     const openNudgedTicket = () => {
+      markNudgeAsSeen();
       if (matchingTicket) {
         openTicketFromNotification(matchingTicket);
         return;
@@ -3354,11 +3407,14 @@ export default function HomePage() {
     }).then((shouldOpenTicket) => {
       if (shouldOpenTicket) {
         openNudgedTicket();
+        return;
       }
+
+      markNudgeAsSeen();
     });
 
     return openNudgedTicket;
-  }, [isMobileViewport, openTicketFromNotification, tickets]);
+  }, [isMobileViewport, openTicketFromNotification, tickets, user]);
 
   const refreshMessages = React.useCallback(async (ticketId: string, options?: { silent?: boolean }) => {
     if (!user) return;
@@ -3631,13 +3687,14 @@ export default function HomePage() {
     }
 
     if (!ticketNudgesPrimedRef.current) {
-      const initialSeen: Record<string, string> = {};
+      const initialSeen = readSeenTicketNudges(user.id);
       tickets.forEach((ticket) => {
-        if (ticket.latestNudge?.createdAt) {
+        if (ticket.latestNudge?.createdAt && !initialSeen[ticket.id]) {
           initialSeen[ticket.id] = ticket.latestNudge.createdAt;
         }
       });
       seenTicketNudgesRef.current = initialSeen;
+      persistSeenTicketNudges(user.id, initialSeen);
       ticketNudgesPrimedRef.current = true;
       return;
     }
@@ -3672,6 +3729,7 @@ export default function HomePage() {
       pendingNudge.id,
       pendingNudge.latestNudge.actorName || "Supervisão",
       pendingNudge.customerName || "um atendimento",
+      pendingNudge.latestNudge.createdAt,
     );
   }, [openNudgeDialogForTicket, tickets, user]);
 
@@ -3750,7 +3808,7 @@ export default function HomePage() {
       const actorName = payload.actorName?.trim() || "Supervisão";
       const customerName = payload.customerName?.trim() || "um atendimento";
       seenTicketNudgesRef.current[payload.ticketId] = payload.createdAt ?? new Date().toISOString();
-      const openNudgedTicket = openNudgeDialogForTicket(payload.ticketId, actorName, customerName);
+      const openNudgedTicket = openNudgeDialogForTicket(payload.ticketId, actorName, customerName, payload.createdAt);
 
       if (!browserNotificationsEnabled || typeof document === "undefined" || document.visibilityState !== "hidden") {
         return;
