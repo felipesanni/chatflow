@@ -1828,7 +1828,11 @@ function formatAutomationCondition(condition: AutomationCondition) {
   }
 
   if (condition.field === "ticket.inactivityMinutes") {
-    return `Sem resposta ao agente por ${condition.valueLabel ?? condition.value ?? ""} min`;
+    return `Sem resposta por ${condition.valueLabel ?? condition.value ?? ""} min`;
+  }
+
+  if (condition.field === "ticket.responsePendingFrom") {
+    return condition.value === "agent" ? "Aguardando resposta do agente" : "Aguardando resposta do cliente";
   }
 
   return condition.valueLabel ?? String(condition.value ?? condition.field);
@@ -2322,6 +2326,7 @@ export default function HomePage() {
     queueId: "",
     whatsappInstanceId: "",
     inactivityMinutes: "30",
+    responsePendingFrom: "customer" as "customer" | "agent",
     keyword: "",
     assignmentScope: "any" as "any" | "unassigned" | "assigned",
     scheduleTime: "09:00",
@@ -5366,6 +5371,7 @@ export default function HomePage() {
       queueId: "",
       whatsappInstanceId: "",
       inactivityMinutes: "30",
+      responsePendingFrom: "customer",
       keyword: "",
       assignmentScope: "any",
       scheduleTime: "09:00",
@@ -5521,6 +5527,7 @@ export default function HomePage() {
     const keywordCondition = item.conditions.find((condition) => condition.field === "message.keyword");
     const inactivityCondition = item.conditions.find((condition) => condition.field === "ticket.inactivityMinutes");
     const assignmentCondition = item.conditions.find((condition) => condition.field === "ticket.assignment");
+    const responsePendingFromCondition = item.conditions.find((condition) => condition.field === "ticket.responsePendingFrom");
     const primaryAction = item.actions[0];
 
     setEditingAutomationId(item.id);
@@ -5532,6 +5539,12 @@ export default function HomePage() {
       queueId: item.queueId ?? "",
       whatsappInstanceId: item.whatsappInstanceId ?? "",
       inactivityMinutes: String(inactivityCondition?.value ?? 30),
+      responsePendingFrom:
+        responsePendingFromCondition?.value === "agent"
+          ? "agent"
+          : primaryAction?.type === "nudge_ticket"
+            ? "agent"
+            : "customer",
       keyword: typeof keywordCondition?.value === "string" ? keywordCondition.value : "",
       assignmentScope:
         assignmentCondition?.value === "assigned" || assignmentCondition?.value === "unassigned"
@@ -5663,6 +5676,7 @@ export default function HomePage() {
       queueId: "",
       whatsappInstanceId: "",
       inactivityMinutes: "30",
+      responsePendingFrom: "customer",
       keyword: "",
       assignmentScope: "any",
       scheduleTime: "09:00",
@@ -5936,9 +5950,16 @@ export default function HomePage() {
     if (automationForm.triggerType === "ticket_inactive") {
       const inactivityMinutes = Number.parseInt(automationForm.inactivityMinutes, 10);
       if (!Number.isFinite(inactivityMinutes) || inactivityMinutes <= 0) {
-        setPanelMessage("Informe um tempo válido em minutos para aguardar a resposta do cliente.");
+        setPanelMessage("Informe um tempo válido em minutos para aguardar a resposta pendente.");
         return;
       }
+
+      conditions.push({
+        field: "ticket.responsePendingFrom",
+        operator: "equals",
+        value: automationForm.responsePendingFrom,
+        valueLabel: automationForm.responsePendingFrom === "agent" ? "Agente" : "Cliente",
+      });
 
       conditions.push({
         field: "ticket.inactivityMinutes",
@@ -10204,14 +10225,32 @@ export default function HomePage() {
 
               {automationForm.triggerType === "ticket_inactive" ? (
                 <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <label className="block text-sm font-medium text-slate-600">
+                    Sem resposta de
+                    <select
+                      value={automationForm.responsePendingFrom}
+                      onChange={(event) =>
+                        setAutomationForm((current) => ({
+                          ...current,
+                          responsePendingFrom: event.target.value as "customer" | "agent",
+                        }))
+                      }
+                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                    >
+                      <option value="customer">Cliente</option>
+                      <option value="agent">Agente responsável</option>
+                    </select>
+                  </label>
                   <CompactField
-                    label="Minutos sem resposta ao agente"
+                    label={automationForm.responsePendingFrom === "agent" ? "Minutos sem resposta do agente" : "Minutos sem resposta do cliente"}
                     value={automationForm.inactivityMinutes}
                     onChange={(value) => setAutomationForm((current) => ({ ...current, inactivityMinutes: value.replace(/\D/g, "") }))}
                     placeholder="30"
                   />
                   <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
-                    A automação será acionada quando a última mensagem do ticket for do agente e o cliente não responder dentro desse tempo.
+                    {automationForm.responsePendingFrom === "agent"
+                      ? "A automação será acionada quando a última mensagem do ticket for do cliente e o agente responsável não responder dentro desse tempo."
+                      : "A automação será acionada quando a última mensagem do ticket for do agente e o cliente não responder dentro desse tempo."}
                   </div>
                 </div>
               ) : null}

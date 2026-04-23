@@ -455,6 +455,16 @@ function asConditions(value: Prisma.JsonValue): AutomationCondition[] {
   return Array.isArray(value) ? value as AutomationCondition[] : [];
 }
 
+function getTicketResponsePendingFrom(conditions: AutomationCondition[], actions: AutomationAction[] = []) {
+  const condition = conditions.find((item) => item.field === 'ticket.responsePendingFrom');
+  if (condition) {
+    return condition.value === 'agent' ? 'agent' : 'customer';
+  }
+
+  const primaryAction = actions[0];
+  return primaryAction?.type === 'nudge_ticket' ? 'agent' : 'customer';
+}
+
 function asActions(value: Prisma.JsonValue): AutomationAction[] {
   return Array.isArray(value) ? value as AutomationAction[] : [];
 }
@@ -528,7 +538,12 @@ async function resolveAutomationActorUserId(app: FastifyInstance, automation: Au
   return fallback?.id ?? null;
 }
 
-function evaluateCondition(condition: AutomationCondition, context: TriggerExecutionContext) {
+function evaluateCondition(
+  condition: AutomationCondition,
+  context: TriggerExecutionContext,
+  conditions: AutomationCondition[] = [],
+  actions: AutomationAction[] = [],
+) {
   if (condition.field === 'message.keyword') {
     const messageBody = context.message?.body?.trim().toLowerCase() ?? '';
     const keyword = typeof condition.value === 'string' ? condition.value.trim().toLowerCase() : '';
@@ -566,18 +581,35 @@ function evaluateCondition(condition: AutomationCondition, context: TriggerExecu
       return false;
     }
 
-    if (context.ticket.latestMessageDirection !== 'inbound' || !context.ticket.latestMessageCreatedAt) {
+    if (!context.ticket.latestMessageCreatedAt) {
       return false;
     }
 
-    const responsibleAgentId = context.ticket.currentAgentId;
-    if (!responsibleAgentId) {
+    const expectedPendingFrom = getTicketResponsePendingFrom(conditions, actions);
+    const messageDirectionMatches = expectedPendingFrom === 'customer'
+      ? context.ticket.latestMessageDirection === 'outbound'
+      : context.ticket.latestMessageDirection === 'inbound';
+
+    if (!messageDirectionMatches) {
+      return false;
+    }
+
+    if (expectedPendingFrom === 'agent' && !context.ticket.currentAgentId) {
       return false;
     }
 
     const now = context.now ?? new Date();
     const elapsedMinutes = Math.floor((now.getTime() - context.ticket.latestMessageCreatedAt.getTime()) / 60_000);
     return elapsedMinutes >= expectedMinutes;
+  }
+
+  if (condition.field === 'ticket.responsePendingFrom') {
+    const expected = getTicketResponsePendingFrom([condition], actions);
+    if (expected === 'agent') {
+      return context.ticket.latestMessageDirection === 'inbound' && Boolean(context.ticket.currentAgentId);
+    }
+
+    return context.ticket.latestMessageDirection === 'outbound';
   }
 
   return true;
@@ -1030,7 +1062,7 @@ async function runAutomationAgainstContext(
     return null;
   }
 
-  const conditionsMatched = conditions.every((condition) => evaluateCondition(condition, context));
+  const conditionsMatched = conditions.every((condition) => evaluateCondition(condition, context, conditions, actions));
   if (!conditionsMatched) {
     await finalizeAutomationExecution(app, {
       id: executionId,
