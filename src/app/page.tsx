@@ -3634,7 +3634,7 @@ export default function HomePage() {
     });
     socket.on("ticket.updated", refreshForTicket);
     socket.on("ticket.closed", refreshForTicket);
-    socket.on("ticket.nudged", (payload?: {
+    socket.on("ticket.nudged", async (payload?: {
       ticketId?: string;
       targetUserId?: string | null;
       actorUserId?: string;
@@ -3646,7 +3646,7 @@ export default function HomePage() {
         return;
       }
 
-      void refreshTickets();
+      const refreshedTickets = await refreshTickets();
 
       if (!user || payload.targetUserId !== user.id || payload.actorUserId === user.id) {
         return;
@@ -3655,8 +3655,39 @@ export default function HomePage() {
       const actorName = payload.actorName?.trim() || "Supervisão";
       const customerName = payload.customerName?.trim() || "um atendimento";
       const message = `${actorName} chamou sua atenção para o ticket de ${customerName}.`;
+      const matchingTicket = refreshedTickets.find((ticket) => ticket.id === payload.ticketId);
+
+      const openNudgedTicket = () => {
+        if (matchingTicket) {
+          openTicketFromNotification(matchingTicket);
+          return;
+        }
+
+        setActiveWorkspace("tickets");
+        setSelectedTicketId(payload.ticketId ?? null);
+        if (isMobileViewport) {
+          setMobileTicketView("conversation");
+        }
+        if (typeof window !== "undefined") {
+          window.focus();
+        }
+      };
 
       setPanelMessage(message);
+
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        const shouldOpenTicket = await openConfirmDialog({
+          title: "Atenção solicitada",
+          description: message,
+          confirmLabel: "Ir para o ticket",
+          cancelLabel: "Fechar",
+        });
+
+        if (shouldOpenTicket) {
+          openNudgedTicket();
+        }
+        return;
+      }
 
       if (!browserNotificationsEnabled) {
         return;
@@ -3677,11 +3708,14 @@ export default function HomePage() {
           },
         }).catch(() => {
           const fallbackNotification = new Notification(title, {
-            body: notificationBody,
-            icon: "/favicon.ico",
-            tag: notificationTag,
-          });
-          fallbackNotification.onclick = () => fallbackNotification.close();
+          body: notificationBody,
+          icon: "/favicon.ico",
+          tag: notificationTag,
+        });
+          fallbackNotification.onclick = () => {
+            openNudgedTicket();
+            fallbackNotification.close();
+          };
         });
         return;
       }
@@ -3691,7 +3725,10 @@ export default function HomePage() {
         icon: "/favicon.ico",
         tag: notificationTag,
       });
-      notification.onclick = () => notification.close();
+      notification.onclick = () => {
+        openNudgedTicket();
+        notification.close();
+      };
     });
     socket.on("message.created", async (payload?: { ticketId?: string; direction?: "inbound" | "outbound" | "system" }) => {
       const refreshedTickets = await refreshTickets();
@@ -3787,7 +3824,7 @@ export default function HomePage() {
       socket.disconnect();
       socketRef.current = null;
     };
-    }, [browserNotificationsEnabled, browserPushEnabled, refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
+    }, [browserNotificationsEnabled, browserPushEnabled, isMobileViewport, openTicketFromNotification, refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!user) return;

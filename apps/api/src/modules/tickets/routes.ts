@@ -1167,6 +1167,8 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     });
+    const actorName = actorUser?.agent?.name ?? actorUser?.email ?? session.email;
+    const nudgeMessageBody = `${actorName} chamou a atencao para este ticket.`;
 
     await app.prisma.ticketEvent.create({
       data: {
@@ -1181,16 +1183,47 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       },
     });
 
+    const internalNote = await app.prisma.ticketMessage.create({
+      data: {
+        id: randomUUID(),
+        ticketId: currentTicket.id,
+        senderAgentId: session.userId,
+        direction: 'outbound',
+        contentType: 'text',
+        body: nudgeMessageBody,
+        senderNameSnapshot: actorName,
+        rawPayload: {
+          chatflowInternalNote: true,
+          source: 'ticket_nudge',
+          targetAgentId: currentTicket.currentAgentId,
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    await app.prisma.ticket.update({
+      where: { id: currentTicket.id },
+      data: {
+        lastMessagePreview: nudgeMessageBody,
+        lastMessageAt: internalNote.createdAt,
+        updatedAt: new Date(),
+      },
+    });
+
     app.io.emit('ticket.updated', {
       ticketId: currentTicket.id,
       status: currentTicket.status,
       currentAgentId: currentTicket.currentAgentId,
     });
+    app.io.emit('message.created', {
+      ticketId: currentTicket.id,
+      messageId: internalNote.id,
+      direction: internalNote.direction,
+    });
     app.io.emit('ticket.nudged', {
       ticketId: currentTicket.id,
       targetUserId: currentTicket.currentAgentId,
       actorUserId: session.userId,
-      actorName: actorUser?.agent?.name ?? actorUser?.email ?? session.email,
+      actorName,
       customerName: currentTicket.customerNameSnapshot,
       note: trimmedNote || null,
     });
