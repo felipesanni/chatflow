@@ -249,7 +249,7 @@ export async function deliverOutboundMessage(app: FastifyInstance, params: Deliv
   const trimmedBody = renderedBody.trim();
   const attachmentInput = params.attachment ?? null;
   const isInternalNote = params.internalNote === true;
-  const messageMetadata = (params.metadata ?? null) as Prisma.InputJsonObject | null;
+  const messageMetadata = (params.metadata ?? null) as unknown as Prisma.JsonValue | null;
 
   if (!trimmedBody && !attachmentInput) {
     throw new Error('Informe uma mensagem ou anexe um arquivo para enviar.');
