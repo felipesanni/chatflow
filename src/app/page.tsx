@@ -690,6 +690,31 @@ const COMPOSER_DYNAMIC_FIELDS: DynamicFieldSuggestion[] = [
   { token: "ticketStatus", label: "Status do ticket", description: "Status atual do atendimento." },
 ];
 
+function getDynamicFieldCommandFromText(value: string) {
+  const match = value.match(/\{\{?([a-z0-9_]*)$/i);
+  if (!match) return null;
+  return match[1]?.toLowerCase() ?? "";
+}
+
+function getDynamicFieldMatchesFromText(value: string) {
+  const command = getDynamicFieldCommandFromText(value);
+  if (command === null) {
+    return [];
+  }
+
+  return COMPOSER_DYNAMIC_FIELDS
+    .filter((item) =>
+      item.token.toLowerCase().includes(command)
+      || item.label.toLowerCase().includes(command)
+      || item.description.toLowerCase().includes(command),
+    )
+    .slice(0, 6);
+}
+
+function insertDynamicFieldToken(value: string, token: string) {
+  return value.replace(/\{\{?([a-z0-9_]*)$/i, `{{${token}}}`);
+}
+
 const API_REFERENCE_MODULES: ApiModuleDoc[] = [
   {
     key: "auth",
@@ -2841,22 +2866,23 @@ export default function HomePage() {
   }, [canViewQuickReplies, quickReplies, quickReplyCommand]);
 
   const dynamicFieldCommand = React.useMemo(() => {
-    const match = messageInput.match(/\{\{?([a-z0-9_]*)$/i);
-    if (!match) return null;
-    return match[1]?.toLowerCase() ?? "";
+    return getDynamicFieldCommandFromText(messageInput);
   }, [messageInput]);
 
   const dynamicFieldMatches = React.useMemo(() => {
     if (dynamicFieldCommand === null) return [];
-
-    return COMPOSER_DYNAMIC_FIELDS
-      .filter((item) =>
-        item.token.toLowerCase().includes(dynamicFieldCommand)
-        || item.label.toLowerCase().includes(dynamicFieldCommand)
-        || item.description.toLowerCase().includes(dynamicFieldCommand),
-      )
-      .slice(0, 6);
+    return getDynamicFieldMatchesFromText(messageInput);
   }, [dynamicFieldCommand]);
+
+  const quickReplyDynamicFieldMatches = React.useMemo(
+    () => getDynamicFieldMatchesFromText(quickReplyForm.content),
+    [quickReplyForm.content],
+  );
+
+  const automationDynamicFieldMatches = React.useMemo(
+    () => getDynamicFieldMatchesFromText(automationForm.actionMessage),
+    [automationForm.actionMessage],
+  );
 
   const scopedTickets = React.useMemo(() => {
     const search = searchQuery.trim().toLowerCase();
@@ -4972,7 +4998,21 @@ export default function HomePage() {
   }
 
   function applyDynamicField(item: DynamicFieldSuggestion) {
-    setMessageInput((current) => current.replace(/\{\{?([a-z0-9_]*)$/i, `{{${item.token}}}`));
+    setMessageInput((current) => insertDynamicFieldToken(current, item.token));
+  }
+
+  function applyQuickReplyDynamicField(item: DynamicFieldSuggestion) {
+    setQuickReplyForm((current) => ({
+      ...current,
+      content: insertDynamicFieldToken(current.content, item.token),
+    }));
+  }
+
+  function applyAutomationDynamicField(item: DynamicFieldSuggestion) {
+    setAutomationForm((current) => ({
+      ...current,
+      actionMessage: insertDynamicFieldToken(current.actionMessage, item.token),
+    }));
   }
 
   async function handleReactToMessage(messageId: string, emoji: string) {
@@ -10200,13 +10240,39 @@ export default function HomePage() {
               {automationForm.actionType === "send_message" ? (
                 <label className="mt-4 block text-sm font-medium text-slate-600">
                   Mensagem
-                  <textarea
-                    value={automationForm.actionMessage}
-                    onChange={(event) => setAutomationForm((current) => ({ ...current, actionMessage: event.target.value }))}
-                    rows={4}
-                    placeholder="Digite a mensagem que o ChatFlow deve enviar automaticamente."
-                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-                  />
+                  <div className="relative mt-2">
+                    <textarea
+                      value={automationForm.actionMessage}
+                      onChange={(event) => setAutomationForm((current) => ({ ...current, actionMessage: event.target.value }))}
+                      rows={4}
+                      placeholder="Digite a mensagem que o ChatFlow deve enviar automaticamente."
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                    />
+                    {automationDynamicFieldMatches.length > 0 ? (
+                      <div className="absolute bottom-[calc(100%+0.6rem)] left-0 right-0 z-20 overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_20px_50px_rgba(15,23,42,0.12)]">
+                        <div className="border-b border-slate-100 px-4 py-3 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                          Campos dinâmicos
+                        </div>
+                        <div className="max-h-64 overflow-y-auto py-2">
+                          {automationDynamicFieldMatches.map((item) => (
+                            <button
+                              key={item.token}
+                              type="button"
+                              onClick={() => applyAutomationDynamicField(item)}
+                              className="flex w-full flex-col items-start gap-1 px-4 py-3 text-left transition hover:bg-slate-50"
+                            >
+                              <div className="text-sm font-semibold text-slate-900">{`{{${item.token}}}`}</div>
+                              <div className="text-xs font-medium uppercase tracking-[0.08em] text-slate-400">{item.label}</div>
+                              <div className="text-sm text-slate-500">{item.description}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="mt-2 text-xs text-slate-400">
+                    Digite <span className="font-semibold text-slate-600">{"{"}</span> para inserir campos dinâmicos como <span className="font-semibold text-slate-600">{`{{firstName}}`}</span>.
+                  </div>
                 </label>
               ) : null}
 
@@ -10408,13 +10474,43 @@ export default function HomePage() {
             </div>
             <label className="block text-sm font-medium text-slate-600">
               Conteúdo da mensagem
-              <textarea
-                value={quickReplyForm.content}
-                onChange={(event) => setQuickReplyForm((current) => ({ ...current, content: event.target.value }))}
-                rows={6}
-                placeholder="Digite aqui a mensagem que será aplicada quando o agente usar /atalho."
-                className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
-              />
+              <div className="relative mt-2">
+                <textarea
+                  value={quickReplyForm.content}
+                  onChange={(event) => setQuickReplyForm((current) => ({ ...current, content: event.target.value }))}
+                  rows={6}
+                  placeholder="Digite aqui a mensagem que será aplicada quando o agente usar /atalho."
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                />
+                {quickReplyDynamicFieldMatches.length > 0 ? (
+                  <div className="absolute left-0 right-0 top-full z-20 mt-2 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_45px_rgba(15,23,42,0.12)]">
+                    <div className="border-b border-slate-100 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">
+                      Campos dinâmicos
+                    </div>
+                    <div className="max-h-64 overflow-y-auto py-2">
+                      {quickReplyDynamicFieldMatches.map((item) => (
+                        <button
+                          key={item.token}
+                          type="button"
+                          onClick={() => applyQuickReplyDynamicField(item)}
+                          className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-slate-50"
+                        >
+                          <div>
+                            <div className="text-sm font-semibold text-slate-700">{item.label}</div>
+                            <div className="mt-1 text-xs text-slate-400">{item.token}</div>
+                          </div>
+                          <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                            Inserir
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+              <div className="mt-2 text-xs text-slate-400">
+                Digite {"{"} para inserir campos dinâmicos como <span className="font-semibold text-slate-500">{'{{firstName}}'}</span>.
+              </div>
             </label>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
               Exemplo de uso no atendimento: <span className="font-semibold text-slate-700">/{quickReplyForm.shortcut || "bomdia"}</span>
