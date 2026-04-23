@@ -65,6 +65,7 @@ enum TicketEventType {
   accepted
   assigned
   transferred
+  nudged
   queue_changed
   message_in
   message_out
