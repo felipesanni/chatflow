@@ -452,6 +452,12 @@ type ApiTesterResult = {
   body: string;
 };
 
+type DynamicFieldSuggestion = {
+  token: string;
+  label: string;
+  description: string;
+};
+
 type SearchScopeKey =
   | "tickets"
   | "channels"
@@ -664,6 +670,17 @@ function resolvePublicUrls() {
     webhookUrl: `${detectedApiBaseUrl}/api/webhooks/evolution`,
   };
 }
+
+const COMPOSER_DYNAMIC_FIELDS: DynamicFieldSuggestion[] = [
+  { token: "customerName", label: "Nome do contato", description: "Nome completo do contato ou grupo." },
+  { token: "firstName", label: "Primeiro nome", description: "Primeiro nome do contato." },
+  { token: "phone", label: "Telefone", description: "Telefone atual do ticket." },
+  { token: "agentName", label: "Nome do agente", description: "Nome do agente responsável ou remetente." },
+  { token: "queueName", label: "Fila", description: "Nome da fila atual do atendimento." },
+  { token: "instanceName", label: "Instância", description: "Nome da instância conectada ao ticket." },
+  { token: "ticketId", label: "ID do ticket", description: "Identificador interno do atendimento." },
+  { token: "ticketStatus", label: "Status do ticket", description: "Status atual do atendimento." },
+];
 
 const API_REFERENCE_MODULES: ApiModuleDoc[] = [
   {
@@ -2759,6 +2776,24 @@ export default function HomePage() {
       .slice(0, 6);
   }, [canViewQuickReplies, quickReplies, quickReplyCommand]);
 
+  const dynamicFieldCommand = React.useMemo(() => {
+    const match = messageInput.match(/\{\{?([a-z0-9_]*)$/i);
+    if (!match) return null;
+    return match[1]?.toLowerCase() ?? "";
+  }, [messageInput]);
+
+  const dynamicFieldMatches = React.useMemo(() => {
+    if (dynamicFieldCommand === null) return [];
+
+    return COMPOSER_DYNAMIC_FIELDS
+      .filter((item) =>
+        item.token.toLowerCase().includes(dynamicFieldCommand)
+        || item.label.toLowerCase().includes(dynamicFieldCommand)
+        || item.description.toLowerCase().includes(dynamicFieldCommand),
+      )
+      .slice(0, 6);
+  }, [dynamicFieldCommand]);
+
   const scopedTickets = React.useMemo(() => {
     const search = searchQuery.trim().toLowerCase();
 
@@ -4681,6 +4716,10 @@ export default function HomePage() {
 
   function applyQuickReply(item: QuickReplyItem) {
     setMessageInput((current) => current.replace(/(?:^|\s)\/([a-z0-9_-]*)$/i, (match) => match.replace(/\/([a-z0-9_-]*)$/i, item.content)));
+  }
+
+  function applyDynamicField(item: DynamicFieldSuggestion) {
+    setMessageInput((current) => current.replace(/\{\{?([a-z0-9_]*)$/i, `{{${item.token}}}`));
   }
 
   async function handleReactToMessage(messageId: string, emoji: string) {
@@ -8817,7 +8856,28 @@ export default function HomePage() {
                           : "border-slate-200 bg-[#f8fafc] focus:border-slate-300 focus:bg-white disabled:bg-slate-100"
                       }`}
                     />
-                    {quickReplyMatches.length > 0 && canSendToSelectedTicket && !isEditingMessage ? (
+                    {dynamicFieldMatches.length > 0 && canSendToSelectedTicket && !isEditingMessage ? (
+                      <div className="absolute bottom-[calc(100%+0.75rem)] left-0 z-20 w-full overflow-hidden rounded-[26px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff,#f8fbfd)] shadow-[0_24px_60px_rgba(15,23,42,0.16)]">
+                        <div className="border-b border-slate-100 px-4 py-3 text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
+                          Campos dinâmicos
+                        </div>
+                        <div className="max-h-72 overflow-y-auto py-2">
+                          {dynamicFieldMatches.map((item) => (
+                            <button
+                              key={item.token}
+                              type="button"
+                              onClick={() => applyDynamicField(item)}
+                              className="flex w-full flex-col items-start gap-1 px-4 py-3 text-left transition hover:bg-slate-50"
+                            >
+                              <div className="text-sm font-semibold text-slate-900">{`{{${item.token}}}`}</div>
+                              <div className="text-xs font-medium uppercase tracking-[0.08em] text-slate-400">{item.label}</div>
+                              <div className="max-w-full text-sm text-slate-500">{item.description}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {quickReplyMatches.length > 0 && canSendToSelectedTicket && !isEditingMessage && dynamicFieldMatches.length === 0 ? (
                       <div className="absolute bottom-[calc(100%+0.75rem)] left-0 z-20 w-full overflow-hidden rounded-[26px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff,#f8fbfd)] shadow-[0_24px_60px_rgba(15,23,42,0.16)]">
                         <div className="border-b border-slate-100 px-4 py-3 text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
                           Respostas rápidas
