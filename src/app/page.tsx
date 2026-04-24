@@ -2202,7 +2202,7 @@ export default function HomePage() {
   const [brandLogoPreview, setBrandLogoPreview] = React.useState<string | null>(null);
   const [brandMode, setBrandMode] = React.useState<"default" | "image" | "text">("default");
   const [brandText, setBrandText] = React.useState("CHATFLOW");
-  const [composerAttachment, setComposerAttachment] = React.useState<ComposerAttachment | null>(null);
+  const [composerAttachments, setComposerAttachments] = React.useState<ComposerAttachment[]>([]);
   const [scheduledMessages, setScheduledMessages] = React.useState<ScheduledMessageItem[]>([]);
   const [scheduledMessageOverview, setScheduledMessageOverview] = React.useState<ScheduledMessageItem[]>([]);
   const [scheduleLoading, setScheduleLoading] = React.useState(false);
@@ -4345,9 +4345,23 @@ export default function HomePage() {
     } satisfies ComposerAttachment;
   }
 
-  async function applyComposerFile(file: File, sourceLabel = "Arquivo") {
+  function serializeComposerAttachment(attachment: ComposerAttachment) {
+    return {
+      kind: attachment.kind,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      dataUrl: attachment.dataUrl,
+    };
+  }
+
+  async function applyComposerFiles(fileList: File[], sourceLabel = "Arquivo") {
+    if (fileList.length === 0) {
+      return false;
+    }
+
     if (isEditingMessage) {
-      setPanelMessage("Finalize a edição atual antes de anexar um arquivo.");
+      setPanelMessage("Finalize a edição atual antes de anexar arquivos.");
       return false;
     }
 
@@ -4356,35 +4370,32 @@ export default function HomePage() {
       return false;
     }
 
-    if (file.size > 12_000_000) {
-      setPanelMessage("O arquivo deve ter no máximo 12 MB.");
+    const oversizedFile = fileList.find((file) => file.size > 12_000_000);
+    if (oversizedFile) {
+      setPanelMessage(`O arquivo ${oversizedFile.name} deve ter no máximo 12 MB.`);
       return false;
     }
 
-    const attachment = await buildComposerAttachmentFromFile(file);
-    setComposerAttachment(attachment);
+    const attachments = await Promise.all(fileList.map((file) => buildComposerAttachmentFromFile(file)));
+    setComposerAttachments((current) => [...current, ...attachments]);
     setShowEmojiPicker(false);
     setReplyToMessageId(null);
 
+    const totalAttachments = composerAttachments.length + attachments.length;
+    const pluralLabel = attachments.length > 1 || totalAttachments > 1 ? "arquivos" : "arquivo";
     setPanelMessage(
       sourceLabel === "Área de transferência"
-        ? attachment.kind === "image"
-          ? "Print colado e pronto para envio."
-          : "Arquivo colado e pronto para envio."
+        ? `${attachments.length} ${pluralLabel} colado(s) e pronto(s) para envio.`
         : sourceLabel === "Arrastar e soltar"
-          ? attachment.kind === "image"
-            ? "Imagem solta e pronta para envio."
-            : attachment.kind === "audio"
-              ? "Áudio solto e pronto para envio."
-              : "Arquivo solto e pronto para envio."
-          : attachment.kind === "image"
-            ? "Imagem pronta para envio."
-            : attachment.kind === "audio"
-              ? "Áudio pronto para envio."
-              : "Arquivo pronto para envio.",
+          ? `${attachments.length} ${pluralLabel} solto(s) e pronto(s) para envio.`
+          : `${attachments.length} ${pluralLabel} pronto(s) para envio.`,
     );
 
     return true;
+  }
+
+  async function applyComposerFile(file: File, sourceLabel = "Arquivo") {
+    return applyComposerFiles([file], sourceLabel);
   }
 
   function resetForwardState() {
@@ -4396,15 +4407,20 @@ export default function HomePage() {
   }
 
   async function handleComposerAttachmentChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files ?? []);
     event.currentTarget.value = "";
 
-    if (!file) return;
-    await applyComposerFile(file, "Seletor de arquivos");
+    if (files.length === 0) return;
+    await applyComposerFiles(files, "Seletor de arquivos");
   }
 
-  function clearComposerAttachment() {
-    setComposerAttachment(null);
+  function clearComposerAttachment(index?: number) {
+    if (typeof index !== "number") {
+      setComposerAttachments([]);
+      return;
+    }
+
+    setComposerAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index));
   }
 
   function toggleComposerInternalNoteMode() {
@@ -4415,7 +4431,7 @@ export default function HomePage() {
     setComposerInternalNoteMode((current) => {
       const next = !current;
       if (next) {
-        setComposerAttachment(null);
+        setComposerAttachments([]);
         setReplyToMessageId(null);
         setShowEmojiPicker(false);
       }
@@ -4430,7 +4446,7 @@ export default function HomePage() {
 
     setReplyToMessageId(null);
     setEditingMessageId(message.id);
-    setComposerAttachment(null);
+    setComposerAttachments([]);
     setComposerInternalNoteMode(Boolean(message.internalNote));
     setShowEmojiPicker(false);
     setMessageInput(stripAgentSignature((message.body ?? "").trim(), currentUser.name).trim());
@@ -4612,7 +4628,7 @@ export default function HomePage() {
         const normalizedRecordedMimeType = recordedMimeType.split(";")[0] || recordedMimeType;
         const file = new File([blob], `audio-${Date.now()}.${extension}`, { type: normalizedRecordedMimeType });
         const attachment = await buildComposerAttachmentFromFile(file);
-        setComposerAttachment(attachment);
+        setComposerAttachments([attachment]);
         setPanelMessage("Áudio gravado e pronto para envio.");
       };
 
@@ -4659,7 +4675,7 @@ export default function HomePage() {
     if (!selectedTicketId) return;
 
     const trimmedInput = messageInput.trim();
-    if (!trimmedInput && !composerAttachment) return;
+    if (!trimmedInput && composerAttachments.length === 0) return;
     const shortcutMatch = trimmedInput.match(/^\/([a-z0-9_-]+)$/i);
     const resolvedBody =
       shortcutMatch
@@ -4677,30 +4693,36 @@ export default function HomePage() {
         });
         setPanelMessage("Mensagem editada.");
       } else {
-        await apiFetch(`/tickets/${selectedTicketId}/messages`, {
-          method: "POST",
-          body: JSON.stringify({
-            body: resolvedBody,
-            internalNote: composerInternalNoteMode,
-            replyToMessageId: replyToMessageId ?? undefined,
-            attachment: composerAttachment
-              ? {
-                  kind: composerAttachment.kind,
-                  fileName: composerAttachment.fileName,
-                  mimeType: composerAttachment.mimeType,
-                  sizeBytes: composerAttachment.sizeBytes,
-                  dataUrl: composerAttachment.dataUrl,
-                }
-              : undefined,
-          }),
-        });
+        if (composerAttachments.length <= 1) {
+          await apiFetch(`/tickets/${selectedTicketId}/messages`, {
+            method: "POST",
+            body: JSON.stringify({
+              body: resolvedBody,
+              internalNote: composerInternalNoteMode,
+              replyToMessageId: replyToMessageId ?? undefined,
+              attachment: composerAttachments[0] ? serializeComposerAttachment(composerAttachments[0]) : undefined,
+            }),
+          });
+        } else {
+          for (const [index, attachment] of composerAttachments.entries()) {
+            await apiFetch(`/tickets/${selectedTicketId}/messages`, {
+              method: "POST",
+              body: JSON.stringify({
+                body: index === 0 ? resolvedBody : "",
+                internalNote: composerInternalNoteMode,
+                replyToMessageId: index === 0 ? (replyToMessageId ?? undefined) : undefined,
+                attachment: serializeComposerAttachment(attachment),
+              }),
+            });
+          }
+        }
       }
 
       setEditingMessageId(null);
       setReplyToMessageId(null);
       setComposerInternalNoteMode(false);
       setMessageInput("");
-      setComposerAttachment(null);
+      setComposerAttachments([]);
       await refreshMessages(selectedTicketId);
       await refreshTickets();
     } catch (error) {
@@ -4714,8 +4736,13 @@ export default function HomePage() {
     if (!selectedTicketId) return;
 
     const trimmedInput = messageInput.trim();
-    if (!trimmedInput && !composerAttachment) {
+    if (!trimmedInput && composerAttachments.length === 0) {
       setPanelMessage("Escreva uma mensagem ou anexe um arquivo antes de agendar.");
+      return;
+    }
+
+    if (composerAttachments.length > 1) {
+      setPanelMessage("O agendamento ainda aceita apenas um anexo por mensagem.");
       return;
     }
 
@@ -4734,15 +4761,7 @@ export default function HomePage() {
           internalNote: composerInternalNoteMode,
           replyToMessageId: replyToMessageId ?? undefined,
           sendAt: new Date(scheduleForm.sendAt).toISOString(),
-          attachment: composerAttachment
-            ? {
-                kind: composerAttachment.kind,
-                fileName: composerAttachment.fileName,
-                mimeType: composerAttachment.mimeType,
-                sizeBytes: composerAttachment.sizeBytes,
-                dataUrl: composerAttachment.dataUrl,
-              }
-            : undefined,
+          attachment: composerAttachments[0] ? serializeComposerAttachment(composerAttachments[0]) : undefined,
         }),
       });
 
@@ -4750,7 +4769,7 @@ export default function HomePage() {
       setReplyToMessageId(null);
       setComposerInternalNoteMode(false);
       setMessageInput("");
-      setComposerAttachment(null);
+      setComposerAttachments([]);
       setShowScheduleModal(false);
       await refreshScheduledMessages(selectedTicketId);
       await refreshScheduledMessageOverview();
@@ -4952,18 +4971,19 @@ export default function HomePage() {
   }
 
   async function handleComposerPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
-    const file = Array.from(event.clipboardData.files ?? [])[0]
-      ?? Array.from(event.clipboardData.items ?? [])
-        .find((item) => item.kind === "file")
-        ?.getAsFile()
+    const files = Array.from(event.clipboardData.files ?? []);
+    const fallbackFile = Array.from(event.clipboardData.items ?? [])
+      .find((item) => item.kind === "file")
+      ?.getAsFile()
       ?? null;
+    const normalizedFiles = files.length > 0 ? files : (fallbackFile ? [fallbackFile] : []);
 
-    if (!file) {
+    if (normalizedFiles.length === 0) {
       return;
     }
 
     event.preventDefault();
-    await applyComposerFile(file, "Área de transferência");
+    await applyComposerFiles(normalizedFiles, "Área de transferência");
   }
 
   function handleComposerDragEnter(event: React.DragEvent<HTMLDivElement>) {
@@ -4996,9 +5016,9 @@ export default function HomePage() {
     event.preventDefault();
     composerDragDepthRef.current = 0;
     setComposerDragActive(false);
-    const file = event.dataTransfer.files?.[0];
-    if (!file) return;
-    await applyComposerFile(file, "Arrastar e soltar");
+    const files = Array.from(event.dataTransfer.files ?? []);
+    if (files.length === 0) return;
+    await applyComposerFiles(files, "Arrastar e soltar");
   }
 
   async function handleAcceptTicket() {
@@ -5395,7 +5415,7 @@ export default function HomePage() {
   function handleComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      if (!sendLoading && canSendToSelectedTicket && (messageInput.trim() || composerAttachment)) {
+      if (!sendLoading && canSendToSelectedTicket && (messageInput.trim() || composerAttachments.length > 0)) {
         void handleSendMessage(event as unknown as React.FormEvent<HTMLFormElement>);
       }
     }
@@ -5403,7 +5423,7 @@ export default function HomePage() {
 
   React.useEffect(() => {
     setComposerInternalNoteMode(false);
-    setComposerAttachment(null);
+    setComposerAttachments([]);
     setReplyToMessageId(null);
     setEditingMessageId(null);
     setMessageInput("");
@@ -9224,7 +9244,7 @@ export default function HomePage() {
                   ) : null}
 
                 <form onSubmit={handleSendMessage} className="px-3 py-3 pb-[calc(env(safe-area-inset-bottom)+0.9rem)] md:px-5 md:py-2.5 md:pb-2.5">
-                <input ref={attachmentUploadRef} type="file" className="hidden" onChange={(event) => void handleComposerAttachmentChange(event)} />
+                <input ref={attachmentUploadRef} type="file" multiple className="hidden" onChange={(event) => void handleComposerAttachmentChange(event)} />
                 {isEditingMessage && editingMessage ? (
                   <div className="mb-3 flex items-center justify-between gap-3 rounded-[22px] border border-emerald-100 bg-emerald-50/80 px-4 py-3">
                     <div className="min-w-0">
@@ -9249,26 +9269,30 @@ export default function HomePage() {
                     </button>
                   </div>
                 ) : null}
-                {composerAttachment ? (
-                  <div className="mb-3 flex items-center justify-between gap-3 rounded-[22px] border border-slate-200 bg-white/90 px-4 py-3 shadow-[0_14px_40px_rgba(148,163,184,0.1)]">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <span className="grid h-10 w-10 place-items-center overflow-hidden rounded-2xl bg-slate-100 text-slate-500">
-                        {composerAttachment.kind === "image" ? (
-                          <img src={composerAttachment.dataUrl} alt={composerAttachment.fileName} className="h-full w-full object-cover" />
-                        ) : composerAttachment.kind === "audio" ? (
-                          <FileAudio className="h-4 w-4" />
-                        ) : (
-                          <FileText className="h-4 w-4" />
-                        )}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-slate-800">{composerAttachment.fileName}</div>
-                        <div className="text-xs text-slate-400">{composerAttachment.mimeType}</div>
+                {composerAttachments.length > 0 ? (
+                  <div className="mb-3 space-y-2">
+                    {composerAttachments.map((attachment, index) => (
+                      <div key={`${attachment.fileName}-${attachment.sizeBytes}-${index}`} className="flex items-center justify-between gap-3 rounded-[22px] border border-slate-200 bg-white/90 px-4 py-3 shadow-[0_14px_40px_rgba(148,163,184,0.1)]">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span className="grid h-10 w-10 place-items-center overflow-hidden rounded-2xl bg-slate-100 text-slate-500">
+                            {attachment.kind === "image" ? (
+                              <img src={attachment.dataUrl} alt={attachment.fileName} className="h-full w-full object-cover" />
+                            ) : attachment.kind === "audio" ? (
+                              <FileAudio className="h-4 w-4" />
+                            ) : (
+                              <FileText className="h-4 w-4" />
+                            )}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-semibold text-slate-800">{attachment.fileName}</div>
+                            <div className="text-xs text-slate-400">{attachment.mimeType}</div>
+                          </div>
+                        </div>
+                        <button type="button" onClick={() => clearComposerAttachment(index)} className="text-xs font-bold uppercase tracking-[0.12em] text-slate-400 transition hover:text-slate-700">
+                          Remover
+                        </button>
                       </div>
-                    </div>
-                    <button type="button" onClick={clearComposerAttachment} className="text-xs font-bold uppercase tracking-[0.12em] text-slate-400 transition hover:text-slate-700">
-                      Remover
-                    </button>
+                    ))}
                   </div>
                 ) : null}
                 <div className="flex flex-col gap-3 md:flex-row md:items-end">
@@ -9400,7 +9424,7 @@ export default function HomePage() {
                       type="button"
                       aria-label="Agendar mensagem"
                       onClick={() => setShowScheduleModal(true)}
-                      disabled={sendLoading || isEditingMessage || (!messageInput.trim() && !composerAttachment) || shouldDisableComposer}
+                      disabled={sendLoading || isEditingMessage || (!messageInput.trim() && composerAttachments.length === 0) || shouldDisableComposer}
                       className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-[12px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-50 md:h-10 md:flex-none md:text-[13px] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                     >
                       <Clock className="h-4 w-4" />
@@ -9409,7 +9433,7 @@ export default function HomePage() {
                     <button
                       type="submit"
                       aria-label="Enviar mensagem"
-                      disabled={sendLoading || (!messageInput.trim() && !composerAttachment) || shouldDisableComposer}
+                      disabled={sendLoading || (!messageInput.trim() && composerAttachments.length === 0) || shouldDisableComposer}
                       className="inline-flex h-11 min-w-[128px] flex-1 items-center justify-center gap-2 rounded-full bg-[#1A1C32] px-4 text-[12px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-[#252844] md:h-10 md:min-w-0 md:flex-none md:text-[13px] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
                     >
                       <Send className="h-4 w-4" />
@@ -9798,7 +9822,13 @@ export default function HomePage() {
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                       <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Prévia</div>
                       <div className="mt-2 text-sm text-slate-700">
-                        {messageInput.trim() || (composerAttachment ? `[${composerAttachment.kind}] ${composerAttachment.fileName}` : "Mensagem vazia")}
+                        {messageInput.trim() || (
+                          composerAttachments.length > 0
+                            ? composerAttachments.length === 1
+                              ? `[${composerAttachments[0]?.kind}] ${composerAttachments[0]?.fileName}`
+                              : `${composerAttachments.length} anexos prontos para envio`
+                            : "Mensagem vazia"
+                        )}
                       </div>
                     </div>
                     <label className="block text-sm font-medium text-slate-600">
