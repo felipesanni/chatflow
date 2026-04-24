@@ -2403,6 +2403,7 @@ export default function HomePage() {
   const socketRef = React.useRef<Socket | null>(null);
   const selectedTicketIdRef = React.useRef<string | null>(null);
   const activeWorkspaceRef = React.useRef(activeWorkspace);
+  const ticketsRef = React.useRef<TicketItem[]>([]);
   const browserNotificationRegistrationRef = React.useRef<ServiceWorkerRegistration | null>(null);
   const appDialogResolverRef = React.useRef<((value: boolean) => void) | null>(null);
   const seenTicketNudgesRef = React.useRef<Record<string, string>>({});
@@ -3131,6 +3132,10 @@ export default function HomePage() {
   }, [selectedTicketId, tickets]);
 
   React.useEffect(() => {
+    ticketsRef.current = tickets;
+  }, [tickets]);
+
+  React.useEffect(() => {
     if (activeWorkspace !== "tickets" && activeWorkspace !== "closedTickets" && showTicketDetails) {
       setShowTicketDetails(false);
     }
@@ -3851,7 +3856,87 @@ export default function HomePage() {
     socket.on("connect_error", () => {
       setPanelMessage("Conexão em tempo real indisponível. O painel continua funcionando por atualização periódica.");
     });
-    socket.on("ticket.updated", refreshForTicket);
+    socket.on("ticket.updated", async (payload?: { ticketId?: string; currentAgentId?: string | null }) => {
+      const previousTickets = ticketsRef.current;
+      const previousTicket = payload?.ticketId
+        ? previousTickets.find((ticket) => ticket.id === payload.ticketId) ?? null
+        : null;
+
+      const refreshedTickets = await refreshTickets();
+      const ticketIdToRefresh = payload?.ticketId ?? selectedTicketId;
+      if (ticketIdToRefresh) {
+        void refreshMessages(ticketIdToRefresh, { silent: true });
+        void refreshScheduledMessages(ticketIdToRefresh);
+      }
+
+      if (!payload?.ticketId || !browserNotificationsEnabled) {
+        return;
+      }
+
+      const nextTicket = refreshedTickets.find((ticket) => ticket.id === payload.ticketId);
+      if (!nextTicket) {
+        return;
+      }
+
+      const previousOwnerId = previousTicket?.currentAgent?.id ?? null;
+      const nextOwnerId = nextTicket.currentAgent?.id ?? null;
+      const ticketJustAssignedToCurrentUser = previousOwnerId !== user.id && nextOwnerId === user.id;
+
+      if (!ticketJustAssignedToCurrentUser) {
+        return;
+      }
+
+      const ticketAlreadyVisible =
+        selectedTicketIdRef.current === nextTicket.id
+        && activeWorkspaceRef.current === "tickets"
+        && typeof document !== "undefined"
+        && document.visibilityState === "visible";
+
+      if (ticketAlreadyVisible) {
+        return;
+      }
+
+      const notificationTitle = "Nova conversa atribuida";
+      const notificationBody = `${formatTicketDisplayName(nextTicket)} foi transferido para voce.`;
+      const notificationTag = `ticket-transfer:${nextTicket.id}`;
+      const notificationIcon = nextTicket.customerAvatarUrl || "/favicon.ico";
+      const openTransferredTicket = () => {
+        openTicketFromNotification(nextTicket);
+      };
+
+      if (typeof document !== "undefined" && document.visibilityState === "hidden" && browserNotificationRegistrationRef.current) {
+        void browserNotificationRegistrationRef.current.showNotification(notificationTitle, {
+          body: notificationBody,
+          icon: notificationIcon,
+          badge: "/favicon.ico",
+          tag: notificationTag,
+          data: {
+            ticketId: nextTicket.id,
+          },
+        }).catch(() => {
+          const fallbackNotification = new Notification(notificationTitle, {
+            body: notificationBody,
+            icon: notificationIcon,
+            tag: notificationTag,
+          });
+          fallbackNotification.onclick = () => {
+            openTransferredTicket();
+            fallbackNotification.close();
+          };
+        });
+        return;
+      }
+
+      const notification = new Notification(notificationTitle, {
+        body: notificationBody,
+        icon: notificationIcon,
+        tag: notificationTag,
+      });
+      notification.onclick = () => {
+        openTransferredTicket();
+        notification.close();
+      };
+    });
     socket.on("ticket.closed", refreshForTicket);
     socket.on("ticket.nudged", async (payload?: {
       ticketId?: string;
@@ -3940,6 +4025,11 @@ export default function HomePage() {
         return;
       }
 
+      const ticketOwnedByCurrentUser = matchingTicket.currentAgent?.id === user?.id;
+      if (!ticketOwnedByCurrentUser) {
+        return;
+      }
+
       const ticketAlreadyVisible =
         selectedTicketIdRef.current === matchingTicket.id
         && activeWorkspaceRef.current === "tickets"
@@ -4012,7 +4102,7 @@ export default function HomePage() {
       socket.disconnect();
       socketRef.current = null;
     };
-    }, [browserNotificationsEnabled, browserPushEnabled, openNudgeDialogForTicket, refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
+    }, [browserNotificationsEnabled, browserPushEnabled, openNudgeDialogForTicket, openTicketFromNotification, refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!user) return;
