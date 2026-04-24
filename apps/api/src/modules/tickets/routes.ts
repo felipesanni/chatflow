@@ -1120,7 +1120,14 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
     const currentTicket = await app.prisma.ticket.findUnique({
       where: { id: params.ticketId },
-      select: { id: true, currentAgentId: true, status: true },
+      select: {
+        id: true,
+        currentAgentId: true,
+        status: true,
+        whatsappInstanceId: true,
+        externalChatId: true,
+        customerNameSnapshot: true,
+      },
     });
 
     if (!currentTicket) {
@@ -1129,6 +1136,34 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
 
     if (session.role !== 'admin' && !canManageTicket(session.userId, currentTicket)) {
       return reply.forbidden('Apenas o agente responsavel pode reabrir este ticket.');
+    }
+
+    const conflictingOpenTicket = await app.prisma.ticket.findFirst({
+      where: {
+        id: { not: currentTicket.id },
+        whatsappInstanceId: currentTicket.whatsappInstanceId,
+        externalChatId: currentTicket.externalChatId,
+        status: { in: ['open', 'pending'] },
+      },
+      select: {
+        id: true,
+        status: true,
+        customerNameSnapshot: true,
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+    });
+
+    if (conflictingOpenTicket) {
+      return reply.code(409).send({
+        message: `Nao foi possivel reabrir porque ja existe outro ticket ${conflictingOpenTicket.status === 'open' ? 'aberto' : 'aguardando'} para este mesmo contato.`,
+        conflict: {
+          ticketId: conflictingOpenTicket.id,
+          status: conflictingOpenTicket.status,
+          customerName: conflictingOpenTicket.customerNameSnapshot,
+        },
+      });
     }
 
     const ticket = await app.prisma.ticket.update({

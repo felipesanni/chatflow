@@ -622,12 +622,10 @@ async function resolveAutomationActorUserId(app: FastifyInstance, automation: Au
   const botActor = await app.prisma.user.findFirst({
     where: {
       status: 'active',
-      agent: {
-        isBotAgent: true,
-      },
+      agent: { isBotAgent: true },
     },
     orderBy: [
-      { role: 'asc' },
+      { updatedAt: 'asc' },
       { createdAt: 'asc' },
     ],
     select: {
