@@ -1341,6 +1341,18 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     const reason = body.agentId
       ? 'Transferencia manual'
       : 'Transferencia para fila sem agente definido';
+    const actorUser = await app.prisma.user.findUnique({
+      where: { id: session.userId },
+      select: {
+        email: true,
+        agent: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+    const actorName = actorUser?.agent?.name ?? actorUser?.email ?? session.email;
 
     const ticket = await app.prisma.ticket.update({
       where: { id: params.ticketId },
@@ -1412,10 +1424,15 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
 
       app.io.emit('ticket.updated', {
         ticketId: ticket.id,
+        eventType: 'transferred',
         status: ticket.status,
-      currentAgentId: ticket.currentAgentId,
-      currentQueueId: ticket.currentQueueId,
-    });
+        currentAgentId: ticket.currentAgentId,
+        currentQueueId: ticket.currentQueueId,
+        targetUserId: ticket.currentAgentId,
+        actorUserId: session.userId,
+        actorName,
+        customerName: serializeTicket(ticket).customerName,
+      });
 
     return {
       item: serializeTicket(ticket),

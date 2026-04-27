@@ -1021,9 +1021,14 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
 
     app.io.emit('ticket.updated', {
       ticketId: updated.id,
+      eventType: 'transferred',
       status: updated.status,
       currentAgentId: updated.currentAgentId,
       currentQueueId: updated.currentQueueId,
+      targetUserId: updated.currentAgentId,
+      actorUserId,
+      actorName: accessToken.name,
+      customerName: serializeExternalTicket(updated).customerName,
     });
 
     return reply.code(200).send({

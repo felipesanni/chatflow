@@ -3488,7 +3488,7 @@ export default function HomePage() {
     return openNudgedTicket;
   }, [isMobileViewport, openTicketFromNotification, tickets, user]);
 
-  const openTransferDialogForTicket = React.useCallback((ticketId: string, customerName: string) => {
+  const openTransferDialogForTicket = React.useCallback((ticketId: string, description: string) => {
     const matchingTicket = tickets.find((ticket) => ticket.id === ticketId);
 
     const openTransferredTicket = () => {
@@ -3518,7 +3518,7 @@ export default function HomePage() {
       kind: "confirm",
       tone: "default",
       title: "Conversa transferida",
-      description: `${customerName} foi transferido para você.`,
+      description,
       confirmLabel: "Ir para o ticket",
       cancelLabel: "Fechar",
     });
@@ -3894,7 +3894,15 @@ export default function HomePage() {
     socket.on("connect_error", () => {
       setPanelMessage("Conexão em tempo real indisponível. O painel continua funcionando por atualização periódica.");
     });
-    socket.on("ticket.updated", async (payload?: { ticketId?: string; currentAgentId?: string | null }) => {
+    socket.on("ticket.updated", async (payload?: {
+      ticketId?: string;
+      currentAgentId?: string | null;
+      eventType?: "transferred" | "assigned" | "updated" | "closed" | "reopened";
+      targetUserId?: string | null;
+      actorUserId?: string | null;
+      actorName?: string | null;
+      customerName?: string | null;
+    }) => {
       const previousTickets = ticketsRef.current;
       const previousTicket = payload?.ticketId
         ? previousTickets.find((ticket) => ticket.id === payload.ticketId) ?? null
@@ -3919,14 +3927,21 @@ export default function HomePage() {
       const previousOwnerId = previousTicket?.currentAgent?.id ?? null;
       const nextOwnerId = nextTicket.currentAgent?.id ?? null;
       const ticketJustAssignedToCurrentUser = previousOwnerId !== user.id && nextOwnerId === user.id;
+      const isTransferForCurrentUser =
+        payload.eventType === "transferred"
+        && payload.targetUserId === user.id
+        && payload.actorUserId !== user.id
+        && ticketJustAssignedToCurrentUser;
 
-      if (!ticketJustAssignedToCurrentUser) {
+      if (!isTransferForCurrentUser) {
         return;
       }
 
+      const actorName = payload.actorName?.trim() || "Alguém";
+      const customerName = payload.customerName?.trim() || formatTicketDisplayName(nextTicket);
       const openTransferredTicket = openTransferDialogForTicket(
         nextTicket.id,
-        formatTicketDisplayName(nextTicket),
+        `${actorName} transferiu ${customerName} para você.`,
       );
 
       if (!browserNotificationsEnabled) {
@@ -3943,8 +3958,8 @@ export default function HomePage() {
         return;
       }
 
-      const notificationTitle = "Nova conversa atribuida";
-      const notificationBody = `${formatTicketDisplayName(nextTicket)} foi transferido para voce.`;
+      const notificationTitle = "Conversa transferida";
+      const notificationBody = `${actorName} transferiu ${customerName} para voce.`;
       const notificationTag = `ticket-transfer:${nextTicket.id}`;
       const notificationIcon = nextTicket.customerAvatarUrl || "/favicon.ico";
 
