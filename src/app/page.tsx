@@ -3507,24 +3507,20 @@ export default function HomePage() {
       }
     };
 
-    appDialogResolverRef.current = (confirmed) => {
-      setAppDialog(null);
-      if (confirmed) {
-        openTransferredTicket();
-      }
-    };
-
-    setAppDialog({
-      kind: "confirm",
-      tone: "default",
+    setPanelMessage(description);
+    void openConfirmDialog({
       title: "Conversa transferida",
       description,
       confirmLabel: "Ir para o ticket",
       cancelLabel: "Fechar",
+    }).then((shouldOpenTicket) => {
+      if (shouldOpenTicket) {
+        openTransferredTicket();
+      }
     });
 
     return openTransferredTicket;
-  }, [isMobileViewport, openTicketFromNotification, tickets]);
+  }, [isMobileViewport, openConfirmDialog, openTicketFromNotification, tickets]);
 
   const refreshMessages = React.useCallback(async (ticketId: string, options?: { silent?: boolean }) => {
     if (!user) return;
@@ -3930,24 +3926,20 @@ export default function HomePage() {
         return;
       }
 
-      const refreshedTickets = await refreshTickets();
-      const ticketIdToRefresh = payload.ticketId ?? selectedTicketId;
-      if (ticketIdToRefresh) {
-        void refreshMessages(ticketIdToRefresh, { silent: true });
-        void refreshScheduledMessages(ticketIdToRefresh);
-      }
-
       if (!user || payload.targetUserId !== user.id || payload.actorUserId === user.id) {
         return;
       }
 
-      const nextTicket = refreshedTickets.find((ticket) => ticket.id === payload.ticketId);
-      const customerName = payload.customerName?.trim() || (nextTicket ? formatTicketDisplayName(nextTicket) : "um atendimento");
+      const customerName = payload.customerName?.trim() || "um atendimento";
       const actorName = payload.actorName?.trim() || "Alguém";
       const openTransferredTicket = openTransferDialogForTicket(
         payload.ticketId,
         `${actorName} transferiu ${customerName} para você.`,
       );
+
+      void refreshTickets();
+      void refreshMessages(payload.ticketId, { silent: true });
+      void refreshScheduledMessages(payload.ticketId);
 
       if (!browserNotificationsEnabled) {
         return;
@@ -3966,7 +3958,7 @@ export default function HomePage() {
       const notificationTitle = "Conversa transferida";
       const notificationBody = `${actorName} transferiu ${customerName} para voce.`;
       const notificationTag = `ticket-transfer:${payload.ticketId}`;
-      const notificationIcon = nextTicket?.customerAvatarUrl || "/favicon.ico";
+      const notificationIcon = "/favicon.ico";
 
       if (typeof document !== "undefined" && document.visibilityState === "hidden" && browserNotificationRegistrationRef.current) {
         void browserNotificationRegistrationRef.current.showNotification(notificationTitle, {
