@@ -3488,6 +3488,44 @@ export default function HomePage() {
     return openNudgedTicket;
   }, [isMobileViewport, openTicketFromNotification, tickets, user]);
 
+  const openTransferDialogForTicket = React.useCallback((ticketId: string, customerName: string) => {
+    const matchingTicket = tickets.find((ticket) => ticket.id === ticketId);
+
+    const openTransferredTicket = () => {
+      if (matchingTicket) {
+        openTicketFromNotification(matchingTicket);
+        return;
+      }
+
+      setActiveWorkspace("tickets");
+      setSelectedTicketId(ticketId);
+      if (isMobileViewport) {
+        setMobileTicketView("conversation");
+      }
+      if (typeof window !== "undefined") {
+        window.focus();
+      }
+    };
+
+    appDialogResolverRef.current = (confirmed) => {
+      setAppDialog(null);
+      if (confirmed) {
+        openTransferredTicket();
+      }
+    };
+
+    setAppDialog({
+      kind: "confirm",
+      tone: "default",
+      title: "Conversa transferida",
+      description: `${customerName} foi transferido para você.`,
+      confirmLabel: "Ir para o ticket",
+      cancelLabel: "Fechar",
+    });
+
+    return openTransferredTicket;
+  }, [isMobileViewport, openTicketFromNotification, tickets]);
+
   const refreshMessages = React.useCallback(async (ticketId: string, options?: { silent?: boolean }) => {
     if (!user) return;
     if (!options?.silent) {
@@ -3869,7 +3907,7 @@ export default function HomePage() {
         void refreshScheduledMessages(ticketIdToRefresh);
       }
 
-      if (!payload?.ticketId || !browserNotificationsEnabled) {
+      if (!payload?.ticketId) {
         return;
       }
 
@@ -3883,6 +3921,15 @@ export default function HomePage() {
       const ticketJustAssignedToCurrentUser = previousOwnerId !== user.id && nextOwnerId === user.id;
 
       if (!ticketJustAssignedToCurrentUser) {
+        return;
+      }
+
+      const openTransferredTicket = openTransferDialogForTicket(
+        nextTicket.id,
+        formatTicketDisplayName(nextTicket),
+      );
+
+      if (!browserNotificationsEnabled) {
         return;
       }
 
@@ -3900,9 +3947,6 @@ export default function HomePage() {
       const notificationBody = `${formatTicketDisplayName(nextTicket)} foi transferido para voce.`;
       const notificationTag = `ticket-transfer:${nextTicket.id}`;
       const notificationIcon = nextTicket.customerAvatarUrl || "/favicon.ico";
-      const openTransferredTicket = () => {
-        openTicketFromNotification(nextTicket);
-      };
 
       if (typeof document !== "undefined" && document.visibilityState === "hidden" && browserNotificationRegistrationRef.current) {
         void browserNotificationRegistrationRef.current.showNotification(notificationTitle, {
@@ -4102,7 +4146,7 @@ export default function HomePage() {
       socket.disconnect();
       socketRef.current = null;
     };
-    }, [browserNotificationsEnabled, browserPushEnabled, openNudgeDialogForTicket, openTicketFromNotification, refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
+    }, [browserNotificationsEnabled, browserPushEnabled, openNudgeDialogForTicket, openTicketFromNotification, openTransferDialogForTicket, refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
 
   React.useEffect(() => {
     if (!user) return;
