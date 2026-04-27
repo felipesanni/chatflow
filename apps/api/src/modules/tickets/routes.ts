@@ -1433,6 +1433,13 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         actorName,
         customerName: serializeTicket(ticket).customerName,
       });
+      app.io.emit('ticket.transferred', {
+        ticketId: ticket.id,
+        targetUserId: ticket.currentAgentId,
+        actorUserId: session.userId,
+        actorName,
+        customerName: serializeTicket(ticket).customerName,
+      });
 
     return {
       item: serializeTicket(ticket),

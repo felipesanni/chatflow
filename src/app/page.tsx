@@ -3897,11 +3897,6 @@ export default function HomePage() {
     socket.on("ticket.updated", async (payload?: {
       ticketId?: string;
       currentAgentId?: string | null;
-      eventType?: "transferred" | "assigned" | "updated" | "closed" | "reopened";
-      targetUserId?: string | null;
-      actorUserId?: string | null;
-      actorName?: string | null;
-      customerName?: string | null;
     }) => {
       const previousTickets = ticketsRef.current;
       const previousTicket = payload?.ticketId
@@ -3923,24 +3918,34 @@ export default function HomePage() {
       if (!nextTicket) {
         return;
       }
-
-      const previousOwnerId = previousTicket?.currentAgent?.id ?? null;
-      const nextOwnerId = nextTicket.currentAgent?.id ?? null;
-      const ticketJustAssignedToCurrentUser = previousOwnerId !== user.id && nextOwnerId === user.id;
-      const isTransferForCurrentUser =
-        payload.eventType === "transferred"
-        && payload.targetUserId === user.id
-        && payload.actorUserId !== user.id
-        && ticketJustAssignedToCurrentUser;
-
-      if (!isTransferForCurrentUser) {
+    });
+    socket.on("ticket.transferred", async (payload?: {
+      ticketId?: string;
+      targetUserId?: string | null;
+      actorUserId?: string | null;
+      actorName?: string | null;
+      customerName?: string | null;
+    }) => {
+      if (!payload?.ticketId) {
         return;
       }
 
+      const refreshedTickets = await refreshTickets();
+      const ticketIdToRefresh = payload.ticketId ?? selectedTicketId;
+      if (ticketIdToRefresh) {
+        void refreshMessages(ticketIdToRefresh, { silent: true });
+        void refreshScheduledMessages(ticketIdToRefresh);
+      }
+
+      if (!user || payload.targetUserId !== user.id || payload.actorUserId === user.id) {
+        return;
+      }
+
+      const nextTicket = refreshedTickets.find((ticket) => ticket.id === payload.ticketId);
+      const customerName = payload.customerName?.trim() || (nextTicket ? formatTicketDisplayName(nextTicket) : "um atendimento");
       const actorName = payload.actorName?.trim() || "Alguém";
-      const customerName = payload.customerName?.trim() || formatTicketDisplayName(nextTicket);
       const openTransferredTicket = openTransferDialogForTicket(
-        nextTicket.id,
+        payload.ticketId,
         `${actorName} transferiu ${customerName} para você.`,
       );
 
@@ -3949,7 +3954,7 @@ export default function HomePage() {
       }
 
       const ticketAlreadyVisible =
-        selectedTicketIdRef.current === nextTicket.id
+        selectedTicketIdRef.current === payload.ticketId
         && activeWorkspaceRef.current === "tickets"
         && typeof document !== "undefined"
         && document.visibilityState === "visible";
@@ -3960,8 +3965,8 @@ export default function HomePage() {
 
       const notificationTitle = "Conversa transferida";
       const notificationBody = `${actorName} transferiu ${customerName} para voce.`;
-      const notificationTag = `ticket-transfer:${nextTicket.id}`;
-      const notificationIcon = nextTicket.customerAvatarUrl || "/favicon.ico";
+      const notificationTag = `ticket-transfer:${payload.ticketId}`;
+      const notificationIcon = nextTicket?.customerAvatarUrl || "/favicon.ico";
 
       if (typeof document !== "undefined" && document.visibilityState === "hidden" && browserNotificationRegistrationRef.current) {
         void browserNotificationRegistrationRef.current.showNotification(notificationTitle, {
@@ -3970,7 +3975,7 @@ export default function HomePage() {
           badge: "/favicon.ico",
           tag: notificationTag,
           data: {
-            ticketId: nextTicket.id,
+            ticketId: payload.ticketId,
           },
         }).catch(() => {
           const fallbackNotification = new Notification(notificationTitle, {
