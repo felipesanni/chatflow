@@ -113,7 +113,7 @@ function canReplyToTicket(
   }
 
   if (ticket.status === 'closed') {
-    return permissions['tickets.reopen'];
+    return false;
   }
 
   if (ticket.currentAgentId && ticket.currentAgentId !== viewerId) {
@@ -125,6 +125,34 @@ function canReplyToTicket(
   }
 
   return true;
+}
+
+function canCancelScheduledMessage(
+  viewerId: string,
+  permissions: Record<string, boolean>,
+  viewerQueueIds: string[],
+  scheduled: {
+    createdByUserId: string;
+    ticket: { currentAgentId: string | null; currentQueueId?: string | null; status?: string | null; isGroup?: boolean | null };
+  },
+) {
+  if (!canViewTicket(viewerId, permissions, viewerQueueIds, scheduled.ticket)) {
+    return false;
+  }
+
+  if (scheduled.createdByUserId === viewerId) {
+    return true;
+  }
+
+  if (scheduled.ticket.currentAgentId === viewerId) {
+    return true;
+  }
+
+  if (!scheduled.ticket.currentAgentId && permissions['tickets.replyUnassigned']) {
+    return true;
+  }
+
+  return Boolean(permissions['tickets.viewOthers']);
 }
 
 function canViewTicket(
@@ -495,12 +523,16 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Mensagem agendada nao encontrada.');
     }
 
-    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, scheduled.ticket)) {
+    if (!canCancelScheduledMessage(session.userId, access.permissions, access.queueIds, scheduled)) {
       return reply.forbidden('Apenas o agente responsavel pode cancelar mensagens agendadas neste ticket.');
     }
 
     if (scheduled.status === 'sent') {
       return reply.badRequest('A mensagem agendada ja foi enviada.');
+    }
+
+    if (scheduled.status === 'canceled') {
+      return reply.code(200).send({ ok: true });
     }
 
     await app.prisma.scheduledMessage.update({
@@ -528,25 +560,17 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
       scheduledMessageId: z.string().uuid(),
     }).parse(request.params);
 
-    const ticket = await app.prisma.ticket.findUnique({
-      where: { id: params.ticketId },
-      include: {
-        currentAgent: true,
-      },
-    });
-
-    if (!ticket) {
-      return reply.notFound('Ticket nao encontrado.');
-    }
-
-    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, ticket)) {
-      return reply.forbidden('Apenas o agente responsavel pode cancelar mensagens agendadas neste ticket.');
-    }
-
     const scheduled = await app.prisma.scheduledMessage.findFirst({
       where: {
         id: params.scheduledMessageId,
         ticketId: params.ticketId,
+      },
+      include: {
+        ticket: {
+          include: {
+            currentAgent: true,
+          },
+        },
       },
     });
 
@@ -554,8 +578,16 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Mensagem agendada nao encontrada.');
     }
 
+    if (!canCancelScheduledMessage(session.userId, access.permissions, access.queueIds, scheduled)) {
+      return reply.forbidden('Apenas o agente responsavel pode cancelar mensagens agendadas neste ticket.');
+    }
+
     if (scheduled.status === 'sent') {
       return reply.badRequest('A mensagem agendada ja foi enviada.');
+    }
+
+    if (scheduled.status === 'canceled') {
+      return reply.code(200).send({ ok: true });
     }
 
     await app.prisma.scheduledMessage.update({
@@ -566,7 +598,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
     });
 
     app.io.emit('ticket.updated', {
-      ticketId: ticket.id,
+      ticketId: scheduled.ticketId,
       canceledScheduledMessageId: scheduled.id,
     });
 
