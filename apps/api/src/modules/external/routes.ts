@@ -981,7 +981,7 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       },
     });
 
-    await app.prisma.ticketEvent.create({
+    const transferEvent = await app.prisma.ticketEvent.create({
       data: {
         id: randomUUID(),
         ticketId: updated.id,
@@ -1036,6 +1036,7 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       actorUserId,
       actorName: accessToken.name,
       customerName: serializeExternalTicket(updated).customerName,
+      createdAt: transferEvent.createdAt,
     });
 
     return reply.code(200).send({

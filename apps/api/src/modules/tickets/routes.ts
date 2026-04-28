@@ -218,6 +218,10 @@ function serializeTicket(ticket: any) {
     ? ticket.title.trim()
     : null;
   const displayName = manualGroupName ?? ticket.customerNameSnapshot;
+  const ticketEvents = Array.isArray(ticket.events) ? ticket.events : [];
+  const latestNudgeEvent = ticketEvents.find((event: any) => event.eventType === 'nudged') ?? null;
+  const latestTransferEvent = ticketEvents.find((event: any) => event.eventType === 'transferred') ?? null;
+  const latestTransferMetadata = pickMetadataObject(latestTransferEvent?.metadata);
 
   return {
     id: ticket.id,
@@ -235,11 +239,21 @@ function serializeTicket(ticket: any) {
     currentQueue: ticket.currentQueue ? { id: ticket.currentQueue.id, name: ticket.currentQueue.name, color: ticket.currentQueue.color } : null,
     whatsappInstance: { id: ticket.whatsappInstance.id, name: ticket.whatsappInstance.name },
     isGroup: ticket.isGroup,
-    latestNudge: Array.isArray(ticket.events) && ticket.events[0]
+    latestNudge: latestNudgeEvent
       ? {
-          createdAt: ticket.events[0].createdAt,
-          actorUserId: ticket.events[0].actorUserId ?? null,
-          actorName: resolveActorName(ticket.events[0].actorUser),
+          createdAt: latestNudgeEvent.createdAt,
+          actorUserId: latestNudgeEvent.actorUserId ?? null,
+          actorName: resolveActorName(latestNudgeEvent.actorUser),
+        }
+      : null,
+    latestTransfer: latestTransferEvent
+      ? {
+          createdAt: latestTransferEvent.createdAt,
+          actorUserId: latestTransferEvent.actorUserId ?? null,
+          actorName: resolveActorName(latestTransferEvent.actorUser),
+          targetUserId: typeof latestTransferMetadata?.toAgentId === 'string'
+            ? latestTransferMetadata.toAgentId
+            : null,
         }
       : null,
     updatedAt: ticket.updatedAt,
@@ -583,9 +597,9 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         currentQueue: true,
         whatsappInstance: true,
         events: {
-          where: { eventType: 'nudged' },
+          where: { eventType: { in: ['nudged', 'transferred'] } },
           orderBy: { createdAt: 'desc' },
-          take: 1,
+          take: 4,
           include: {
             actorUser: {
               include: {
@@ -626,9 +640,9 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         currentQueue: true,
         whatsappInstance: true,
         events: {
-          where: { eventType: 'nudged' },
+          where: { eventType: { in: ['nudged', 'transferred'] } },
           orderBy: { createdAt: 'desc' },
-          take: 1,
+          take: 4,
           include: {
             actorUser: {
               include: {
@@ -1381,7 +1395,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       },
     });
 
-      await app.prisma.ticketEvent.create({
+      const transferEvent = await app.prisma.ticketEvent.create({
         data: {
           id: randomUUID(),
           ticketId: ticket.id,
@@ -1439,6 +1453,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         actorUserId: session.userId,
         actorName,
         customerName: serializeTicket(ticket).customerName,
+        createdAt: transferEvent.createdAt,
       });
 
     return {

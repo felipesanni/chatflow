@@ -83,6 +83,12 @@ type TicketItem = {
     actorUserId?: string | null;
     actorName: string;
   } | null;
+  latestTransfer?: {
+    createdAt: string;
+    actorUserId?: string | null;
+    actorName: string;
+    targetUserId?: string | null;
+  } | null;
 };
 
 type TicketHistoryItem = {
@@ -632,6 +638,7 @@ const BRAND_LOGO_STORAGE_KEY = "chatflow.brand.logo";
 const BRAND_MODE_STORAGE_KEY = "chatflow.brand.mode";
 const BRAND_TEXT_STORAGE_KEY = "chatflow.brand.text";
 const TICKET_NUDGE_SEEN_STORAGE_KEY_PREFIX = "chatflow.ticket-nudges.seen";
+const TICKET_TRANSFER_SEEN_STORAGE_KEY_PREFIX = "chatflow.ticket-transfers.seen";
 const CONFIGURED_PUBLIC_WEB_BASE_URL = process.env.NEXT_PUBLIC_WEB_BASE_URL ?? null;
 const CONFIGURED_PUBLIC_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? null;
 const EMOJI_LIBRARY = ["😀", "😂", "😊", "😍", "🙏", "👍", "👏", "🎉", "❤️", "🔥", "👀", "✅", "😉", "🤝", "😅", "🙌", "🤔", "😎", "📎", "📞"];
@@ -1591,6 +1598,10 @@ function getTicketNudgeSeenStorageKey(userId: string) {
   return `${TICKET_NUDGE_SEEN_STORAGE_KEY_PREFIX}.${userId}`;
 }
 
+function getTicketTransferSeenStorageKey(userId: string) {
+  return `${TICKET_TRANSFER_SEEN_STORAGE_KEY_PREFIX}.${userId}`;
+}
+
 function readSeenTicketNudges(userId: string) {
   if (typeof window === "undefined") {
     return {} as Record<string, string>;
@@ -1624,6 +1635,41 @@ function persistSeenTicketNudges(userId: string, value: Record<string, string>) 
   }
 
   window.localStorage.setItem(getTicketNudgeSeenStorageKey(userId), JSON.stringify(value));
+}
+
+function readSeenTicketTransfers(userId: string) {
+  if (typeof window === "undefined") {
+    return {} as Record<string, string>;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(getTicketTransferSeenStorageKey(userId));
+    if (!raw) {
+      return {} as Record<string, string>;
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {} as Record<string, string>;
+    }
+
+    return Object.entries(parsed).reduce<Record<string, string>>((accumulator, [ticketId, createdAt]) => {
+      if (typeof createdAt === "string" && createdAt.trim()) {
+        accumulator[ticketId] = createdAt;
+      }
+      return accumulator;
+    }, {});
+  } catch {
+    return {} as Record<string, string>;
+  }
+}
+
+function persistSeenTicketTransfers(userId: string, value: Record<string, string>) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(getTicketTransferSeenStorageKey(userId), JSON.stringify(value));
 }
 
 function urlBase64ToUint8Array(base64String: string) {
@@ -2407,7 +2453,9 @@ export default function HomePage() {
   const browserNotificationRegistrationRef = React.useRef<ServiceWorkerRegistration | null>(null);
   const appDialogResolverRef = React.useRef<((value: boolean) => void) | null>(null);
   const seenTicketNudgesRef = React.useRef<Record<string, string>>({});
+  const seenTicketTransfersRef = React.useRef<Record<string, string>>({});
   const ticketNudgesPrimedRef = React.useRef(false);
+  const ticketTransfersPrimedRef = React.useRef(false);
   const userMenuRef = React.useRef<HTMLDivElement | null>(null);
   const mobileTicketActionsRef = React.useRef<HTMLDivElement | null>(null);
   const messageMenuRef = React.useRef<HTMLDivElement | null>(null);
@@ -3788,7 +3836,9 @@ export default function HomePage() {
   React.useEffect(() => {
     if (!user) {
       seenTicketNudgesRef.current = {};
+      seenTicketTransfersRef.current = {};
       ticketNudgesPrimedRef.current = false;
+      ticketTransfersPrimedRef.current = false;
       return;
     }
 
@@ -3838,6 +3888,65 @@ export default function HomePage() {
       pendingNudge.latestNudge.createdAt,
     );
   }, [openNudgeDialogForTicket, tickets, user]);
+
+  React.useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    if (!ticketTransfersPrimedRef.current) {
+      const initialSeen = readSeenTicketTransfers(user.id);
+      tickets.forEach((ticket) => {
+        if (ticket.latestTransfer?.createdAt && !initialSeen[ticket.id]) {
+          initialSeen[ticket.id] = ticket.latestTransfer.createdAt;
+        }
+      });
+      seenTicketTransfersRef.current = initialSeen;
+      persistSeenTicketTransfers(user.id, initialSeen);
+      ticketTransfersPrimedRef.current = true;
+      return;
+    }
+
+    const nextSeen = { ...seenTicketTransfersRef.current };
+    const pendingTransfer = tickets.find((ticket) => {
+      const latestTransfer = ticket.latestTransfer;
+      if (!latestTransfer?.createdAt) {
+        return false;
+      }
+
+      if (
+        ticket.currentAgent?.id !== user.id
+        || latestTransfer.targetUserId !== user.id
+        || latestTransfer.actorUserId === user.id
+      ) {
+        nextSeen[ticket.id] = latestTransfer.createdAt;
+        return false;
+      }
+
+      if (nextSeen[ticket.id] === latestTransfer.createdAt) {
+        return false;
+      }
+
+      return true;
+    });
+
+    seenTicketTransfersRef.current = nextSeen;
+
+    if (!pendingTransfer?.latestTransfer) {
+      return;
+    }
+
+    const nextTransfersSeen = {
+      ...seenTicketTransfersRef.current,
+      [pendingTransfer.id]: pendingTransfer.latestTransfer.createdAt,
+    };
+    seenTicketTransfersRef.current = nextTransfersSeen;
+    persistSeenTicketTransfers(user.id, nextTransfersSeen);
+    openTransferDialogForTicket(
+      pendingTransfer.id,
+      `${pendingTransfer.latestTransfer.actorName || "Alguém"} transferiu ${pendingTransfer.customerName || "um atendimento"} para você.`,
+    );
+  }, [openTransferDialogForTicket, tickets, user]);
 
   React.useEffect(() => {
     setMessageBulkSelectionMode(false);
@@ -3921,6 +4030,7 @@ export default function HomePage() {
       actorUserId?: string | null;
       actorName?: string | null;
       customerName?: string | null;
+      createdAt?: string;
     }) => {
       if (!payload?.ticketId) {
         return;
@@ -3932,6 +4042,13 @@ export default function HomePage() {
 
       const customerName = payload.customerName?.trim() || "um atendimento";
       const actorName = payload.actorName?.trim() || "Alguém";
+      const transferSeenAt = payload.createdAt ?? new Date().toISOString();
+      const nextSeenTransfers = {
+        ...seenTicketTransfersRef.current,
+        [payload.ticketId]: transferSeenAt,
+      };
+      seenTicketTransfersRef.current = nextSeenTransfers;
+      persistSeenTicketTransfers(user.id, nextSeenTransfers);
       const openTransferredTicket = openTransferDialogForTicket(
         payload.ticketId,
         `${actorName} transferiu ${customerName} para você.`,
