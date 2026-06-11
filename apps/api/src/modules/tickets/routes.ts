@@ -1,0 +1,1747 @@
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import type { FastifyPluginAsync } from 'fastify';
+import { Prisma, type TicketStatus } from '@prisma/client';
+import { requirePermission } from '../../lib/auth-guard.js';
+import type { PermissionMap } from '../../lib/permissions.js';
+import {
+  ACTIVE_TICKET_STATUSES,
+  buildActiveTicketIdentityWhere,
+  buildTicketAliasCandidates,
+  buildTicketChatIdentity,
+  normalizeTicketRemoteJid,
+  withTicketIdentityLock,
+} from '../../lib/ticket-identity.js';
+
+const booleanQueryParam = z.preprocess((value) => {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+
+  return value;
+}, z.boolean().optional());
+
+const ticketListQuerySchema = z.object({
+  status: z.enum(['open', 'pending', 'closed']).optional(),
+  isGroup: booleanQueryParam,
+  agentId: z.string().uuid().optional(),
+  queueId: z.string().uuid().optional(),
+  search: z.string().min(1).optional(),
+  limit: z.coerce.number().int().positive().optional(),
+});
+
+const createTicketBodySchema = z.object({
+  customerName: z.string().trim().min(1).optional(),
+  phone: z.string().trim().min(8, 'Informe um telefone valido.'),
+  whatsappInstanceId: z.string().uuid('Selecione uma instancia valida.'),
+  queueId: z.string().uuid().optional().nullable(),
+});
+
+const transferTicketBodySchema = z.object({
+  agentId: z.string().uuid().optional().nullable(),
+  queueId: z.string().uuid('Selecione uma fila valida.'),
+  note: z.string().trim().optional().default(''),
+});
+
+const nudgeTicketBodySchema = z.object({
+  note: z.string().trim().max(500, 'A observacao deve ter no maximo 500 caracteres.').optional().default(''),
+});
+
+const bulkDeleteTicketsBodySchema = z.object({
+  ticketIds: z.array(z.string().uuid()).min(1, 'Selecione ao menos um ticket.').max(100, 'Limite de 100 tickets por lote.'),
+});
+
+const duplicateTicketsQuerySchema = z.object({
+  includeClosed: z.coerce.boolean().optional().default(false),
+  limit: z.coerce.number().int().positive().max(1000).default(300),
+});
+
+const mergeDuplicateTicketsBodySchema = z.object({
+  primaryTicketId: z.string().uuid(),
+  duplicateTicketIds: z.array(z.string().uuid()).min(1, 'Informe ao menos um ticket duplicado.').max(50, 'Limite de 50 tickets por operacao.'),
+}).superRefine((value, ctx) => {
+  if (value.duplicateTicketIds.includes(value.primaryTicketId)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['duplicateTicketIds'],
+      message: 'O ticket principal nao pode estar na lista de duplicados.',
+    });
+  }
+});
+
+const closeTicketBodySchema = z.preprocess((value) => {
+  if (value == null || value === '') {
+    return {};
+  }
+
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return {};
+    }
+  }
+
+  return value;
+}, z.object({
+  reason: z.string().trim().min(1).optional(),
+}));
+
+const updateGroupNameBodySchema = z.object({
+  name: z.string().trim().max(120).nullable().optional(),
+});
+
+function normalizePhone(value: string) {
+  const digits = value.replace(/\D+/g, '');
+
+  if (digits.length === 10 || digits.length === 11) {
+    return `55${digits}`;
+  }
+
+  return digits;
+}
+
+function pickMergedStatus(statuses: TicketStatus[]) {
+  if (statuses.includes('open')) {
+    return 'open' as const;
+  }
+
+  if (statuses.includes('pending')) {
+    return 'pending' as const;
+  }
+
+  return 'closed' as const;
+}
+
+function buildDuplicateDetectionKey(ticket: {
+  whatsappInstanceId: string;
+  externalChatId: string;
+  externalContactId: string | null;
+  isGroup: boolean;
+}) {
+  const identity = buildTicketChatIdentity({
+    remoteJid: ticket.externalChatId,
+    phone: ticket.externalContactId,
+    isGroup: ticket.isGroup,
+  });
+
+  const canonical = identity.canonicalChatId ?? ticket.externalChatId;
+  return `${ticket.whatsappInstanceId}:${ticket.isGroup ? 'group' : 'direct'}:${canonical}`;
+}
+
+function buildDuplicateGroupSummary(groupKey: string, items: Array<any>) {
+  const sortedItems = [...items].sort((a, b) => {
+    const statusPriority = (value: TicketStatus) => {
+      if (value === 'open') return 0;
+      if (value === 'pending') return 1;
+      return 2;
+    };
+
+    const statusDiff = statusPriority(a.status) - statusPriority(b.status);
+    if (statusDiff !== 0) {
+      return statusDiff;
+    }
+
+    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  });
+
+  const primary = sortedItems[0];
+
+  return {
+    key: groupKey,
+    primaryTicketId: primary.id,
+    canonicalChatId: primary.externalContactId ?? primary.externalChatId,
+    whatsappInstanceId: primary.whatsappInstanceId,
+    whatsappInstanceName: primary.whatsappInstance.name,
+    customerName: (primary.isGroup && typeof primary.title === 'string' && primary.title.trim().length > 0)
+      ? primary.title.trim()
+      : primary.customerNameSnapshot,
+    isGroup: primary.isGroup,
+    totalTickets: sortedItems.length,
+    items: sortedItems.map((ticket) => ({
+      id: ticket.id,
+      status: ticket.status,
+      externalChatId: ticket.externalChatId,
+      externalContactId: ticket.externalContactId,
+      customerName: ticket.customerNameSnapshot,
+      currentAgentId: ticket.currentAgentId,
+      currentQueueId: ticket.currentQueueId,
+      unreadCount: ticket.unreadCount,
+      updatedAt: ticket.updatedAt,
+      createdAt: ticket.createdAt,
+    })),
+  };
+}
+
+async function findOrCreateCustomer(
+  prisma: FastifyPluginAsync extends never ? never : any,
+  params: { name?: string | null; phoneE164: string },
+) {
+  const existing = await prisma.customer.findFirst({
+    where: { phoneE164: params.phoneE164 },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  if (existing) {
+    if (params.name && existing.name !== params.name && !existing.isNameManuallySet) {
+      return prisma.customer.update({
+        where: { id: existing.id },
+        data: { name: params.name },
+      });
+    }
+
+    return existing;
+  }
+
+  return prisma.customer.create({
+    data: {
+      id: randomUUID(),
+      name: params.name ?? params.phoneE164,
+      phoneE164: params.phoneE164,
+      isNameManuallySet: Boolean(params.name),
+    },
+  });
+}
+
+function serializeTicket(ticket: any) {
+  const manualGroupName = ticket.isGroup && typeof ticket.title === 'string' && ticket.title.trim().length > 0
+    ? ticket.title.trim()
+    : null;
+  const displayName = manualGroupName ?? ticket.customerNameSnapshot;
+  const ticketEvents = Array.isArray(ticket.events) ? ticket.events : [];
+  const latestNudgeEvent = ticketEvents.find((event: any) => event.eventType === 'nudged') ?? null;
+  const latestTransferEvent = ticketEvents.find((event: any) => event.eventType === 'transferred') ?? null;
+  const latestTransferMetadata = pickMetadataObject(latestTransferEvent?.metadata);
+
+  return {
+    id: ticket.id,
+    status: ticket.status,
+    customerId: ticket.customerId,
+    customerName: displayName,
+    manualGroupName,
+    externalChatId: ticket.externalChatId,
+    externalContactId: ticket.externalContactId,
+      customerAvatarUrl: ticket.customerAvatarUrl,
+      lastMessagePreview: ticket.lastMessagePreview,
+      lastMessageAt: ticket.lastMessageAt,
+      unreadCount: ticket.unreadCount,
+    currentAgent: ticket.currentAgent ? { id: ticket.currentAgent.id, name: ticket.currentAgent.name } : null,
+    currentQueue: ticket.currentQueue ? { id: ticket.currentQueue.id, name: ticket.currentQueue.name, color: ticket.currentQueue.color } : null,
+    whatsappInstance: { id: ticket.whatsappInstance.id, name: ticket.whatsappInstance.name },
+    isGroup: ticket.isGroup,
+    latestNudge: latestNudgeEvent
+      ? {
+          createdAt: latestNudgeEvent.createdAt,
+          actorUserId: latestNudgeEvent.actorUserId ?? null,
+          actorName: resolveActorName(latestNudgeEvent.actorUser),
+        }
+      : null,
+    latestTransfer: latestTransferEvent
+      ? {
+          createdAt: latestTransferEvent.createdAt,
+          actorUserId: latestTransferEvent.actorUserId ?? null,
+          actorName: resolveActorName(latestTransferEvent.actorUser),
+          targetUserId: typeof latestTransferMetadata?.toAgentId === 'string'
+            ? latestTransferMetadata.toAgentId
+            : null,
+        }
+      : null,
+    updatedAt: ticket.updatedAt,
+  };
+}
+
+function pickMetadataObject(value: Prisma.JsonValue | null | undefined) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function resolveActorName(actorUser?: { email?: string | null; agent?: { name?: string | null } | null } | null) {
+  return actorUser?.agent?.name ?? actorUser?.email ?? 'Sistema';
+}
+
+function serializeTicketHistoryEvent(event: any) {
+  const metadata = pickMetadataObject(event.metadata);
+
+  return {
+    id: event.id,
+    type: event.eventType,
+    createdAt: event.createdAt,
+    actorName: resolveActorName(event.actorUser),
+    actorUser: event.actorUser
+      ? {
+          id: event.actorUser.id,
+          name: event.actorUser.agent?.name ?? event.actorUser.email,
+          email: event.actorUser.email,
+        }
+      : null,
+    summary:
+      event.eventType === 'created'
+        ? 'Ticket criado'
+      : event.eventType === 'accepted'
+          ? 'Ticket assumido'
+        : event.eventType === 'nudged'
+          ? 'Atencao solicitada ao responsavel'
+        : event.eventType === 'closed'
+            ? 'Ticket encerrado'
+            : event.eventType === 'reopened'
+              ? 'Ticket reaberto'
+              : 'Evento registrado',
+    reason: typeof metadata?.reason === 'string' ? metadata.reason : null,
+    note: typeof metadata?.note === 'string' ? metadata.note : null,
+    details: metadata,
+  };
+}
+
+function serializeTicketHistoryAssignment(assignment: any) {
+  return {
+    id: assignment.id,
+    type: 'transferred',
+    createdAt: assignment.createdAt,
+    actorName: resolveActorName(assignment.createdByUser),
+    actorUser: assignment.createdByUser
+      ? {
+          id: assignment.createdByUser.id,
+          name: assignment.createdByUser.agent?.name ?? assignment.createdByUser.email,
+          email: assignment.createdByUser.email,
+        }
+      : null,
+    summary: assignment.toAgent
+      ? 'Ticket transferido para outro agente'
+      : 'Ticket transferido para fila sem agente',
+    reason: assignment.reason ?? null,
+    note: null,
+    fromAgent: assignment.fromAgent
+      ? { id: assignment.fromAgent.id, name: assignment.fromAgent.name }
+      : null,
+    toAgent: assignment.toAgent
+      ? { id: assignment.toAgent.id, name: assignment.toAgent.name }
+      : null,
+    fromQueue: assignment.fromQueue
+      ? { id: assignment.fromQueue.id, name: assignment.fromQueue.name, color: assignment.fromQueue.color }
+      : null,
+    toQueue: assignment.toQueue
+      ? { id: assignment.toQueue.id, name: assignment.toQueue.name, color: assignment.toQueue.color }
+      : null,
+  };
+}
+
+function canViewTicket(
+  viewerId: string,
+  permissions: PermissionMap,
+  viewerQueueIds: string[],
+  ticket: { currentAgentId: string | null; currentQueueId: string | null; status?: string | null; isGroup?: boolean | null },
+) {
+  if (ticket.status === 'closed' && !permissions['tickets.closedView']) {
+    return false;
+  }
+
+  if (ticket.isGroup) {
+    return permissions['tickets.groups'];
+  }
+
+  if (permissions['tickets.viewAll']) {
+    return true;
+  }
+
+  if (ticket.currentAgentId === viewerId) {
+    return true;
+  }
+
+  const canViewOtherUsers = permissions['tickets.viewOthers'];
+  const isQueueScoped = ticket.currentQueueId ? viewerQueueIds.includes(ticket.currentQueueId) : false;
+
+  if (ticket.currentQueueId) {
+    if (!isQueueScoped) {
+      return false;
+    }
+
+    return ticket.currentAgentId === null || canViewOtherUsers;
+  }
+
+  if (!permissions['tickets.viewUnassigned']) {
+    return false;
+  }
+
+  return ticket.currentAgentId === null || canViewOtherUsers;
+}
+
+function canManageTicket(viewerId: string, ticket: { currentAgentId: string | null; isGroup?: boolean | null }) {
+  if (ticket.isGroup) {
+    return false;
+  }
+
+  return ticket.currentAgentId === viewerId;
+}
+
+function canTransferTicket(
+  viewerId: string,
+  permissions: PermissionMap,
+  ticket: { currentAgentId: string | null; isGroup?: boolean | null },
+) {
+  if (ticket.isGroup) {
+    return false;
+  }
+
+  if (ticket.currentAgentId === viewerId || ticket.currentAgentId === null) {
+    return permissions['tickets.transfer'];
+  }
+
+  return permissions['tickets.transferOthers'];
+}
+
+function canNudgeTicket(
+  viewerId: string,
+  permissions: PermissionMap,
+  ticket: { currentAgentId: string | null; isGroup?: boolean | null; status?: string | null },
+) {
+  if (ticket.isGroup) {
+    return false;
+  }
+
+  if (ticket.status === 'closed') {
+    return false;
+  }
+
+  if (!ticket.currentAgentId) {
+    return false;
+  }
+
+  if (ticket.currentAgentId === viewerId) {
+    return false;
+  }
+
+  return permissions['tickets.nudge'];
+}
+
+function canCloseTicket(
+  viewerId: string,
+  permissions: PermissionMap,
+  ticket: { currentAgentId: string | null; isGroup?: boolean | null },
+) {
+  if (ticket.isGroup) {
+    return false;
+  }
+
+  if (ticket.currentAgentId === viewerId) {
+    return permissions['tickets.close'];
+  }
+
+  return permissions['tickets.closeWithoutAccept'];
+}
+
+export const ticketRoutes: FastifyPluginAsync = async (app) => {
+  app.get('/tickets/duplicates', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.bulkDelete');
+    if (!access) return;
+
+    const query = duplicateTicketsQuerySchema.parse(request.query);
+    const items = await app.prisma.ticket.findMany({
+      where: query.includeClosed
+        ? undefined
+        : {
+            status: { in: [...ACTIVE_TICKET_STATUSES] },
+          },
+      select: {
+        id: true,
+        whatsappInstanceId: true,
+        externalChatId: true,
+        externalContactId: true,
+        title: true,
+        customerNameSnapshot: true,
+        status: true,
+        unreadCount: true,
+        isGroup: true,
+        lastMessageAt: true,
+        currentAgentId: true,
+        currentQueueId: true,
+        createdAt: true,
+        updatedAt: true,
+        whatsappInstance: {
+          select: {
+            name: true,
+          },
+        },
+      },
+      orderBy: [
+        { lastMessageAt: 'desc' },
+        { updatedAt: 'desc' },
+      ],
+      take: query.limit,
+    });
+
+    const grouped = new Map<string, Array<(typeof items)[number]>>();
+    for (const ticket of items) {
+      const groupKey = buildDuplicateDetectionKey(ticket);
+      const current = grouped.get(groupKey) ?? [];
+      current.push(ticket);
+      grouped.set(groupKey, current);
+    }
+
+    const duplicates = Array.from(grouped.entries())
+      .filter(([, groupItems]) => groupItems.length > 1)
+      .map(([groupKey, groupItems]) => buildDuplicateGroupSummary(groupKey, groupItems))
+      .sort((a, b) => {
+        const aUpdated = Math.max(...a.items.map((item) => new Date(item.updatedAt).getTime()));
+        const bUpdated = Math.max(...b.items.map((item) => new Date(item.updatedAt).getTime()));
+        return bUpdated - aUpdated;
+      });
+
+    return {
+      items: duplicates,
+      totalGroups: duplicates.length,
+      scannedTickets: items.length,
+    };
+  });
+
+  app.get('/tickets', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.view');
+    if (!access) return;
+    const session = access.session;
+
+    const query = ticketListQuerySchema.parse(request.query);
+    if (
+      !access.permissions['tickets.viewAll']
+      && !access.permissions['tickets.viewOthers']
+      && query.agentId
+      && query.agentId !== session.userId
+    ) {
+      return {
+        items: [],
+        filters: query,
+        viewer: {
+          id: session.userId,
+          role: session.role,
+        },
+      };
+    }
+
+    const visibilityFilters = [
+      ...(access.permissions['tickets.groups']
+        ? [{
+            isGroup: true,
+          }]
+        : []),
+      { currentAgentId: session.userId, isGroup: false },
+      ...(access.queueIds.length > 0
+        ? [{
+            isGroup: false,
+            ...(access.permissions['tickets.viewOthers']
+              ? {}
+              : { currentAgentId: null }),
+            currentQueueId: { in: access.queueIds },
+          }]
+        : []),
+      ...(access.permissions['tickets.viewUnassigned']
+        ? [{
+            isGroup: false,
+            ...(access.permissions['tickets.viewOthers']
+              ? {}
+              : { currentAgentId: null }),
+            currentQueueId: null,
+          }]
+        : []),
+    ];
+
+    const where = {
+      status: query.status,
+      isGroup: query.isGroup,
+      currentAgentId: access.permissions['tickets.viewAll']
+        ? query.agentId
+        : access.permissions['tickets.viewOthers']
+          ? query.agentId
+          : query.agentId === session.userId
+            ? query.agentId
+            : undefined,
+      currentQueueId: query.queueId,
+      AND: [
+        ...(!access.permissions['tickets.closedView']
+          ? [{
+              status: { in: ['open', 'pending'] as TicketStatus[] },
+            }]
+          : []),
+        ...(!access.permissions['tickets.viewAll']
+          ? [{
+              OR: visibilityFilters,
+            }]
+          : []),
+        ...(query.search
+          ? [{
+              OR: [
+                { customerNameSnapshot: { contains: query.search, mode: 'insensitive' as const } },
+                { title: { contains: query.search, mode: 'insensitive' as const } },
+                { externalChatId: { contains: query.search, mode: 'insensitive' as const } },
+                { lastMessagePreview: { contains: query.search, mode: 'insensitive' as const } },
+              ],
+            }]
+          : []),
+      ],
+    };
+
+    const items = await app.prisma.ticket.findMany({
+      where,
+      include: {
+        currentAgent: true,
+        currentQueue: true,
+        whatsappInstance: true,
+        events: {
+          where: { eventType: { in: ['nudged', 'transferred'] } },
+          orderBy: { createdAt: 'desc' },
+          take: 4,
+          include: {
+            actorUser: {
+              include: {
+                agent: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [
+        { lastMessageAt: 'desc' },
+        { updatedAt: 'desc' },
+      ],
+      ...(typeof query.limit === 'number' ? { take: query.limit } : {}),
+    });
+
+    return {
+      items: items.map(serializeTicket),
+      filters: query,
+      viewer: {
+        id: session.userId,
+        role: session.role,
+      },
+    };
+  });
+
+  app.get('/tickets/:ticketId', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.view');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const ticket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      include: {
+        customer: true,
+        currentAgent: true,
+        currentQueue: true,
+        whatsappInstance: true,
+        events: {
+          where: { eventType: { in: ['nudged', 'transferred'] } },
+          orderBy: { createdAt: 'desc' },
+          take: 4,
+          include: {
+            actorUser: {
+              include: {
+                agent: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!ticket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+      return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
+    }
+
+    return {
+      item: {
+        id: ticket.id,
+        status: ticket.status,
+        customerName: (ticket.isGroup && typeof ticket.title === 'string' && ticket.title.trim().length > 0)
+          ? ticket.title.trim()
+          : ticket.customerNameSnapshot,
+        manualGroupName: ticket.isGroup && typeof ticket.title === 'string' && ticket.title.trim().length > 0
+          ? ticket.title.trim()
+          : null,
+        externalChatId: ticket.externalChatId,
+        externalContactId: ticket.externalContactId,
+        customerAvatarUrl: ticket.customerAvatarUrl,
+        lastMessagePreview: ticket.lastMessagePreview,
+        lastMessageAt: ticket.lastMessageAt,
+        unreadCount: ticket.unreadCount,
+        closedReason: ticket.closedReason,
+        isGroup: ticket.isGroup,
+        customer: ticket.customer,
+        currentAgent: ticket.currentAgent,
+        currentQueue: ticket.currentQueue ? { ...ticket.currentQueue, color: ticket.currentQueue.color } : null,
+        whatsappInstance: ticket.whatsappInstance,
+        createdAt: ticket.createdAt,
+        updatedAt: ticket.updatedAt,
+      },
+      viewer: {
+        id: session.userId,
+        role: session.role,
+      },
+    };
+  });
+
+  app.get('/tickets/:ticketId/history', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.view');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const ticket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      include: {
+        currentAgent: true,
+        currentQueue: true,
+        whatsappInstance: true,
+      },
+    });
+
+    if (!ticket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+      return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
+    }
+
+    const [events, assignments] = await Promise.all([
+      app.prisma.ticketEvent.findMany({
+        where: {
+          ticketId: ticket.id,
+          eventType: { in: ['created', 'accepted', 'nudged', 'closed', 'reopened'] },
+        },
+        include: {
+          actorUser: {
+            select: {
+              id: true,
+              email: true,
+              agent: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+      app.prisma.ticketAssignment.findMany({
+        where: {
+          ticketId: ticket.id,
+        },
+        include: {
+          createdByUser: {
+            select: {
+              id: true,
+              email: true,
+              agent: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+          fromAgent: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          toAgent: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          fromQueue: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+            },
+          },
+          toQueue: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+    ]);
+
+    const items = [
+      ...assignments.map((assignment) => serializeTicketHistoryAssignment(assignment)),
+      ...events.map((event) => serializeTicketHistoryEvent(event)),
+    ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    return {
+      item: {
+        id: ticket.id,
+        customerName: (ticket.isGroup && typeof ticket.title === 'string' && ticket.title.trim().length > 0)
+          ? ticket.title.trim()
+          : ticket.customerNameSnapshot,
+      },
+      items,
+    };
+  });
+
+  app.patch('/tickets/:ticketId/group-name', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.view');
+    if (!access) return;
+    const session = access.session;
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const body = updateGroupNameBodySchema.parse(request.body ?? {});
+
+    const currentTicket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      include: {
+        currentAgent: true,
+        currentQueue: true,
+        whatsappInstance: true,
+      },
+    });
+
+    if (!currentTicket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!currentTicket.isGroup) {
+      return reply.badRequest('Somente grupos aceitam apelido manual.');
+    }
+
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, currentTicket)) {
+      return reply.forbidden('Voce nao possui permissao para editar este grupo.');
+    }
+
+    const normalizedName = typeof body.name === 'string' && body.name.trim().length > 0
+      ? body.name.trim()
+      : null;
+
+    const ticket = await app.prisma.ticket.update({
+      where: { id: params.ticketId },
+      data: {
+        title: normalizedName,
+      },
+      include: {
+        currentAgent: true,
+        currentQueue: true,
+        whatsappInstance: true,
+      },
+    });
+
+    await app.prisma.ticketEvent.create({
+      data: {
+        id: randomUUID(),
+        ticketId: ticket.id,
+        eventType: 'assigned',
+        actorUserId: session.userId,
+        metadata: {
+          action: 'group_name_updated',
+          manualGroupName: normalizedName,
+        },
+      },
+    });
+
+    app.io.emit('ticket.updated', {
+      ticketId: ticket.id,
+      status: ticket.status,
+      currentAgentId: ticket.currentAgentId,
+      currentQueueId: ticket.currentQueueId,
+    });
+
+    return {
+      item: serializeTicket(ticket),
+    };
+  });
+
+
+  app.post('/tickets', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.reply');
+    if (!access) return;
+    const session = access.session;
+
+    const body = createTicketBodySchema.parse(request.body ?? {});
+    const normalizedPhone = normalizePhone(body.phone);
+
+    if (!normalizedPhone || !normalizedPhone.startsWith('55')) {
+      return reply.badRequest('Informe um telefone valido.');
+    }
+
+    const instance = await app.prisma.whatsAppInstance.findUnique({
+      where: { id: body.whatsappInstanceId },
+    });
+
+    if (!instance) {
+      return reply.badRequest('Instancia nao encontrada.');
+    }
+
+    const queueId = body.queueId ?? instance.defaultQueueId ?? null;
+    if (queueId) {
+      const queue = await app.prisma.queue.findUnique({ where: { id: queueId } });
+      if (!queue) {
+        return reply.badRequest('Fila nao encontrada.');
+      }
+    }
+
+    const remoteJid = normalizeTicketRemoteJid(normalizedPhone);
+    const chatIdentity = buildTicketChatIdentity({
+      remoteJid,
+      phone: normalizedPhone,
+      isGroup: false,
+    });
+    const aliasCandidates = buildTicketAliasCandidates({
+      remoteJid,
+      canonicalChatId: chatIdentity.canonicalChatId ?? remoteJid,
+      contactId: chatIdentity.contactId ?? normalizedPhone,
+    });
+
+    const result = await withTicketIdentityLock(app.prisma, {
+      whatsappInstanceId: instance.id,
+      canonicalChatId: chatIdentity.canonicalChatId ?? remoteJid,
+    }, async (tx) => {
+      const existingTicket = await tx.ticket.findFirst({
+        where: buildActiveTicketIdentityWhere(instance.id, chatIdentity),
+        include: {
+          currentAgent: true,
+          currentQueue: true,
+          whatsappInstance: true,
+        },
+        orderBy: {
+          updatedAt: 'desc',
+        },
+      });
+
+      if (existingTicket) {
+        return {
+          item: existingTicket,
+          created: false,
+        };
+      }
+
+      const customer = await findOrCreateCustomer(tx, {
+        name: body.customerName ?? null,
+        phoneE164: normalizedPhone,
+      });
+      const customerName = body.customerName ?? customer.name ?? normalizedPhone;
+
+      const ticket = await tx.ticket.create({
+        data: {
+          id: randomUUID(),
+          customerId: customer.id,
+          whatsappInstanceId: instance.id,
+          currentAgentId: session.userId,
+          currentQueueId: queueId,
+          externalChatId: chatIdentity.canonicalChatId ?? remoteJid,
+          externalContactId: chatIdentity.contactId ?? normalizedPhone,
+          customerNameSnapshot: customerName,
+          status: 'open',
+          unreadCount: 0,
+          isGroup: false,
+        },
+        include: {
+          currentAgent: true,
+          currentQueue: true,
+          whatsappInstance: true,
+        },
+      });
+
+      await tx.ticketEvent.create({
+        data: {
+          id: randomUUID(),
+          ticketId: ticket.id,
+          eventType: 'created',
+          actorUserId: session.userId,
+          metadata: {
+            source: 'manual',
+            createdBy: session.userId,
+          },
+        },
+      });
+
+      return {
+        item: ticket,
+        created: true,
+      };
+    });
+
+    for (const alias of aliasCandidates) {
+      await app.prisma.ticketChatAlias.upsert({
+        where: {
+          whatsappInstanceId_alias: {
+            whatsappInstanceId: instance.id,
+            alias,
+          },
+        },
+        create: {
+          id: randomUUID(),
+          whatsappInstanceId: instance.id,
+          ticketId: result.item.id,
+          alias,
+          lastSeenAt: new Date(),
+        },
+        update: {
+          ticketId: result.item.id,
+          lastSeenAt: new Date(),
+        },
+      });
+    }
+
+    if (result.created) {
+      app.io.emit('ticket.updated', {
+        ticketId: result.item.id,
+        status: result.item.status,
+        currentAgentId: result.item.currentAgentId,
+        currentQueueId: result.item.currentQueueId,
+      });
+    }
+
+    return reply.code(result.created ? 201 : 200).send({
+      item: serializeTicket(result.item),
+      created: result.created,
+    });
+  });
+
+  app.post('/tickets/:ticketId/accept', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.accept');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const currentTicket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      include: {
+        currentAgent: true,
+      },
+    });
+
+    if (!currentTicket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, currentTicket)) {
+      return reply.forbidden('Voce nao possui permissao para assumir este ticket.');
+    }
+
+    if (currentTicket.isGroup) {
+      return reply.badRequest('Grupos do WhatsApp nao precisam ser assumidos.');
+    }
+
+    if (currentTicket.currentAgentId && currentTicket.currentAgentId !== session.userId) {
+      return reply.forbidden('Este ticket ja foi assumido por outro agente.');
+    }
+
+    const ticket = await app.prisma.ticket.update({
+      where: { id: params.ticketId },
+      data: {
+        currentAgentId: session.userId,
+        status: 'open',
+        unreadCount: 0,
+      },
+      include: {
+        currentAgent: true,
+      },
+    });
+
+    await app.prisma.ticketEvent.create({
+      data: {
+        id: randomUUID(),
+        ticketId: ticket.id,
+        eventType: 'accepted',
+        actorUserId: session.userId,
+        metadata: { acceptedBy: session.userId },
+      },
+    });
+
+    app.io.emit('ticket.updated', { ticketId: ticket.id, status: ticket.status, currentAgentId: ticket.currentAgentId });
+
+    return {
+      item: ticket,
+    };
+  });
+
+  app.post('/tickets/:ticketId/close', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, ['tickets.close', 'tickets.closeWithoutAccept']);
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const parsedBody = closeTicketBodySchema.parse(request.body);
+    const reason = parsedBody.reason ?? 'Encerrado pelo agente';
+      const currentTicket = await app.prisma.ticket.findUnique({
+        where: { id: params.ticketId },
+        select: { id: true, currentAgentId: true, isGroup: true },
+      });
+
+    if (!currentTicket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+      if (!canCloseTicket(session.userId, access.permissions, currentTicket)) {
+        return reply.forbidden('Voce nao possui permissao para encerrar este ticket sem assumi-lo.');
+      }
+
+    const ticket = await app.prisma.ticket.update({
+      where: { id: params.ticketId },
+      data: {
+        status: 'closed',
+        closedReason: reason,
+        closedAt: new Date(),
+      },
+    });
+
+    await app.prisma.ticketEvent.create({
+      data: {
+        id: randomUUID(),
+        ticketId: ticket.id,
+        eventType: 'closed',
+        actorUserId: session.userId,
+        metadata: { reason },
+      },
+    });
+
+    app.io.emit('ticket.closed', { ticketId: ticket.id });
+
+    return {
+      item: ticket,
+    };
+  });
+
+  app.post('/tickets/:ticketId/reopen', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.close');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const currentTicket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      select: {
+        id: true,
+        currentAgentId: true,
+        status: true,
+        whatsappInstanceId: true,
+        externalChatId: true,
+        customerNameSnapshot: true,
+      },
+    });
+
+    if (!currentTicket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (session.role !== 'admin' && !canManageTicket(session.userId, currentTicket)) {
+      return reply.forbidden('Apenas o agente responsavel pode reabrir este ticket.');
+    }
+
+    const conflictingOpenTicket = await app.prisma.ticket.findFirst({
+      where: {
+        id: { not: currentTicket.id },
+        whatsappInstanceId: currentTicket.whatsappInstanceId,
+        externalChatId: currentTicket.externalChatId,
+        status: { in: ['open', 'pending'] },
+      },
+      select: {
+        id: true,
+        status: true,
+        customerNameSnapshot: true,
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+    });
+
+    if (conflictingOpenTicket) {
+      return reply.code(409).send({
+        message: `Nao foi possivel reabrir porque ja existe outro ticket ${conflictingOpenTicket.status === 'open' ? 'aberto' : 'aguardando'} para este mesmo contato.`,
+        conflict: {
+          ticketId: conflictingOpenTicket.id,
+          status: conflictingOpenTicket.status,
+          customerName: conflictingOpenTicket.customerNameSnapshot,
+        },
+      });
+    }
+
+    const ticket = await app.prisma.ticket.update({
+      where: { id: params.ticketId },
+      data: {
+        status: 'open',
+        closedReason: null,
+        closedAt: null,
+      },
+    });
+
+    await app.prisma.ticketEvent.create({
+      data: {
+        id: randomUUID(),
+        ticketId: ticket.id,
+        eventType: 'reopened',
+        actorUserId: session.userId,
+        metadata: Prisma.JsonNull,
+      },
+    });
+
+    app.io.emit('ticket.updated', { ticketId: ticket.id });
+
+    return {
+      item: ticket,
+    };
+  });
+
+  app.post('/tickets/:ticketId/nudge', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.nudge');
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const body = nudgeTicketBodySchema.parse(request.body ?? {});
+
+    const currentTicket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      include: {
+        currentAgent: true,
+        currentQueue: true,
+        whatsappInstance: true,
+      },
+    });
+
+    if (!currentTicket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, currentTicket)) {
+      return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
+    }
+
+    if (!canNudgeTicket(session.userId, access.permissions, currentTicket)) {
+      return reply.forbidden('Voce nao possui permissao para chamar a atencao neste ticket.');
+    }
+
+    const trimmedNote = body.note.trim();
+    const actorUser = await app.prisma.user.findUnique({
+      where: { id: session.userId },
+      select: {
+        email: true,
+        agent: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+    const actorName = actorUser?.agent?.name ?? actorUser?.email ?? session.email;
+
+    const nudgeEvent = await app.prisma.ticketEvent.create({
+      data: {
+        id: randomUUID(),
+        ticketId: currentTicket.id,
+        eventType: 'nudged',
+        actorUserId: session.userId,
+        metadata: {
+          targetAgentId: currentTicket.currentAgentId,
+          note: trimmedNote || null,
+        },
+      },
+    });
+
+    app.io.emit('ticket.updated', {
+      ticketId: currentTicket.id,
+      status: currentTicket.status,
+      currentAgentId: currentTicket.currentAgentId,
+    });
+    app.io.emit('ticket.nudged', {
+      ticketId: currentTicket.id,
+      targetUserId: currentTicket.currentAgentId,
+      actorUserId: session.userId,
+      actorName,
+      customerName: currentTicket.customerNameSnapshot,
+      createdAt: nudgeEvent.createdAt,
+      note: trimmedNote || null,
+    });
+
+    return {
+      ok: true,
+      ticketId: currentTicket.id,
+      targetUserId: currentTicket.currentAgentId,
+      createdAt: nudgeEvent.createdAt,
+      note: trimmedNote || null,
+    };
+  });
+
+  app.post('/tickets/:ticketId/transfer', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, ['tickets.transfer', 'tickets.transferOthers']);
+    if (!access) return;
+    const session = access.session;
+
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const body = transferTicketBodySchema.parse(request.body ?? {});
+
+    const currentTicket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      include: {
+        currentAgent: true,
+        currentQueue: true,
+        whatsappInstance: true,
+      },
+    });
+
+    if (!currentTicket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+      if (!canTransferTicket(session.userId, access.permissions, currentTicket)) {
+        return reply.forbidden('Voce nao possui permissao para transferir este ticket.');
+      }
+
+    if (body.agentId) {
+      const targetAgent = await app.prisma.agent.findUnique({
+        where: { id: body.agentId },
+        select: {
+          id: true,
+          isBotAgent: true,
+          queueLinks: {
+            select: {
+              queueId: true,
+            },
+          },
+        },
+      });
+
+      if (!targetAgent) {
+        return reply.badRequest('Agente de destino nao encontrado.');
+      }
+
+      if (targetAgent.isBotAgent) {
+        return reply.badRequest('Agente de automacao nao pode ser usado em transferencias manuais.');
+      }
+
+      const agentQueueIds = new Set(targetAgent.queueLinks.map((item: { queueId: string }) => item.queueId));
+      if (!agentQueueIds.has(body.queueId)) {
+        return reply.badRequest('Selecione uma fila vinculada ao agente de destino.');
+      }
+    }
+
+    const targetQueue = await app.prisma.queue.findUnique({
+      where: { id: body.queueId },
+      select: { id: true, isBotQueue: true },
+    });
+
+    if (!targetQueue) {
+      return reply.badRequest('Fila de destino nao encontrada.');
+    }
+
+    if (targetQueue.isBotQueue) {
+      return reply.badRequest('Fila de automacao nao pode ser usada em transferencias manuais.');
+    }
+
+    const reason = body.agentId
+      ? 'Transferencia manual'
+      : 'Transferencia para fila sem agente definido';
+    const actorUser = await app.prisma.user.findUnique({
+      where: { id: session.userId },
+      select: {
+        email: true,
+        agent: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+    const actorName = actorUser?.agent?.name ?? actorUser?.email ?? session.email;
+
+    const ticket = await app.prisma.ticket.update({
+      where: { id: params.ticketId },
+      data: {
+        currentAgentId: body.agentId ?? null,
+        currentQueueId: body.queueId,
+        status: body.agentId ? 'open' : 'pending',
+      },
+      include: {
+        currentAgent: true,
+        currentQueue: true,
+        whatsappInstance: true,
+      },
+    });
+
+    await app.prisma.ticketAssignment.create({
+      data: {
+        id: randomUUID(),
+        ticketId: ticket.id,
+        fromAgentId: currentTicket.currentAgentId,
+        toAgentId: body.agentId ?? null,
+        fromQueueId: currentTicket.currentQueueId,
+        toQueueId: body.queueId,
+        reason,
+        createdByUserId: session.userId,
+      },
+    });
+
+      const transferEvent = await app.prisma.ticketEvent.create({
+        data: {
+          id: randomUUID(),
+          ticketId: ticket.id,
+          eventType: 'transferred',
+        actorUserId: session.userId,
+        metadata: {
+            reason,
+            fromAgentId: currentTicket.currentAgentId,
+            toAgentId: body.agentId ?? null,
+            fromQueueId: currentTicket.currentQueueId,
+            toQueueId: body.queueId,
+            note: body.note.trim() || null,
+          },
+        },
+      });
+
+      if (body.note.trim()) {
+        const internalNote = await app.prisma.ticketMessage.create({
+          data: {
+            id: randomUUID(),
+            ticketId: ticket.id,
+            senderAgentId: session.userId,
+            direction: 'outbound',
+            contentType: 'text',
+            body: body.note.trim(),
+            senderNameSnapshot: currentTicket.currentAgent?.name ?? session.email,
+            rawPayload: {
+              chatflowInternalNote: true,
+              source: 'ticket_transfer',
+            } as Prisma.InputJsonValue,
+          },
+        });
+
+        app.io.emit('message.created', {
+          ticketId: ticket.id,
+          messageId: internalNote.id,
+          direction: internalNote.direction,
+        });
+      }
+
+      app.io.emit('ticket.updated', {
+        ticketId: ticket.id,
+        eventType: 'transferred',
+        status: ticket.status,
+        currentAgentId: ticket.currentAgentId,
+        currentQueueId: ticket.currentQueueId,
+        targetUserId: ticket.currentAgentId,
+        actorUserId: session.userId,
+        actorName,
+        customerName: serializeTicket(ticket).customerName,
+      });
+      app.io.emit('ticket.transferred', {
+        ticketId: ticket.id,
+        targetUserId: ticket.currentAgentId,
+        actorUserId: session.userId,
+        actorName,
+        customerName: serializeTicket(ticket).customerName,
+        createdAt: transferEvent.createdAt,
+      });
+
+    return {
+      item: serializeTicket(ticket),
+    };
+  });
+
+  app.post('/tickets/bulk-delete', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.bulkDelete');
+    if (!access) return;
+    const session = access.session;
+    const body = bulkDeleteTicketsBodySchema.parse(request.body ?? {});
+
+    const tickets = await app.prisma.ticket.findMany({
+      where: {
+        id: { in: body.ticketIds },
+      },
+      select: {
+        id: true,
+        currentAgentId: true,
+        currentQueueId: true,
+      },
+    });
+
+    const allowedIds = tickets
+      .filter((ticket) => canViewTicket(session.userId, access.permissions, access.queueIds, ticket))
+      .map((ticket) => ticket.id);
+
+    if (allowedIds.length === 0) {
+      return reply.forbidden('Nenhum dos tickets selecionados pode ser apagado por este usuário.');
+    }
+
+    await app.prisma.ticket.deleteMany({
+      where: {
+        id: { in: allowedIds },
+      },
+    });
+
+    app.io.emit('ticket.updated', {
+      bulkDeletedTicketIds: allowedIds,
+    });
+
+    return reply.code(201).send({
+      deletedCount: allowedIds.length,
+      deletedTicketIds: allowedIds,
+    });
+  });
+
+  app.post('/tickets/:ticketId/delete', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.bulkDelete');
+    if (!access) return;
+    const session = access.session;
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+
+    const ticket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      select: {
+        id: true,
+        currentAgentId: true,
+        currentQueueId: true,
+      },
+    });
+
+    if (!ticket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+      return reply.forbidden('Voce nao possui permissao para apagar este ticket.');
+    }
+
+    await app.prisma.ticket.delete({
+      where: { id: ticket.id },
+    });
+
+    app.io.emit('ticket.updated', {
+      deletedTicketId: ticket.id,
+    });
+
+    return reply.code(201).send({
+      deletedTicketId: ticket.id,
+    });
+  });
+
+  app.post('/tickets/merge-duplicates', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.bulkDelete');
+    if (!access) return;
+    const session = access.session;
+    const body = mergeDuplicateTicketsBodySchema.parse(request.body ?? {});
+
+    const tickets = await app.prisma.ticket.findMany({
+      where: {
+        id: {
+          in: [body.primaryTicketId, ...body.duplicateTicketIds],
+        },
+      },
+      include: {
+        whatsappInstance: true,
+      },
+    });
+
+    if (tickets.length !== body.duplicateTicketIds.length + 1) {
+      return reply.badRequest('Um ou mais tickets informados nao foram encontrados.');
+    }
+
+    const primaryTicket = tickets.find((ticket) => ticket.id === body.primaryTicketId);
+    if (!primaryTicket) {
+      return reply.badRequest('Ticket principal nao encontrado.');
+    }
+
+    const duplicateTickets = tickets.filter((ticket) => body.duplicateTicketIds.includes(ticket.id));
+
+    if (!canViewTicket(session.userId, access.permissions, access.queueIds, primaryTicket)) {
+      return reply.forbidden('Voce nao possui permissao para mesclar o ticket principal.');
+    }
+
+    for (const ticket of duplicateTickets) {
+      if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+        return reply.forbidden('Voce nao possui permissao para mesclar um ou mais tickets duplicados.');
+      }
+    }
+
+    const inconsistentDuplicate = duplicateTickets.find((ticket) => (
+      ticket.whatsappInstanceId !== primaryTicket.whatsappInstanceId
+      || ticket.isGroup !== primaryTicket.isGroup
+    ));
+
+    if (inconsistentDuplicate) {
+      return reply.badRequest('Todos os tickets devem pertencer a mesma instancia e ao mesmo tipo de conversa.');
+    }
+
+    const merged = await app.prisma.$transaction(async (tx) => {
+      const currentPrimary = await tx.ticket.findUnique({
+        where: { id: primaryTicket.id },
+      });
+
+      if (!currentPrimary) {
+        throw new Error('Ticket principal nao encontrado durante a mesclagem.');
+      }
+
+      const currentDuplicates = await tx.ticket.findMany({
+        where: {
+          id: {
+            in: duplicateTickets.map((ticket) => ticket.id),
+          },
+        },
+      });
+
+      const duplicateIds = currentDuplicates.map((ticket) => ticket.id);
+      const primaryMessages = await tx.ticketMessage.findMany({
+        where: {
+          ticketId: currentPrimary.id,
+        },
+        select: {
+          id: true,
+          externalMessageId: true,
+        },
+      });
+      const duplicateMessages = await tx.ticketMessage.findMany({
+        where: {
+          ticketId: { in: duplicateIds },
+        },
+        select: {
+          id: true,
+          ticketId: true,
+          externalMessageId: true,
+          createdAt: true,
+        },
+      });
+
+      const primaryExternalIds = new Set(
+        primaryMessages
+          .map((message) => message.externalMessageId)
+          .filter((value): value is string => typeof value === 'string' && value.length > 0),
+      );
+
+      const duplicateMessageIdsToDelete = duplicateMessages
+        .filter((message) => message.externalMessageId && primaryExternalIds.has(message.externalMessageId))
+        .map((message) => message.id);
+
+      const duplicateMessageIdsToMove = duplicateMessages
+        .filter((message) => !duplicateMessageIdsToDelete.includes(message.id))
+        .map((message) => message.id);
+
+      if (duplicateMessageIdsToMove.length > 0) {
+        await tx.ticketMessage.updateMany({
+          where: {
+            id: { in: duplicateMessageIdsToMove },
+          },
+          data: {
+            ticketId: currentPrimary.id,
+          },
+        });
+      }
+
+      if (duplicateMessageIdsToDelete.length > 0) {
+        await tx.ticketMessage.deleteMany({
+          where: {
+            id: { in: duplicateMessageIdsToDelete },
+          },
+        });
+      }
+
+      await tx.ticketEvent.updateMany({
+        where: {
+          ticketId: { in: duplicateIds },
+        },
+        data: {
+          ticketId: currentPrimary.id,
+        },
+      });
+
+      await tx.ticketAssignment.updateMany({
+        where: {
+          ticketId: { in: duplicateIds },
+        },
+        data: {
+          ticketId: currentPrimary.id,
+        },
+      });
+
+      await tx.ticketChatAlias.updateMany({
+        where: {
+          ticketId: { in: duplicateIds },
+        },
+        data: {
+          ticketId: currentPrimary.id,
+          lastSeenAt: new Date(),
+        },
+      });
+
+      const mergedStatuses = [currentPrimary.status, ...currentDuplicates.map((ticket) => ticket.status)];
+      const latestPreviewOwner = [currentPrimary, ...currentDuplicates]
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+
+      const updatedPrimary = await tx.ticket.update({
+        where: { id: currentPrimary.id },
+        data: {
+          customerId: currentPrimary.customerId ?? currentDuplicates.find((ticket) => ticket.customerId)?.customerId ?? null,
+          externalContactId: currentPrimary.externalContactId ?? currentDuplicates.find((ticket) => ticket.externalContactId)?.externalContactId ?? null,
+          customerNameSnapshot: currentPrimary.customerNameSnapshot || currentDuplicates.find((ticket) => ticket.customerNameSnapshot)?.customerNameSnapshot || currentPrimary.externalChatId,
+          customerAvatarUrl: currentPrimary.customerAvatarUrl ?? currentDuplicates.find((ticket) => ticket.customerAvatarUrl)?.customerAvatarUrl ?? null,
+          currentAgentId: currentPrimary.currentAgentId ?? currentDuplicates.find((ticket) => ticket.currentAgentId)?.currentAgentId ?? null,
+          currentQueueId: currentPrimary.currentQueueId ?? currentDuplicates.find((ticket) => ticket.currentQueueId)?.currentQueueId ?? null,
+          status: pickMergedStatus(mergedStatuses),
+          unreadCount: currentPrimary.unreadCount + currentDuplicates.reduce((sum, ticket) => sum + ticket.unreadCount, 0),
+          lastMessagePreview: latestPreviewOwner.lastMessagePreview ?? currentPrimary.lastMessagePreview,
+          updatedAt: new Date(),
+        },
+      });
+
+      await tx.ticketEvent.create({
+        data: {
+          id: randomUUID(),
+          ticketId: updatedPrimary.id,
+          eventType: 'assigned',
+          actorUserId: session.userId,
+          metadata: {
+            action: 'merged_duplicates',
+            primaryTicketId: updatedPrimary.id,
+            mergedTicketIds: duplicateIds,
+            deletedDuplicateMessageIds: duplicateMessageIdsToDelete,
+          },
+        },
+      });
+
+      await tx.ticket.deleteMany({
+        where: {
+          id: { in: duplicateIds },
+        },
+      });
+
+      return {
+        primaryTicketId: updatedPrimary.id,
+        mergedTicketIds: duplicateIds,
+        movedMessageCount: duplicateMessageIdsToMove.length,
+        deletedDuplicateMessageCount: duplicateMessageIdsToDelete.length,
+      };
+    });
+
+    app.io.emit('ticket.updated', {
+      ticketId: merged.primaryTicketId,
+    });
+
+    app.io.emit('ticket.updated', {
+      bulkDeletedTicketIds: merged.mergedTicketIds,
+    });
+
+    return reply.code(201).send(merged);
+  });
+};
