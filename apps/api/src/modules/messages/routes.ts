@@ -15,6 +15,10 @@ import { loadEnv } from '../../config/env.js';
 import { decryptSecret, encryptSecret } from '../../lib/secrets.js';
 import type { PermissionMap } from '../../lib/permissions.js';
 import { deliverOutboundMessage } from '../../lib/outbound-messages.js';
+import {
+  groupTicketHiddenUsersInclude,
+  isGroupTicketHiddenForViewer,
+} from '../../lib/group-ticket-visibility.js';
 
 const outgoingAttachmentSchema = z.object({
   kind: z.enum(['image', 'audio', 'document']),
@@ -391,16 +395,23 @@ async function fetchEvolutionAttachmentDataUrl(params: {
 
 function canViewTicket(
   viewerId: string,
+  viewerRole: 'admin' | 'agent',
   permissions: PermissionMap,
   viewerQueueIds: string[],
-  ticket: { currentAgentId: string | null; currentQueueId?: string | null; status?: string | null; isGroup?: boolean | null },
+  ticket: {
+    currentAgentId: string | null;
+    currentQueueId?: string | null;
+    status?: string | null;
+    isGroup?: boolean | null;
+    hiddenForUsers?: Array<{ userId: string }>;
+  },
 ) {
   if (ticket.status === 'closed' && !permissions['tickets.closedView']) {
     return false;
   }
 
   if (ticket.isGroup) {
-    return permissions['tickets.groups'];
+    return permissions['tickets.groups'] && !isGroupTicketHiddenForViewer(ticket, { id: viewerId, role: viewerRole });
   }
 
   if (permissions['tickets.viewAll']) {
@@ -431,12 +442,19 @@ function canViewTicket(
 
 function canReplyToTicket(
   viewerId: string,
+  viewerRole: 'admin' | 'agent',
   permissions: PermissionMap,
   viewerQueueIds: string[],
-  ticket: { currentAgentId: string | null; currentQueueId?: string | null; status?: string | null; isGroup?: boolean | null },
+  ticket: {
+    currentAgentId: string | null;
+    currentQueueId?: string | null;
+    status?: string | null;
+    isGroup?: boolean | null;
+    hiddenForUsers?: Array<{ userId: string }>;
+  },
 ) {
   if (ticket.isGroup) {
-    return permissions['tickets.groups'];
+    return permissions['tickets.groups'] && !isGroupTicketHiddenForViewer(ticket, { id: viewerId, role: viewerRole });
   }
 
   if (ticket.currentAgentId === viewerId) {
@@ -447,7 +465,7 @@ function canReplyToTicket(
     return false;
   }
 
-  return canViewTicket(viewerId, permissions, viewerQueueIds, ticket);
+  return canViewTicket(viewerId, viewerRole, permissions, viewerQueueIds, ticket);
 }
 
 function formatAgentSignedBody(agentName: string, body: string) {
@@ -814,6 +832,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
             ticket: {
               include: {
                 whatsappInstance: true,
+                hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
               },
             },
           },
@@ -825,7 +844,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Anexo nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, access.queueIds, attachment.message.ticket)) {
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, attachment.message.ticket)) {
       return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
     }
 
@@ -940,14 +959,21 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
     const ticket = await app.prisma.ticket.findUnique({
       where: { id: params.ticketId },
-      select: { id: true, currentAgentId: true, currentQueueId: true, status: true, isGroup: true },
+      select: {
+        id: true,
+        currentAgentId: true,
+        currentQueueId: true,
+        status: true,
+        isGroup: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
+      },
     });
 
     if (!ticket) {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
     }
 
@@ -1045,6 +1071,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         ticket: {
           include: {
             whatsappInstance: true,
+            hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
           },
         },
       },
@@ -1054,7 +1081,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Mensagem de origem nao encontrada.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, access.queueIds, sourceMessage.ticket)) {
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, sourceMessage.ticket)) {
       return reply.forbidden('Voce nao possui permissao para visualizar a mensagem de origem.');
     }
 
@@ -1071,6 +1098,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       include: {
         currentAgent: true,
         whatsappInstance: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
@@ -1078,7 +1106,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket de destino nao encontrado.');
     }
 
-    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, targetTicket)) {
+    if (!canReplyToTicket(session.userId, access.user.role, access.permissions, access.queueIds, targetTicket)) {
       return reply.forbidden('Apenas o agente responsavel pode responder este ticket.');
     }
 
@@ -1145,6 +1173,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       include: {
         currentAgent: true,
         whatsappInstance: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
@@ -1152,7 +1181,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+    if (!canReplyToTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Apenas o agente responsavel pode editar mensagens deste ticket.');
     }
 
@@ -1302,6 +1331,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       include: {
         currentAgent: true,
         whatsappInstance: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
@@ -1309,7 +1339,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+    if (!canReplyToTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Apenas o agente responsavel pode reagir neste ticket.');
     }
 
@@ -1389,6 +1419,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       include: {
         currentAgent: true,
         whatsappInstance: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
@@ -1396,7 +1427,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+    if (!canReplyToTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Apenas o agente responsavel pode apagar mensagens neste ticket.');
     }
 
@@ -1496,6 +1527,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         currentQueueId: true,
         status: true,
         isGroup: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
@@ -1503,7 +1535,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
     }
 
@@ -1557,6 +1589,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         currentQueueId: true,
         status: true,
         isGroup: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
@@ -1564,7 +1597,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Voce nao possui permissao para apagar mensagens neste ticket.');
     }
 
@@ -1633,6 +1666,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       include: {
         currentAgent: true,
         whatsappInstance: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
@@ -1640,7 +1674,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+    if (!canReplyToTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Apenas o agente responsavel pode responder este ticket.');
     }
 

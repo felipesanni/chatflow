@@ -3,6 +3,10 @@ import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import { Prisma } from '@prisma/client';
 import { requirePermission } from '../../lib/auth-guard.js';
+import {
+  groupTicketHiddenUsersInclude,
+  isGroupTicketHiddenForViewer,
+} from '../../lib/group-ticket-visibility.js';
 
 const outgoingAttachmentSchema = z.object({
   kind: z.enum(['image', 'audio', 'document']),
@@ -104,12 +108,19 @@ function mapScheduledMessage(item: {
 
 function canReplyToTicket(
   viewerId: string,
+  viewerRole: 'admin' | 'agent',
   permissions: Record<string, boolean>,
   viewerQueueIds: string[],
-  ticket: { currentAgentId: string | null; currentQueueId?: string | null; status?: string | null; isGroup?: boolean | null },
+  ticket: {
+    currentAgentId: string | null;
+    currentQueueId?: string | null;
+    status?: string | null;
+    isGroup?: boolean | null;
+    hiddenForUsers?: Array<{ userId: string }>;
+  },
 ) {
   if (ticket.isGroup) {
-    return permissions['tickets.groups'];
+    return permissions['tickets.groups'] && !isGroupTicketHiddenForViewer(ticket, { id: viewerId, role: viewerRole });
   }
 
   if (ticket.status === 'closed') {
@@ -129,14 +140,21 @@ function canReplyToTicket(
 
 function canCancelScheduledMessage(
   viewerId: string,
+  viewerRole: 'admin' | 'agent',
   permissions: Record<string, boolean>,
   viewerQueueIds: string[],
   scheduled: {
     createdByUserId: string;
-    ticket: { currentAgentId: string | null; currentQueueId?: string | null; status?: string | null; isGroup?: boolean | null };
+    ticket: {
+      currentAgentId: string | null;
+      currentQueueId?: string | null;
+      status?: string | null;
+      isGroup?: boolean | null;
+      hiddenForUsers?: Array<{ userId: string }>;
+    };
   },
 ) {
-  if (!canViewTicket(viewerId, permissions, viewerQueueIds, scheduled.ticket)) {
+  if (!canViewTicket(viewerId, viewerRole, permissions, viewerQueueIds, scheduled.ticket)) {
     return false;
   }
 
@@ -157,12 +175,19 @@ function canCancelScheduledMessage(
 
 function canViewTicket(
   viewerId: string,
+  viewerRole: 'admin' | 'agent',
   permissions: Record<string, boolean>,
   viewerQueueIds: string[],
-  ticket: { currentAgentId: string | null; currentQueueId?: string | null; status?: string | null; isGroup?: boolean | null },
+  ticket: {
+    currentAgentId: string | null;
+    currentQueueId?: string | null;
+    status?: string | null;
+    isGroup?: boolean | null;
+    hiddenForUsers?: Array<{ userId: string }>;
+  },
 ) {
   if (ticket.isGroup) {
-    return permissions['tickets.groups'];
+    return permissions['tickets.groups'] && !isGroupTicketHiddenForViewer(ticket, { id: viewerId, role: viewerRole });
   }
 
   if (ticket.currentAgentId && ticket.currentAgentId !== viewerId && !permissions['tickets.viewOthers']) {
@@ -236,6 +261,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
                 name: true,
               },
             },
+            hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
           },
         },
       },
@@ -243,7 +269,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
 
     return {
       items: items
-        .filter((item) => canViewTicket(session.userId, access.permissions, access.queueIds, item.ticket))
+        .filter((item) => canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, item.ticket))
         .map((item) => mapScheduledMessage(item)),
     };
   });
@@ -259,6 +285,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
       where: { id: params.ticketId },
       include: {
         currentAgent: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
@@ -266,7 +293,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Voce nao pode visualizar este ticket.');
     }
 
@@ -325,6 +352,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
       where: { id: params.ticketId },
       include: {
         currentAgent: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
@@ -336,7 +364,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
       return reply.badRequest('Nao e possivel agendar mensagem para ticket fechado.');
     }
 
-    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+    if (!canReplyToTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Apenas o agente responsavel pode agendar mensagens neste ticket.');
     }
 
@@ -405,6 +433,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
         ticket: {
           include: {
             currentAgent: true,
+            hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
           },
         },
         createdByUser: {
@@ -425,7 +454,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Mensagem agendada nao encontrada.');
     }
 
-    if (!canReplyToTicket(session.userId, access.permissions, access.queueIds, scheduled.ticket)) {
+    if (!canReplyToTicket(session.userId, access.user.role, access.permissions, access.queueIds, scheduled.ticket)) {
       return reply.forbidden('Apenas o agente responsavel pode editar mensagens agendadas neste ticket.');
     }
 
@@ -490,6 +519,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
                 name: true,
               },
             },
+            hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
           },
         },
       },
@@ -530,6 +560,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
         ticket: {
           include: {
             currentAgent: true,
+            hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
           },
         },
       },
@@ -539,7 +570,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Mensagem agendada nao encontrada.');
     }
 
-    if (!canCancelScheduledMessage(session.userId, access.permissions, access.queueIds, scheduled)) {
+    if (!canCancelScheduledMessage(session.userId, access.user.role, access.permissions, access.queueIds, scheduled)) {
       return reply.forbidden('Apenas o agente responsavel pode cancelar mensagens agendadas neste ticket.');
     }
 
@@ -585,6 +616,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
         ticket: {
           include: {
             currentAgent: true,
+            hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
           },
         },
       },
@@ -594,7 +626,7 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Mensagem agendada nao encontrada.');
     }
 
-    if (!canCancelScheduledMessage(session.userId, access.permissions, access.queueIds, scheduled)) {
+    if (!canCancelScheduledMessage(session.userId, access.user.role, access.permissions, access.queueIds, scheduled)) {
       return reply.forbidden('Apenas o agente responsavel pode cancelar mensagens agendadas neste ticket.');
     }
 

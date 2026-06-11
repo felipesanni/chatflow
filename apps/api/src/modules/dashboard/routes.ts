@@ -3,6 +3,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { Prisma, type TicketStatus } from '@prisma/client';
 import { requirePermission } from '../../lib/auth-guard.js';
 import type { PermissionMap } from '../../lib/permissions.js';
+import { groupTicketVisibilityWhere } from '../../lib/group-ticket-visibility.js';
 
 const dashboardQuerySchema = z.object({
   range: z.enum(['today', '7d', '30d']).optional().default('7d'),
@@ -124,13 +125,19 @@ function buildVisibleTicketWhere(
   permissions: PermissionMap,
   queueIds: string[],
   userId: string,
+  userRole: 'admin' | 'agent',
 ) {
+  const hiddenGroupConstraint = groupTicketVisibilityWhere({ id: userId, role: userRole });
+
   if (permissions['tickets.viewAll']) {
-    return {};
+    return hiddenGroupConstraint;
   }
 
   return {
-    OR: buildVisibilityFilters(permissions, queueIds, userId),
+    AND: [
+      { OR: buildVisibilityFilters(permissions, queueIds, userId) },
+      hiddenGroupConstraint,
+    ],
   };
 }
 
@@ -169,7 +176,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
 
     const query = dashboardQuerySchema.parse(request.query);
     const range = buildRange(query.range);
-    const visibleTicketWhere = buildVisibleTicketWhere(access.permissions, access.queueIds, access.session.userId);
+    const visibleTicketWhere = buildVisibleTicketWhere(access.permissions, access.queueIds, access.session.userId, access.user.role);
     const selectedAgentId = query.agentId ?? null;
 
     if (selectedAgentId && selectedAgentId !== access.session.userId && !access.permissions['team.view']) {

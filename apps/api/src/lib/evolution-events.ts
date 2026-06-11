@@ -299,6 +299,50 @@ function isEmptyPlaceholderUpdate(parsed: ReturnType<typeof parseEvolutionPayloa
     && ['mensagem vazia', 'midia recebida'].includes(parsed.body.trim().toLowerCase());
 }
 
+function hasProtocolMarker(value: unknown, depth = 0, seen = new WeakSet<object>()): boolean {
+  if (depth > 8) {
+    return false;
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((item) => hasProtocolMarker(item, depth + 1, seen));
+  }
+
+  const record = pickObject(value);
+  if (!record) {
+    return false;
+  }
+
+  if (seen.has(record)) {
+    return false;
+  }
+
+  seen.add(record);
+
+  const messageType = typeof record.messageType === 'string' ? record.messageType.trim().toLowerCase() : '';
+  if (
+    record.protocolMessage
+    || record.messageStubType
+    || record.messageStubParameters
+    || messageType === 'protocolmessage'
+    || messageType === 'protocol_message'
+  ) {
+    return true;
+  }
+
+  return Object.values(record).some((child) => hasProtocolMarker(child, depth + 1, seen));
+}
+
+function isNonRenderableProtocolPlaceholder(parsed: ReturnType<typeof parseEvolutionPayload>) {
+  return !parsed.isEdited
+    && !parsed.reaction
+    && !parsed.deletion
+    && parsed.attachments.length === 0
+    && parsed.contentType === 'other'
+    && ['mensagem vazia', 'midia recebida'].includes(parsed.body.trim().toLowerCase())
+    && hasProtocolMarker(parsed.rawPayload);
+}
+
 function normalizeStoredReactions(value: unknown) {
   if (!Array.isArray(value)) {
     return [] as Array<{
@@ -726,6 +770,27 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         statusCode: 202,
         body: {
           message: 'Evento de atualizacao sem conteudo ignorado.',
+          event: parsed.event,
+          externalMessageId: parsed.externalMessageId,
+        },
+      };
+    }
+
+    if (isNonRenderableProtocolPlaceholder(parsed)) {
+      app.log.info({
+        action: 'evolution_protocol_placeholder_ignored',
+        event: parsed.event,
+        instanceId: instance.id,
+        externalMessageId: parsed.externalMessageId,
+        remoteJid: parsed.remoteJid,
+        body: parsed.body,
+      }, 'Evento de protocolo sem conteudo renderizavel ignorado para evitar mensagem falsa.');
+
+      await finalize(202, 'Evento de protocolo sem conteudo renderizavel ignorado.');
+      return {
+        statusCode: 202,
+        body: {
+          message: 'Evento de protocolo registrado sem criar mensagem.',
           event: parsed.event,
           externalMessageId: parsed.externalMessageId,
         },

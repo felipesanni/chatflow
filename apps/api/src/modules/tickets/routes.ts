@@ -12,6 +12,11 @@ import {
   normalizeTicketRemoteJid,
   withTicketIdentityLock,
 } from '../../lib/ticket-identity.js';
+import {
+  groupTicketHiddenUsersInclude,
+  groupTicketVisibilityWhere,
+  isGroupTicketHiddenForViewer,
+} from '../../lib/group-ticket-visibility.js';
 
 const booleanQueryParam = z.preprocess((value) => {
   if (value === undefined || value === null || value === '') {
@@ -99,6 +104,10 @@ const closeTicketBodySchema = z.preprocess((value) => {
 
 const updateGroupNameBodySchema = z.object({
   name: z.string().trim().max(120).nullable().optional(),
+});
+
+const updateGroupHiddenUsersBodySchema = z.object({
+  userIds: z.array(z.string().uuid()).max(500, 'Limite de 500 usuarios por grupo.').default([]),
 });
 
 function normalizePhone(value: string) {
@@ -340,16 +349,23 @@ function serializeTicketHistoryAssignment(assignment: any) {
 
 function canViewTicket(
   viewerId: string,
+  viewerRole: 'admin' | 'agent',
   permissions: PermissionMap,
   viewerQueueIds: string[],
-  ticket: { currentAgentId: string | null; currentQueueId: string | null; status?: string | null; isGroup?: boolean | null },
+  ticket: {
+    currentAgentId: string | null;
+    currentQueueId: string | null;
+    status?: string | null;
+    isGroup?: boolean | null;
+    hiddenForUsers?: Array<{ userId: string }>;
+  },
 ) {
   if (ticket.status === 'closed' && !permissions['tickets.closedView']) {
     return false;
   }
 
   if (ticket.isGroup) {
-    return permissions['tickets.groups'];
+    return permissions['tickets.groups'] && !isGroupTicketHiddenForViewer(ticket, { id: viewerId, role: viewerRole });
   }
 
   if (permissions['tickets.viewAll']) {
@@ -577,6 +593,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
               OR: visibilityFilters,
             }]
           : []),
+        groupTicketVisibilityWhere({ id: session.userId, role: access.user.role }),
         ...(query.search
           ? [{
               OR: [
@@ -596,6 +613,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         currentAgent: true,
         currentQueue: true,
         whatsappInstance: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
         events: {
           where: { eventType: { in: ['nudged', 'transferred'] } },
           orderBy: { createdAt: 'desc' },
@@ -658,7 +676,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
     }
 
@@ -706,6 +724,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         currentAgent: true,
         currentQueue: true,
         whatsappInstance: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
@@ -713,7 +732,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
     }
 
@@ -818,6 +837,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         currentAgent: true,
         currentQueue: true,
         whatsappInstance: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
@@ -829,7 +849,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       return reply.badRequest('Somente grupos aceitam apelido manual.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, access.queueIds, currentTicket)) {
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, currentTicket)) {
       return reply.forbidden('Voce nao possui permissao para editar este grupo.');
     }
 
@@ -872,6 +892,164 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     return {
       item: serializeTicket(ticket),
     };
+  });
+
+  app.get('/tickets/:ticketId/group-hidden-users', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.groups');
+    if (!access) return;
+
+    if (access.user.role !== 'admin') {
+      return reply.forbidden('Apenas administradores podem gerenciar a visibilidade de grupos.');
+    }
+
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const ticket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      select: {
+        id: true,
+        isGroup: true,
+        hiddenForUsers: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+                role: true,
+                status: true,
+                agent: {
+                  select: {
+                    name: true,
+                  },
+                },
+              },
+            },
+            hiddenByUser: {
+              select: {
+                id: true,
+                email: true,
+                agent: {
+                  select: {
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: {
+            hiddenAt: 'desc',
+          },
+        },
+      },
+    });
+
+    if (!ticket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!ticket.isGroup) {
+      return reply.badRequest('A visibilidade por usuario esta disponivel somente para grupos.');
+    }
+
+    return {
+      items: ticket.hiddenForUsers.map((item) => ({
+        userId: item.userId,
+        hiddenAt: item.hiddenAt,
+        user: {
+          id: item.user.id,
+          email: item.user.email,
+          name: item.user.agent?.name ?? item.user.email,
+          role: item.user.role,
+          status: item.user.status,
+        },
+        hiddenBy: item.hiddenByUser
+          ? {
+              id: item.hiddenByUser.id,
+              email: item.hiddenByUser.email,
+              name: item.hiddenByUser.agent?.name ?? item.hiddenByUser.email,
+            }
+          : null,
+      })),
+    };
+  });
+
+  app.put('/tickets/:ticketId/group-hidden-users', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.groups');
+    if (!access) return;
+
+    if (access.user.role !== 'admin') {
+      return reply.forbidden('Apenas administradores podem gerenciar a visibilidade de grupos.');
+    }
+
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const body = updateGroupHiddenUsersBodySchema.parse(request.body ?? {});
+    const uniqueUserIds = Array.from(new Set(body.userIds));
+
+    const ticket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      select: {
+        id: true,
+        isGroup: true,
+      },
+    });
+
+    if (!ticket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!ticket.isGroup) {
+      return reply.badRequest('A visibilidade por usuario esta disponivel somente para grupos.');
+    }
+
+    const users = uniqueUserIds.length > 0
+      ? await app.prisma.user.findMany({
+          where: {
+            id: { in: uniqueUserIds },
+            role: 'agent',
+          },
+          select: {
+            id: true,
+          },
+        })
+      : [];
+    const validUserIds = users.map((user) => user.id);
+
+    if (validUserIds.length !== uniqueUserIds.length) {
+      return reply.badRequest('Informe apenas usuarios agentes validos. Administradores nao podem ser ocultados.');
+    }
+
+    await app.prisma.$transaction(async (tx) => {
+      await tx.ticketGroupHiddenUser.deleteMany({
+        where: {
+          ticketId: ticket.id,
+          userId: {
+            notIn: validUserIds,
+          },
+        },
+      });
+
+      if (validUserIds.length > 0) {
+        await tx.ticketGroupHiddenUser.createMany({
+          data: validUserIds.map((userId) => ({
+            ticketId: ticket.id,
+            userId,
+            hiddenByUserId: access.session.userId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+    });
+
+    app.io.emit('ticket.updated', {
+      ticketId: ticket.id,
+      groupVisibilityUpdated: true,
+    });
+
+    return reply.code(200).send({
+      item: {
+        ticketId: ticket.id,
+        hiddenUserIds: validUserIds,
+      },
+    });
   });
 
 
@@ -1031,6 +1209,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       where: { id: params.ticketId },
       include: {
         currentAgent: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
@@ -1038,7 +1217,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, access.queueIds, currentTicket)) {
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, currentTicket)) {
       return reply.forbidden('Voce nao possui permissao para assumir este ticket.');
     }
 
@@ -1220,6 +1399,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         currentAgent: true,
         currentQueue: true,
         whatsappInstance: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
@@ -1227,7 +1407,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, access.queueIds, currentTicket)) {
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, currentTicket)) {
       return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
     }
 
@@ -1475,11 +1655,13 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         id: true,
         currentAgentId: true,
         currentQueueId: true,
+        isGroup: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
     const allowedIds = tickets
-      .filter((ticket) => canViewTicket(session.userId, access.permissions, access.queueIds, ticket))
+      .filter((ticket) => canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket))
       .map((ticket) => ticket.id);
 
     if (allowedIds.length === 0) {
@@ -1514,6 +1696,8 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         id: true,
         currentAgentId: true,
         currentQueueId: true,
+        isGroup: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
@@ -1521,7 +1705,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket)) {
       return reply.forbidden('Voce nao possui permissao para apagar este ticket.');
     }
 
@@ -1552,6 +1736,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       },
       include: {
         whatsappInstance: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
       },
     });
 
@@ -1566,12 +1751,12 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
 
     const duplicateTickets = tickets.filter((ticket) => body.duplicateTicketIds.includes(ticket.id));
 
-    if (!canViewTicket(session.userId, access.permissions, access.queueIds, primaryTicket)) {
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, primaryTicket)) {
       return reply.forbidden('Voce nao possui permissao para mesclar o ticket principal.');
     }
 
     for (const ticket of duplicateTickets) {
-      if (!canViewTicket(session.userId, access.permissions, access.queueIds, ticket)) {
+      if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket)) {
         return reply.forbidden('Voce nao possui permissao para mesclar um ou mais tickets duplicados.');
       }
     }

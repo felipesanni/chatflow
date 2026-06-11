@@ -482,6 +482,19 @@ const operationalStatements = [
     CREATE INDEX IF NOT EXISTS tickets_current_queue_id_last_message_at_idx ON tickets(current_queue_id, last_message_at DESC);
   `,
   `
+    CREATE TABLE IF NOT EXISTS ticket_group_hidden_users (
+      ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      hidden_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      hidden_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (ticket_id, user_id)
+    );
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS ticket_group_hidden_users_user_id_idx
+      ON ticket_group_hidden_users(user_id);
+  `,
+  `
     CREATE UNIQUE INDEX IF NOT EXISTS tickets_open_contact_instance_idx
       ON tickets(whatsapp_instance_id, external_chat_id)
       WHERE status IN ('open', 'pending');

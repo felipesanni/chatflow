@@ -123,6 +123,8 @@ model User {
   browserPushSubscriptions BrowserPushSubscription[]
   createdAutomations Automation[] @relation("automation_created_by")
   updatedAutomations Automation[] @relation("automation_updated_by")
+  hiddenGroupTickets TicketGroupHiddenUser[] @relation("group_ticket_hidden_user")
+  hiddenGroupTicketsCreated TicketGroupHiddenUser[] @relation("group_ticket_hidden_by_user")
 
   @@map("users")
 }
@@ -280,11 +282,26 @@ model Ticket {
   assignments          TicketAssignment[]
   events               TicketEvent[]
   scheduledMessages    ScheduledMessage[]
+  hiddenForUsers       TicketGroupHiddenUser[]
 
   @@index([status, lastMessageAt(sort: Desc)])
   @@index([currentAgentId, lastMessageAt(sort: Desc)])
   @@index([currentQueueId, lastMessageAt(sort: Desc)])
   @@map("tickets")
+}
+
+model TicketGroupHiddenUser {
+  ticketId       String   @map("ticket_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  hiddenByUserId String?  @map("hidden_by_user_id") @db.Uuid
+  hiddenAt       DateTime @default(now()) @map("hidden_at")
+  ticket         Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user           User     @relation("group_ticket_hidden_user", fields: [userId], references: [id], onDelete: Cascade)
+  hiddenByUser   User?    @relation("group_ticket_hidden_by_user", fields: [hiddenByUserId], references: [id], onDelete: SetNull)
+
+  @@id([ticketId, userId])
+  @@index([userId])
+  @@map("ticket_group_hidden_users")
 }
 
 model Automation {

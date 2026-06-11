@@ -26,6 +26,12 @@ export async function notifyInboundTicketMessage(
       customerNameSnapshot: true,
       customerAvatarUrl: true,
       currentAgentId: true,
+      isGroup: true,
+      hiddenForUsers: {
+        select: {
+          userId: true,
+        },
+      },
       currentQueue: {
         select: {
           queueAgents: {
@@ -49,9 +55,13 @@ export async function notifyInboundTicketMessage(
     return;
   }
 
-  const recipientUserIds = ticket.currentAgentId
+  const rawRecipientUserIds = ticket.currentAgentId
     ? [ticket.currentAgentId]
     : ticket.currentQueue?.queueAgents.map((link) => link.agentId) ?? [];
+  const hiddenUserIds = ticket.isGroup
+    ? new Set(ticket.hiddenForUsers.map((item) => item.userId))
+    : new Set<string>();
+  const recipientUserIds = rawRecipientUserIds.filter((userId) => !hiddenUserIds.has(userId));
 
   if (recipientUserIds.length === 0) {
     app.log.info(
