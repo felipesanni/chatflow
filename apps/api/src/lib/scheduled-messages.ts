@@ -32,13 +32,24 @@ export async function processScheduledMessage(app: FastifyInstance, scheduledMes
     return scheduledMessage;
   }
 
-  await app.prisma.scheduledMessage.update({
-    where: { id: scheduledMessageId },
+  const claim = await app.prisma.scheduledMessage.updateMany({
+    where: {
+      id: scheduledMessageId,
+      status: {
+        in: ['pending', 'failed'],
+      },
+    },
     data: {
       status: 'processing',
       errorMessage: null,
     },
   });
+
+  if (claim.count === 0) {
+    return app.prisma.scheduledMessage.findUnique({
+      where: { id: scheduledMessageId },
+    });
+  }
 
   try {
     await deliverOutboundMessage(app, {

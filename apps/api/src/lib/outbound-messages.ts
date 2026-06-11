@@ -264,8 +264,21 @@ export async function deliverOutboundMessage(app: FastifyInstance, params: Deliv
   }
 
   const quotedMessage = params.replyToMessageId
-    ? await app.prisma.ticketMessage.findUnique({ where: { id: params.replyToMessageId } })
+    ? await app.prisma.ticketMessage.findFirst({
+        where: {
+          id: params.replyToMessageId,
+          ticketId: ticket.id,
+        },
+        select: {
+          id: true,
+          externalMessageId: true,
+        },
+      })
     : null;
+
+  if (params.replyToMessageId && !quotedMessage) {
+    throw new Error('Mensagem citada nao encontrada neste ticket.');
+  }
 
   const actorName = actor.agent?.name ?? actor.email;
   const signedBody = shouldSignOutboundBody({
@@ -348,7 +361,7 @@ export async function deliverOutboundMessage(app: FastifyInstance, params: Deliv
       contentType: attachmentInput?.kind ?? 'text',
       body: signedBody || (attachmentInput ? `[${attachmentInput.kind}] ${attachmentInput.fileName}` : null),
       senderNameSnapshot: actorName,
-      replyToMessageId: params.replyToMessageId ?? null,
+      replyToMessageId: quotedMessage?.id ?? null,
       deliveredAt: isInternalNote ? null : new Date(),
       rawPayload: isInternalNote ? withInternalNote(messageMetadata as unknown as Prisma.JsonValue | null) : mergeRawPayload(null, messageMetadata),
     },

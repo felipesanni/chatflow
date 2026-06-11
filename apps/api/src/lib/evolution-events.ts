@@ -67,6 +67,7 @@ async function findAliasedActiveTicket(
   params: {
     whatsappInstanceId: string;
     aliases: string[];
+    isGroup: boolean;
   },
 ) {
   if (params.aliases.length === 0) {
@@ -83,6 +84,7 @@ async function findAliasedActiveTicket(
         status: {
           in: ['open', 'pending'],
         },
+        isGroup: params.isGroup,
       },
     },
     include: {
@@ -576,12 +578,16 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
       const metadataAliases = extractMetadataAliases(params.payload, parsed);
       const metadataPhone = resolveMetadataPhone(metadataAliases, parsed.phone);
       const metadataIsGroup = metadataAliases.some((alias) => alias.includes('@g.us'));
-      const metadataRemoteJid = parsed.remoteJid
+      const metadataGroupJid = (parsed.remoteJid?.includes('@g.us') ? parsed.remoteJid : null)
         ?? metadataAliases.find((alias) => alias.includes('@g.us'))
-        ?? metadataAliases.find((alias) => alias.endsWith('@s.whatsapp.net'))
-        ?? metadataAliases.find((alias) => alias.endsWith('@c.us'))
-        ?? metadataAliases.find((alias) => alias.includes('@'))
         ?? null;
+      const metadataRemoteJid = metadataIsGroup
+        ? metadataGroupJid
+        : parsed.remoteJid
+          ?? metadataAliases.find((alias) => alias.endsWith('@s.whatsapp.net'))
+          ?? metadataAliases.find((alias) => alias.endsWith('@c.us'))
+          ?? metadataAliases.find((alias) => alias.includes('@'))
+          ?? null;
       const metadataDisplayName = extractMetadataDisplayName(params.payload, parsed);
         const fetchedMetadataGroupLookup =
           metadataIsGroup
@@ -639,11 +645,13 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           canonicalChatId: metadataCanonicalChatId,
           contactId: metadataIdentity.contactId,
           aliases: metadataAliases,
+          isGroup: metadataIsGroup,
         });
 
         const aliasedTicket = await findAliasedActiveTicket(app.prisma, {
           whatsappInstanceId: instance.id,
           aliases: aliasCandidates,
+          isGroup: metadataIsGroup,
         });
         const existingTicket = aliasedTicket ?? (metadataCanonicalChatId
           ? await app.prisma.ticket.findFirst({
@@ -970,12 +978,14 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
       canonicalChatId: preliminaryExternalChatId,
       contactId: preliminaryChatIdentity.contactId,
       aliases: parsed.chatAliases,
+      isGroup: parsed.isGroup,
     });
     const aliasedTicket = preMatchedOutboundMessage
       ? null
       : await findAliasedActiveTicket(app.prisma, {
           whatsappInstanceId: instance.id,
           aliases: preliminaryAliasCandidates,
+          isGroup: parsed.isGroup,
         });
 
     if (
@@ -1202,6 +1212,18 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         return null;
       }
 
+      const replyToMessage = parsed.quotedMessage?.externalMessageId
+        ? await tx.ticketMessage.findFirst({
+            where: {
+              ticketId: ticket.id,
+              externalMessageId: parsed.quotedMessage.externalMessageId,
+            },
+            select: {
+              id: true,
+            },
+          })
+        : null;
+
       const message = await tx.ticketMessage.create({
         data: {
           id: randomUUID(),
@@ -1212,6 +1234,7 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           body: parsed.body,
           senderNameSnapshot: parsed.pushName ?? parsed.phone ?? parsed.remoteJid,
           rawPayload: parsed.rawPayload as Prisma.InputJsonValue,
+          replyToMessageId: replyToMessage?.id ?? null,
         },
       });
 

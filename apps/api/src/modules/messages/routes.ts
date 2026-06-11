@@ -1644,10 +1644,6 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.forbidden('Apenas o agente responsavel pode responder este ticket.');
     }
 
-    const quotedMessage = body.replyToMessageId
-      ? await app.prisma.ticketMessage.findUnique({ where: { id: body.replyToMessageId } })
-      : null;
-
     const attachmentInput = body.attachment;
     const agentSignature = ticket.currentAgent?.name ?? session.email;
     const isInternalNote = body.internalNote === true;
@@ -1661,13 +1657,17 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         ticketId: ticket.id,
         actorUserId: session.userId,
         body: body.body,
-        replyToMessageId: quotedMessage?.id ?? undefined,
+        replyToMessageId: body.replyToMessageId ?? undefined,
         attachment: body.attachment,
         internalNote: isInternalNote,
       });
 
       return reply.code(201).send({ item: delivered.message });
     } catch (error) {
+      if (error instanceof Error && error.message === 'Mensagem citada nao encontrada neste ticket.') {
+        return reply.badRequest(error.message);
+      }
+
       if (error instanceof Error && error.message === 'Falha ao enviar a mensagem para a Evolution API.') {
         const cause = (error as Error & { cause?: { status?: number; payload?: unknown } }).cause;
         return reply.code(400).send({

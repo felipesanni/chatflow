@@ -340,6 +340,22 @@ export const scheduledMessageRoutes: FastifyPluginAsync = async (app) => {
       return reply.forbidden('Apenas o agente responsavel pode agendar mensagens neste ticket.');
     }
 
+    if (body.replyToMessageId) {
+      const replyToMessage = await app.prisma.ticketMessage.findFirst({
+        where: {
+          id: body.replyToMessageId,
+          ticketId: ticket.id,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!replyToMessage) {
+        return reply.badRequest('Mensagem citada nao encontrada neste ticket.');
+      }
+    }
+
     const item = await app.prisma.scheduledMessage.create({
       data: {
         id: randomUUID(),

@@ -37,6 +37,10 @@ interface ParsedDeletionPayload {
   targetExternalMessageId: string;
 }
 
+interface ParsedQuotedMessagePayload {
+  externalMessageId: string;
+}
+
 interface ResolvedEvolutionContent {
   content: Record<string, any> | null;
   isEdited: boolean;
@@ -89,6 +93,79 @@ function unwrapMessageContainer(value: unknown): Record<string, any> | null {
     }
 
     current = next;
+  }
+
+  return null;
+}
+
+function isRenderableMessageContent(value: unknown) {
+  const record = pickObject(value);
+  if (!record) {
+    return false;
+  }
+
+  return Boolean(
+    typeof record.conversation === 'string'
+    || pickObject(record.extendedTextMessage)?.text
+    || record.imageMessage
+    || record.audioMessage
+    || record.videoMessage
+    || record.documentMessage
+    || record.stickerMessage
+    || record.contactMessage
+    || record.contactsArrayMessage,
+  );
+}
+
+function findRenderableMessageContent(value: unknown, depth = 0, seen = new WeakSet<object>()): Record<string, any> | null {
+  if (depth > 10) {
+    return null;
+  }
+
+  const direct = unwrapMessageContainer(value);
+  if (direct && isRenderableMessageContent(direct)) {
+    return direct;
+  }
+
+  const record = pickObject(value);
+  if (!record) {
+    return null;
+  }
+
+  if (seen.has(record)) {
+    return null;
+  }
+
+  seen.add(record);
+
+  if (isRenderableMessageContent(record)) {
+    return record as Record<string, any>;
+  }
+
+  const nestedCandidates = [
+    pickObject(record.protocolMessage)?.editedMessage,
+    record.editedMessage,
+    record.message,
+    record.ephemeralMessage,
+    record.viewOnceMessage,
+    record.viewOnceMessageV2,
+    record.viewOnceMessageV2Extension,
+    record.documentWithCaptionMessage,
+    record.protocolMessage,
+  ];
+
+  for (const candidate of nestedCandidates) {
+    const nested = findRenderableMessageContent(candidate, depth + 1, seen);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  for (const candidate of Object.values(record)) {
+    const nested = findRenderableMessageContent(candidate, depth + 1, seen);
+    if (nested) {
+      return nested;
+    }
   }
 
   return null;
@@ -253,7 +330,7 @@ function findEditedProtocolMessage(value: unknown, depth = 0): { editedMessage: 
   }
 
   const protocolMessage = pickObject(record.protocolMessage);
-  const editedMessage = unwrapMessageContainer(protocolMessage?.editedMessage);
+  const editedMessage = findRenderableMessageContent(protocolMessage?.editedMessage);
 
   if (editedMessage) {
     return {
@@ -262,7 +339,7 @@ function findEditedProtocolMessage(value: unknown, depth = 0): { editedMessage: 
     };
   }
 
-  const directEditedMessage = unwrapMessageContainer(record.editedMessage);
+  const directEditedMessage = findRenderableMessageContent(record.editedMessage);
   if (directEditedMessage) {
     return {
       editedMessage: directEditedMessage,
@@ -586,6 +663,58 @@ function extractReactionPayload(message: EvolutionMessage | null, content: Recor
   };
 }
 
+function extractQuotedMessagePayload(
+  payload: Record<string, unknown>,
+  message: EvolutionMessage | null,
+  content: Record<string, any> | null,
+): ParsedQuotedMessagePayload | null {
+  const data = pickObject(payload.data);
+  const messageContent = pickObject(message?.message);
+  const contentContext = pickObject(content?.contextInfo);
+  const contextCandidates = [
+    contentContext,
+    pickObject(content?.extendedTextMessage)?.contextInfo,
+    pickObject(content?.imageMessage)?.contextInfo,
+    pickObject(content?.audioMessage)?.contextInfo,
+    pickObject(content?.videoMessage)?.contextInfo,
+    pickObject(content?.documentMessage)?.contextInfo,
+    pickObject(content?.stickerMessage)?.contextInfo,
+    pickObject(messageContent?.messageContextInfo),
+    pickObject(data?.contextInfo),
+    pickObject(data?.messageContextInfo),
+    pickObject(pickObject(data?.message)?.extendedTextMessage)?.contextInfo,
+    pickObject(pickObject(data?.message)?.imageMessage)?.contextInfo,
+    pickObject(pickObject(data?.message)?.audioMessage)?.contextInfo,
+    pickObject(pickObject(data?.message)?.videoMessage)?.contextInfo,
+    pickObject(pickObject(data?.message)?.documentMessage)?.contextInfo,
+    pickObject(pickObject(data?.message)?.stickerMessage)?.contextInfo,
+    pickObject(data?.quoted),
+    pickObject(data?.quotedMessage),
+    pickObject(payload.quoted),
+    pickObject(payload.quotedMessage),
+  ].filter((candidate): candidate is Record<string, unknown> => Boolean(candidate));
+
+  for (const context of contextCandidates) {
+    const quotedKey = pickObject(context.quoted)?.key
+      ?? pickObject(context.quotedMessage)?.key
+      ?? pickObject(context.key);
+
+    const externalMessageId = pickFirstNonEmptyString([
+      context.stanzaId,
+      context.quotedMessageId,
+      context.messageId,
+      context.id,
+      pickObject(quotedKey)?.id,
+    ]);
+
+    if (externalMessageId) {
+      return { externalMessageId };
+    }
+  }
+
+  return null;
+}
+
 function extractDeletionPayload(
   payload: Record<string, unknown>,
   message: EvolutionMessage | null,
@@ -888,6 +1017,7 @@ export function parseEvolutionPayload(
   ]);
   const parsedContent = extractText(message, resolvedContent.content);
   const reaction = extractReactionPayload(message, resolvedContent.content);
+  const quotedMessage = extractQuotedMessagePayload(payload, message, resolvedContent.content);
   const deletion = extractDeletionPayload(payload, message, resolvedContent.content, normalizedEvent);
   const payloadInstance = typeof payload.instance === 'string' ? payload.instance : null;
   const groupName = extractGroupName(payload, message, remoteJid);
@@ -955,6 +1085,7 @@ export function parseEvolutionPayload(
     contentType: parsedContent.contentType,
     attachments: parsedContent.attachments,
     messageTimestamp,
+    quotedMessage,
     reaction,
     deletion,
     rawPayload: payload,

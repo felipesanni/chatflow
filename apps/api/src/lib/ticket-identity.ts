@@ -6,6 +6,7 @@ export interface TicketChatIdentity {
   canonicalChatId: string | null;
   contactId: string | null;
   lookupChatIds: string[];
+  isGroup: boolean;
 }
 
 export function buildTicketAliasCandidates(params: {
@@ -13,8 +14,8 @@ export function buildTicketAliasCandidates(params: {
   canonicalChatId?: string | null;
   contactId?: string | null;
   aliases?: string[] | null;
+  isGroup?: boolean;
 }) {
-  const normalizedContactId = normalizeTicketIdentityPhone(params.contactId);
   const rawRemoteJid = typeof params.remoteJid === 'string' && params.remoteJid.trim().length > 0
     ? params.remoteJid.trim()
     : null;
@@ -25,6 +26,16 @@ export function buildTicketAliasCandidates(params: {
     .filter((value): value is string => typeof value === 'string')
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
+
+  if (params.isGroup) {
+    return Array.from(new Set([
+      rawRemoteJid,
+      canonicalChatId,
+      ...aliases.filter((alias) => alias.includes('@g.us')),
+    ].filter((value): value is string => typeof value === 'string' && value.length > 0)));
+  }
+
+  const normalizedContactId = normalizeTicketIdentityPhone(params.contactId);
 
   return Array.from(new Set([
     rawRemoteJid,
@@ -87,11 +98,12 @@ export function buildTicketChatIdentity(params: {
   if (params.isGroup) {
     return {
       canonicalChatId: rawRemoteJid,
-      contactId,
+      contactId: null,
       lookupChatIds: Array.from(new Set([
         ...(rawRemoteJid ? [rawRemoteJid] : []),
-        ...aliases,
+        ...aliases.filter((alias) => alias.includes('@g.us')),
       ])),
+      isGroup: true,
     };
   }
 
@@ -118,6 +130,7 @@ export function buildTicketChatIdentity(params: {
     canonicalChatId,
     contactId,
     lookupChatIds,
+    isGroup: false,
   };
 }
 
@@ -140,6 +153,7 @@ export function buildActiveTicketIdentityWhere(
 
   return {
     whatsappInstanceId,
+    isGroup: identity.isGroup,
     status: { in: [...ACTIVE_TICKET_STATUSES] },
     ...(orConditions.length > 0
       ? { OR: orConditions }

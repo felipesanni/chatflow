@@ -836,6 +836,10 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
         },
       });
     } catch (error) {
+      if (error instanceof Error && error.message === 'Mensagem citada nao encontrada neste ticket.') {
+        return reply.badRequest(error.message);
+      }
+
       app.log.error({
         action: 'external_ticket_message_send_failed',
         tokenId: accessToken.id,
