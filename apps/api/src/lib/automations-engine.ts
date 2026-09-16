@@ -590,7 +590,7 @@ function evaluateCondition(
     const messageBody = context.message?.body?.trim().toLowerCase() ?? '';
     const keyword = typeof condition.value === 'string' ? condition.value.trim().toLowerCase() : '';
     if (!keyword) {
-      return true;
+      return false;
     }
 
     if (condition.operator === 'contains') {
@@ -653,6 +653,10 @@ function evaluateCondition(
   }
 
   if (condition.field === 'ticket.responsePendingFrom') {
+    if (condition.value !== 'agent' && condition.value !== 'customer') {
+      return false;
+    }
+
     const expected = getTicketResponsePendingFrom([condition], actions);
     if (expected === 'agent') {
       return context.ticket.latestMessageDirection === 'inbound' && Boolean(context.ticket.currentAgentId);
@@ -661,7 +665,9 @@ function evaluateCondition(
     return context.ticket.latestMessageDirection === 'outbound';
   }
 
-  return true;
+  // Unknown conditions must fail closed. Silently ignoring a typo or a
+  // condition introduced by a newer UI could otherwise trigger an action.
+  return false;
 }
 
 function automationMatchesScope(automation: AutomationWithRuntime, context: TriggerExecutionContext) {
@@ -1100,12 +1106,20 @@ async function runAutomationAgainstContext(
   automation: AutomationWithRuntime,
   context: TriggerExecutionContext,
 ) {
+  if (context.ticket.status !== 'open' && context.ticket.status !== 'pending') {
+    return null;
+  }
+
   if (!automationMatchesScope(automation, context)) {
     return null;
   }
 
   const conditions = asConditions(automation.conditions);
   const actions = asActions(automation.actions);
+  if (actions.length === 0) {
+    return null;
+  }
+
   // Maintenance runs every minute; non-matching candidates must not create history rows.
   const conditionsMatched = conditions.every((condition) => evaluateCondition(condition, context, conditions, actions));
   if (!conditionsMatched) {
@@ -1123,19 +1137,27 @@ async function runAutomationAgainstContext(
     messageId: context.message?.id ?? null,
     dedupeKey,
   };
-  const executionId = await claimAutomationExecution(app, {
-    automationId: automation.id,
-    dedupeKey,
-    triggerPayload,
-  });
+  let executionId: string | null = null;
+  try {
+    executionId = await claimAutomationExecution(app, {
+      automationId: automation.id,
+      dedupeKey,
+      triggerPayload,
+    });
+  } catch (error) {
+    // A transient database failure must not consume the in-memory dedupe window.
+    automationDedupe.delete(dedupeKey);
+    throw error;
+  }
 
   if (!executionId) {
     return null;
   }
 
-  const actorUserId = await resolveAutomationActorUserId(app, automation);
+  let actorUserId: string | null = null;
 
   try {
+    actorUserId = await resolveAutomationActorUserId(app, automation);
     const results: Array<Record<string, unknown>> = [];
     for (const action of actions) {
       results.push(await executeAction(app, {
@@ -1281,7 +1303,13 @@ export async function processAutomationMessageReceived(
     loadActiveAutomations(app, 'message_received'),
   ]);
 
-  if (!ticket || !message || message.direction !== 'inbound' || ticket.isGroup) {
+  if (
+    !ticket
+    || !message
+    || message.direction !== 'inbound'
+    || ticket.isGroup
+    || (ticket.status !== 'open' && ticket.status !== 'pending')
+  ) {
     return;
   }
 
@@ -1382,6 +1410,9 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
   if (ticketCreatedAutomations.length > 0) {
     const recentTickets = await app.prisma.ticket.findMany({
       where: {
+        status: {
+          in: ['open', 'pending'],
+        },
         createdAt: {
           gte: new Date(now.getTime() - 2 * AUTOMATION_TICK_INTERVAL_MS),
         },

@@ -275,7 +275,11 @@ function normalizeConnectionPhone(value: unknown) {
   return digits.length > 0 ? digits : null;
 }
 
-function hasUsableEditedBody(value: string | null | undefined) {
+function hasUsableEditedBody(
+  value: string | null | undefined,
+  contentType: string | null | undefined,
+  attachments: unknown[] = [],
+) {
   if (typeof value !== 'string') {
     return false;
   }
@@ -286,7 +290,15 @@ function hasUsableEditedBody(value: string | null | undefined) {
     return false;
   }
 
-  return normalized !== 'mensagem vazia' && normalized !== 'midia recebida';
+  if (
+    (normalized === 'mensagem vazia' || normalized === 'midia recebida')
+    && contentType !== 'text'
+    && attachments.length === 0
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 function isEmptyPlaceholderUpdate(parsed: ReturnType<typeof parseEvolutionPayload>) {
@@ -320,10 +332,19 @@ function hasProtocolMarker(value: unknown, depth = 0, seen = new WeakSet<object>
   seen.add(record);
 
   const messageType = typeof record.messageType === 'string' ? record.messageType.trim().toLowerCase() : '';
+  const editMarker = [record.Edit, record.edit, record.IsEdit, record.isEdit].some((candidate) => (
+    candidate === true
+    || candidate === 1
+    || (typeof candidate === 'string' && ['1', 'true', 'edit', 'edited', 'message_edit'].includes(candidate.trim().toLowerCase()))
+  ));
   if (
     record.protocolMessage
+    || record.ProtocolMessage
+    || record.secretEncryptedMessage
+    || record.SecretEncryptedMessage
     || record.messageStubType
     || record.messageStubParameters
+    || editMarker
     || messageType === 'protocolmessage'
     || messageType === 'protocol_message'
   ) {
@@ -810,14 +831,15 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
         },
       });
 
-      if (!existingMessage || !hasUsableEditedBody(parsed.body)) {
+      const hasUsableBody = hasUsableEditedBody(parsed.body, parsed.contentType, parsed.attachments);
+      if (!existingMessage || !hasUsableBody) {
         app.log.warn({
           action: 'evolution_edit_message_not_found',
           event: parsed.event,
           instanceId: instance.id,
           externalMessageId: parsed.externalMessageId,
           remoteJid: parsed.remoteJid,
-          hasUsableEditedBody: hasUsableEditedBody(parsed.body),
+          hasUsableEditedBody: hasUsableBody,
         }, 'Evento de edicao recebido sem localizar a mensagem base.');
 
         await finalize(202, 'Evento de edicao sem mensagem base localizada.');
@@ -999,6 +1021,40 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
           event: parsed.event,
           ticketId: targetMessage.ticketId,
           messageId: targetMessage.id,
+        },
+      };
+    }
+
+    const existingMessageByExternalId = await app.prisma.ticketMessage.findFirst({
+      where: {
+        externalMessageId: parsed.externalMessageId,
+        ticket: {
+          whatsappInstanceId: instance.id,
+        },
+      },
+      select: {
+        id: true,
+        ticketId: true,
+      },
+    });
+
+    if (existingMessageByExternalId) {
+      app.log.info({
+        action: 'evolution_duplicate_message_ignored',
+        event: parsed.event,
+        instanceId: instance.id,
+        externalMessageId: parsed.externalMessageId,
+        ticketId: existingMessageByExternalId.ticketId,
+      }, 'Evento duplicado da Evolution ignorado antes de atualizar o ticket.');
+
+      await finalize(202, 'Evento duplicado ignorado.');
+      return {
+        statusCode: 202,
+        body: {
+          message: 'Evento duplicado ignorado.',
+          event: parsed.event,
+          ticketId: existingMessageByExternalId.ticketId,
+          messageId: existingMessageByExternalId.id,
         },
       };
     }

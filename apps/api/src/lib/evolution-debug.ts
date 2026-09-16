@@ -17,6 +17,7 @@ export interface EvolutionDebugEntry {
   verifiedBizName: string | null;
   bodyPreview: string | null;
   contentType: string | null;
+  isEdited: boolean;
   payloadSummary: {
     topLevelKeys: string[];
     dataKeys: string[];
@@ -121,6 +122,7 @@ export function buildEvolutionDebugEntry(params: {
     verifiedBizName: parsed.verifiedBizName,
     bodyPreview,
     contentType: parsed.contentType ?? null,
+    isEdited: parsed.isEdited,
     payloadSummary: summarizePayloadShape(params.payload),
     rawPayload: params.payload,
   };

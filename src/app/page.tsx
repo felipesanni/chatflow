@@ -2203,6 +2203,7 @@ export default function HomePage() {
   const [quickReplyLoading, setQuickReplyLoading] = React.useState(false);
   const [automationLoading, setAutomationLoading] = React.useState(false);
   const [automationExecutionLoading, setAutomationExecutionLoading] = React.useState(false);
+  const [automationCleanupLoading, setAutomationCleanupLoading] = React.useState(false);
   const [customerLoading, setCustomerLoading] = React.useState(false);
   const [conversationLoading, setConversationLoading] = React.useState(false);
   const [sharedContactLoadingKey, setSharedContactLoadingKey] = React.useState<string | null>(null);
@@ -2496,6 +2497,7 @@ export default function HomePage() {
   const socketRef = React.useRef<Socket | null>(null);
   const selectedTicketIdRef = React.useRef<string | null>(null);
   const activeWorkspaceRef = React.useRef(activeWorkspace);
+  const periodicRefreshInFlightRef = React.useRef(false);
   const ticketsRef = React.useRef<TicketItem[]>([]);
   const browserNotificationRegistrationRef = React.useRef<ServiceWorkerRegistration | null>(null);
   const appDialogResolverRef = React.useRef<((value: boolean) => void) | null>(null);
@@ -3848,7 +3850,9 @@ export default function HomePage() {
       return;
     }
 
-    void refreshDashboard();
+    if (activeWorkspace === "dashboard") {
+      void refreshDashboard();
+    }
     void refreshTickets();
     if (canViewChannels) {
       void refreshInstances();
@@ -3870,7 +3874,7 @@ export default function HomePage() {
     if (normalizePermissions(user.role, user.permissions)["calendar.view"]) {
       void refreshScheduledMessageOverview();
     }
-  }, [canTransferTickets, canViewAutomations, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshAutomationExecutions, refreshAutomations, refreshCustomers, refreshDashboard, refreshInstances, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshTickets, user]);
+  }, [activeWorkspace, canTransferTickets, canViewAutomations, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshAutomationExecutions, refreshAutomations, refreshCustomers, refreshDashboard, refreshInstances, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshTickets, user]);
 
   React.useEffect(() => {
     if (!selectedTicketId || !user) {
@@ -4102,8 +4106,10 @@ export default function HomePage() {
         void refreshScheduledMessages(ticketIdToRefresh);
       }
     };
-      socket.on("connect", () => {
-        void refreshDashboard();
+    socket.on("connect", () => {
+        if (activeWorkspaceRef.current === "dashboard") {
+          void refreshDashboard();
+        }
         void refreshTickets();
         void refreshScheduledMessageOverview();
         if (selectedTicketId) {
@@ -4400,19 +4406,34 @@ export default function HomePage() {
         return;
       }
 
-        void refreshDashboard();
-        void refreshTickets();
-        void refreshScheduledMessageOverview();
-        if (selectedTicketId) {
-          void refreshMessages(selectedTicketId, { silent: true });
-          void refreshScheduledMessages(selectedTicketId);
-        }
+      if (periodicRefreshInFlightRef.current) {
+        return;
+      }
+
+      periodicRefreshInFlightRef.current = true;
+      const requests: Array<Promise<unknown>> = [
+        refreshTickets(),
+        refreshScheduledMessageOverview(),
+      ];
+
+      if (activeWorkspaceRef.current === "dashboard") {
+        requests.push(refreshDashboard());
+      }
+
+      if (selectedTicketId) {
+        requests.push(refreshMessages(selectedTicketId, { silent: true }));
+        requests.push(refreshScheduledMessages(selectedTicketId));
+      }
 
       if (user.role === "admin") {
-        void refreshInstances();
-        void refreshAgents();
-        void refreshQueues();
+        requests.push(refreshInstances());
+        requests.push(refreshAgents());
+        requests.push(refreshQueues());
       }
+
+      void Promise.all(requests).finally(() => {
+        periodicRefreshInFlightRef.current = false;
+      });
     }, 5000);
 
     return () => clearInterval(interval);
@@ -4422,7 +4443,9 @@ export default function HomePage() {
     if (!user) return;
 
       const handleVisibilityOrFocus = () => {
-        void refreshDashboard();
+        if (activeWorkspaceRef.current === "dashboard") {
+          void refreshDashboard();
+        }
         void refreshTickets();
         void refreshScheduledMessageOverview();
         if (selectedTicketId) {
@@ -6700,6 +6723,40 @@ export default function HomePage() {
     }
   }
 
+  async function handleCleanupAutomationHistory() {
+    if (!canManageAutomations || automationCleanupLoading) return;
+
+    const confirmed = await openConfirmDialog({
+      title: "Limpar histórico de automações",
+      description: "Serão removidas permanentemente apenas as execuções ignoradas com mais de 7 dias. Mensagens, tickets e execuções concluídas ou com falha não serão alterados.",
+      confirmLabel: "Limpar histórico",
+      cancelLabel: "Cancelar",
+      tone: "danger",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setAutomationCleanupLoading(true);
+      const payload = await apiFetch<{ removed: number; remaining: number; retentionDays: number }>("/automations/executions/cleanup", {
+        method: "POST",
+      });
+      const executionLabel = payload.removed === 1 ? "execução" : "execuções";
+      setPanelMessage(
+        payload.removed > 0
+          ? `${payload.removed} ${executionLabel} antiga(s) removida(s).`
+          : "Nenhuma execução antiga encontrada para remover.",
+      );
+      await Promise.all([refreshAutomations(), refreshAutomationExecutions()]);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao limpar o histórico das automações.");
+    } finally {
+      setAutomationCleanupLoading(false);
+    }
+  }
+
   async function handleCreateConversation(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setConversationLoading(true);
@@ -8419,9 +8476,23 @@ export default function HomePage() {
                   : "Pesquisar automação, status ou resultado"
               }
               onSearchChange={setSearchQuery}
-              actionLabel={automationView === "rules" && canManageAutomations ? "Nova automação" : undefined}
-              onActionClick={automationView === "rules" && canManageAutomations ? openCreateAutomationModal : undefined}
-              actionIcon={Workflow}
+              actionLabel={
+                automationView === "rules" && canManageAutomations
+                  ? "Nova automação"
+                  : automationView === "executions" && canManageAutomations
+                    ? automationCleanupLoading ? "Limpando..." : "Limpar histórico"
+                    : undefined
+              }
+              onActionClick={
+                automationView === "rules" && canManageAutomations
+                  ? openCreateAutomationModal
+                  : automationView === "executions" && canManageAutomations
+                    ? () => void handleCleanupAutomationHistory()
+                    : undefined
+              }
+              actionIcon={automationView === "rules" ? Workflow : Trash2}
+              actionTone={automationView === "executions" ? "danger" : "default"}
+              actionDisabled={automationCleanupLoading}
             />
 
             <div className="flex flex-wrap gap-2">
@@ -8448,6 +8519,12 @@ export default function HomePage() {
                 Execuções
               </button>
             </div>
+
+            {automationView === "executions" ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+                O sistema remove automaticamente, uma vez por dia, apenas execuções ignoradas com mais de 7 dias. Mensagens e tickets não são afetados.
+              </div>
+            ) : null}
 
             {automationView === "rules" ? (
               automationLoading ? (
@@ -12602,6 +12679,8 @@ function ModuleToolbar(props: {
   actionLabel?: string;
   onActionClick?: () => void;
   actionIcon?: React.ComponentType<{ className?: string }>;
+  actionTone?: "default" | "danger";
+  actionDisabled?: boolean;
 }) {
   const ActionIcon = props.actionIcon;
 
@@ -12629,7 +12708,8 @@ function ModuleToolbar(props: {
           <button
             type="button"
             onClick={props.onActionClick}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-[#1A1C32] px-5 text-sm font-semibold uppercase tracking-[0.04em] text-white transition hover:bg-[#111426]"
+            disabled={props.actionDisabled}
+            className={`inline-flex h-11 items-center justify-center gap-2 rounded-md px-5 text-sm font-semibold uppercase tracking-[0.04em] text-white transition disabled:cursor-not-allowed disabled:bg-slate-300 ${props.actionTone === "danger" ? "bg-rose-600 hover:bg-rose-700" : "bg-[#1A1C32] hover:bg-[#111426]"}`}
           >
             {ActionIcon ? <ActionIcon className="h-4 w-4" /> : null}
             {props.actionLabel}

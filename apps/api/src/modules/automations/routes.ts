@@ -7,6 +7,10 @@ import {
   decodeTimestampCursor,
   encodeTimestampCursor,
 } from '../../lib/timestamp-cursor.js';
+import {
+  AUTOMATION_EXECUTION_RETENTION_DAYS,
+  cleanupOldAutomationExecutions,
+} from '../../lib/automation-retention.js';
 
 const conditionSchema = z.object({
   field: z.string().trim().min(1, 'Informe a condição.'),
@@ -264,6 +268,20 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
         hasMore,
         nextCursor,
       },
+    };
+  });
+
+  app.post('/automations/executions/cleanup', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'automations.manage');
+    if (!access) return;
+
+    const result = await cleanupOldAutomationExecutions(app, { force: true });
+
+    return {
+      removed: result.deleted,
+      remaining: result.remaining,
+      retentionDays: AUTOMATION_EXECUTION_RETENTION_DAYS,
+      cutoff: result.cutoff,
     };
   });
 
