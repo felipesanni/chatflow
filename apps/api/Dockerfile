@@ -2,6 +2,7 @@ FROM node:20-slim AS deps
 RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json ./package.json
+COPY package-lock.json ./package-lock.json
 COPY apps/api/package.json ./apps/api/package.json
 COPY packages/db/package.json ./packages/db/package.json
 COPY packages/shared/package.json ./packages/shared/package.json

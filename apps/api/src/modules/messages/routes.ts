@@ -19,6 +19,10 @@ import {
   groupTicketHiddenUsersInclude,
   isGroupTicketHiddenForViewer,
 } from '../../lib/group-ticket-visibility.js';
+import {
+  decodeTimestampCursor,
+  encodeTimestampCursor,
+} from '../../lib/timestamp-cursor.js';
 
 const outgoingAttachmentSchema = z.object({
   kind: z.enum(['image', 'audio', 'document']),
@@ -65,6 +69,11 @@ const bulkDeleteMessagesBodySchema = z.object({
 
 const forwardMessageBodySchema = z.object({
   targetTicketId: z.string().uuid('Informe o ticket de destino.'),
+});
+
+const ticketMessagesQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(200).default(200),
+  cursor: z.string().trim().min(1).optional(),
 });
 
 const env = loadEnv();
@@ -957,6 +966,13 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     const session = access.session;
 
     const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const query = ticketMessagesQuerySchema.parse(request.query ?? {});
+    const cursor = query.cursor ? decodeTimestampCursor(query.cursor) : null;
+
+    if (query.cursor && !cursor) {
+      return reply.badRequest('Cursor de mensagens invalido.');
+    }
+
     const ticket = await app.prisma.ticket.findUnique({
       where: { id: params.ticketId },
       select: {
@@ -978,48 +994,115 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const items = await app.prisma.ticketMessage.findMany({
-      where: { ticketId: params.ticketId },
-      orderBy: { createdAt: 'asc' },
-      include: {
-        senderAgent: true,
-        attachments: true,
+      where: {
+        ticketId: params.ticketId,
+        ...(cursor
+          ? {
+              OR: [
+                { createdAt: { lt: cursor.timestamp } },
+                { createdAt: cursor.timestamp, id: { lt: cursor.id } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [
+        { createdAt: 'desc' },
+        { id: 'desc' },
+      ],
+      take: query.limit + 1,
+      select: {
+        id: true,
+        ticketId: true,
+        direction: true,
+        contentType: true,
+        body: true,
+        senderNameSnapshot: true,
+        externalMessageId: true,
+        rawPayload: true,
+        editedAt: true,
+        createdAt: true,
+        senderAgent: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        attachments: {
+          select: {
+            id: true,
+            fileName: true,
+            mimeType: true,
+            sizeBytes: true,
+            storage: true,
+            storageKey: true,
+            publicUrl: true,
+            createdAt: true,
+          },
+        },
         replyToMessage: {
-          include: {
-            attachments: true,
+          select: {
+            id: true,
+            direction: true,
+            contentType: true,
+            body: true,
+            senderNameSnapshot: true,
+            rawPayload: true,
+            createdAt: true,
+            attachments: {
+              select: {
+                id: true,
+                fileName: true,
+                mimeType: true,
+                sizeBytes: true,
+                storage: true,
+                storageKey: true,
+                publicUrl: true,
+                createdAt: true,
+              },
+            },
           },
         },
       },
     });
 
-    return {
-      items: items
-        .filter((message: any) => !normalizeHiddenForUserIds(message.rawPayload?.chatflowHiddenForUserIds).includes(session.userId))
-        .map((message: any) => ({
+    const hasMore = items.length > query.limit;
+    const pageItems = items.slice(0, query.limit);
+    const oldestItem = pageItems[pageItems.length - 1];
+    const nextCursor = hasMore && oldestItem
+      ? encodeTimestampCursor({
+          id: oldestItem.id,
+          timestamp: oldestItem.createdAt,
+        })
+      : null;
+
+    const visibleItems = pageItems
+      .filter((message: any) => !normalizeHiddenForUserIds(message.rawPayload?.chatflowHiddenForUserIds).includes(session.userId))
+      .map((message: any) => ({
         id: message.id,
         ticketId: message.ticketId,
         direction: message.direction,
         contentType: message.contentType,
-          body: message.body,
-          senderName: message.senderNameSnapshot,
-          externalMessageId: message.externalMessageId,
-          editedAt: message.editedAt,
-          internalNote: serializeInternalNoteState(message.rawPayload),
-          createdAt: message.createdAt,
-          reactions: serializeMessageReactions(message.rawPayload),
-          deleted: serializeDeletedState(message.rawPayload),
-          hiddenForMe: normalizeHiddenForUserIds(message.rawPayload?.chatflowHiddenForUserIds).includes(session.userId),
-          replyToMessage: message.replyToMessage
-            ? {
-                id: message.replyToMessage.id,
-                direction: message.replyToMessage.direction,
-                contentType: message.replyToMessage.contentType,
-                body: message.replyToMessage.body,
-                senderName: message.replyToMessage.senderNameSnapshot,
-                createdAt: message.replyToMessage.createdAt,
-                internalNote: serializeInternalNoteState(message.replyToMessage.rawPayload),
-                deleted: serializeDeletedState(message.replyToMessage.rawPayload),
-                hiddenForMe: normalizeHiddenForUserIds(message.replyToMessage.rawPayload?.chatflowHiddenForUserIds).includes(session.userId),
-                attachments: message.replyToMessage.attachments.map((attachment: any) => ({
+        body: message.body,
+        senderName: message.senderNameSnapshot,
+        externalMessageId: message.externalMessageId,
+        editedAt: message.editedAt,
+        internalNote: serializeInternalNoteState(message.rawPayload),
+        createdAt: message.createdAt,
+        reactions: serializeMessageReactions(message.rawPayload),
+        deleted: serializeDeletedState(message.rawPayload),
+        hiddenForMe: normalizeHiddenForUserIds(message.rawPayload?.chatflowHiddenForUserIds).includes(session.userId),
+        replyToMessage: message.replyToMessage
+          ? {
+              id: message.replyToMessage.id,
+              direction: message.replyToMessage.direction,
+              contentType: message.replyToMessage.contentType,
+              body: message.replyToMessage.body,
+              senderName: message.replyToMessage.senderNameSnapshot,
+              createdAt: message.replyToMessage.createdAt,
+              internalNote: serializeInternalNoteState(message.replyToMessage.rawPayload),
+              deleted: serializeDeletedState(message.replyToMessage.rawPayload),
+              hiddenForMe: normalizeHiddenForUserIds(message.replyToMessage.rawPayload?.chatflowHiddenForUserIds).includes(session.userId),
+              attachments: message.replyToMessage.attachments.map((attachment: any) => ({
                 id: attachment.id,
                 fileName: attachment.fileName,
                 mimeType: attachment.mimeType,
@@ -1042,7 +1125,16 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
           publicUrl: attachment.publicUrl,
           createdAt: attachment.createdAt,
         })),
-      })),
+      }))
+      .reverse();
+
+    return {
+      items: visibleItems,
+      pagination: {
+        limit: query.limit,
+        hasMore,
+        nextCursor,
+      },
       viewer: {
         id: session.userId,
         role: session.role,

@@ -121,6 +121,15 @@ type MessageItem = {
   attachments?: AttachmentItem[];
 };
 
+type MessagePageResponse = {
+  items: MessageItem[];
+  pagination?: {
+    limit: number;
+    hasMore: boolean;
+    nextCursor: string | null;
+  };
+};
+
 type MessageDeletedState = {
   isDeleted: boolean;
   deletedAt?: string | null;
@@ -158,6 +167,19 @@ type AttachmentItem = {
   publicUrl: string | null;
   createdAt?: string;
 };
+
+function compareMessageItems(a: MessageItem, b: MessageItem) {
+  const createdAtDifference = Date.parse(a.createdAt) - Date.parse(b.createdAt);
+  return createdAtDifference || a.id.localeCompare(b.id);
+}
+
+function mergeMessageItems(current: MessageItem[], incoming: MessageItem[]) {
+  const byId = new Map(current.map((message) => [message.id, message]));
+  for (const message of incoming) {
+    byId.set(message.id, message);
+  }
+  return Array.from(byId.values()).sort(compareMessageItems);
+}
 
 type MessageMenuPosition = {
   top: number;
@@ -650,6 +672,7 @@ function normalizePermissions(role: "admin" | "agent", raw?: Partial<Record<Perm
 }
 
 const API_URL = "/api-proxy";
+const MESSAGE_PAGE_SIZE = 200;
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL ?? null;
 const BRAND_LOGO_STORAGE_KEY = "chatflow.brand.logo";
 const BRAND_MODE_STORAGE_KEY = "chatflow.brand.mode";
@@ -966,7 +989,7 @@ const API_REFERENCE_MODULES: ApiModuleDoc[] = [
         method: "GET",
         module: "Mensagens",
         title: "Listar mensagens",
-        summary: "Retorna o histórico completo de um ticket.",
+        summary: "Retorna uma página do histórico de um ticket, com cursor para carregar mensagens anteriores.",
         publicPath: "/api/tickets/:ticketId/messages",
         testerPath: "/tickets/SEU_TICKET_ID/messages",
         auth: "sessao",
@@ -2170,6 +2193,9 @@ export default function HomePage() {
 
   const [ticketLoading, setTicketLoading] = React.useState(false);
   const [messageLoading, setMessageLoading] = React.useState(false);
+  const [messageOlderLoading, setMessageOlderLoading] = React.useState(false);
+  const [messageHasMore, setMessageHasMore] = React.useState(false);
+  const [messageBeforeCursor, setMessageBeforeCursor] = React.useState<string | null>(null);
   const [sendLoading, setSendLoading] = React.useState(false);
   const [instanceLoading, setInstanceLoading] = React.useState(false);
   const [agentLoading, setAgentLoading] = React.useState(false);
@@ -2482,6 +2508,7 @@ export default function HomePage() {
   const messageMenuRef = React.useRef<HTMLDivElement | null>(null);
   const attachmentUploadRef = React.useRef<HTMLInputElement | null>(null);
   const messagesViewportRef = React.useRef<HTMLDivElement | null>(null);
+  const pendingMessagePrependRef = React.useRef<{ scrollTop: number; scrollHeight: number } | null>(null);
   const composerDragDepthRef = React.useRef(0);
   const shouldStickMessagesToBottomRef = React.useRef(true);
   const audioRecorderRef = React.useRef<MediaRecorder | null>(null);
@@ -3604,8 +3631,19 @@ export default function HomePage() {
       setMessageLoading(true);
     }
     try {
-      const payload = await apiFetch<{ items: MessageItem[] }>(`/tickets/${ticketId}/messages`, { method: "GET" });
-      setMessages(payload.items);
+      const query = new URLSearchParams({ limit: String(MESSAGE_PAGE_SIZE) });
+      const payload = await apiFetch<MessagePageResponse>(`/tickets/${ticketId}/messages?${query.toString()}`, { method: "GET" });
+      const incomingItems = payload.items ?? [];
+
+      if (options?.silent) {
+        setMessages((current) => mergeMessageItems(current, incomingItems));
+        setMessageHasMore((current) => current || Boolean(payload.pagination?.hasMore));
+        setMessageBeforeCursor((current) => current ?? payload.pagination?.nextCursor ?? null);
+      } else {
+        setMessages(incomingItems);
+        setMessageHasMore(Boolean(payload.pagination?.hasMore));
+        setMessageBeforeCursor(payload.pagination?.nextCursor ?? null);
+      }
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar mensagens.");
     } finally {
@@ -3614,6 +3652,35 @@ export default function HomePage() {
       }
     }
   }, [user]);
+
+  const loadOlderMessages = React.useCallback(async () => {
+    if (!user || !selectedTicketId || !messageHasMore || !messageBeforeCursor || messageOlderLoading) return;
+
+    const viewport = messagesViewportRef.current;
+    if (viewport) {
+      pendingMessagePrependRef.current = {
+        scrollTop: viewport.scrollTop,
+        scrollHeight: viewport.scrollHeight,
+      };
+    }
+
+    setMessageOlderLoading(true);
+    try {
+      const query = new URLSearchParams({
+        limit: String(MESSAGE_PAGE_SIZE),
+        cursor: messageBeforeCursor,
+      });
+      const payload = await apiFetch<MessagePageResponse>(`/tickets/${selectedTicketId}/messages?${query.toString()}`, { method: "GET" });
+      setMessages((current) => mergeMessageItems(current, payload.items ?? []));
+      setMessageHasMore(Boolean(payload.pagination?.hasMore));
+      setMessageBeforeCursor(payload.pagination?.nextCursor ?? null);
+    } catch (error) {
+      pendingMessagePrependRef.current = null;
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar mensagens anteriores.");
+    } finally {
+      setMessageOlderLoading(false);
+    }
+  }, [messageBeforeCursor, messageHasMore, messageOlderLoading, selectedTicketId, user]);
 
   const refreshScheduledMessages = React.useCallback(async (ticketId: string) => {
     if (!user) return;
@@ -3737,20 +3804,23 @@ export default function HomePage() {
   }, [dashboardAgentId, dashboardRange, user]);
 
   const refreshAll = React.useCallback(async () => {
-    await refreshDashboard();
-    await refreshTickets();
-    if (selectedTicketId) {
-      await refreshMessages(selectedTicketId);
-      await refreshScheduledMessages(selectedTicketId);
-    }
-    await refreshScheduledMessageOverview();
-    await refreshInstances();
-    await refreshAgents();
-    await refreshQueues();
-    await refreshCustomers();
-    await refreshQuickReplies();
-    await refreshAutomations();
-    await refreshAutomationExecutions();
+    const selectedTicketRefreshes = selectedTicketId
+      ? [refreshMessages(selectedTicketId), refreshScheduledMessages(selectedTicketId)]
+      : [];
+
+    await Promise.all([
+      refreshDashboard(),
+      refreshTickets(),
+      ...selectedTicketRefreshes,
+      refreshScheduledMessageOverview(),
+      refreshInstances(),
+      refreshAgents(),
+      refreshQueues(),
+      refreshCustomers(),
+      refreshQuickReplies(),
+      refreshAutomations(),
+      refreshAutomationExecutions(),
+    ]);
   }, [refreshAgents, refreshAutomationExecutions, refreshAutomations, refreshCustomers, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId]);
 
   React.useEffect(() => {
@@ -3761,6 +3831,10 @@ export default function HomePage() {
     if (!user) {
       setTickets([]);
       setMessages([]);
+      setMessageHasMore(false);
+      setMessageBeforeCursor(null);
+      setMessageOlderLoading(false);
+      pendingMessagePrependRef.current = null;
       setInstances([]);
       setAgents([]);
       setQueues([]);
@@ -3801,9 +3875,17 @@ export default function HomePage() {
   React.useEffect(() => {
     if (!selectedTicketId || !user) {
       setMessages([]);
+      setMessageHasMore(false);
+      setMessageBeforeCursor(null);
+      setMessageOlderLoading(false);
+      pendingMessagePrependRef.current = null;
       return;
     }
 
+    setMessageHasMore(false);
+    setMessageBeforeCursor(null);
+    setMessageOlderLoading(false);
+    pendingMessagePrependRef.current = null;
     shouldStickMessagesToBottomRef.current = true;
     void refreshMessages(selectedTicketId);
   }, [refreshMessages, selectedTicketId, user]);
@@ -4366,6 +4448,17 @@ export default function HomePage() {
       }
     };
     }, [refreshDashboard, refreshMessages, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
+
+  React.useLayoutEffect(() => {
+    const pending = pendingMessagePrependRef.current;
+    const viewport = messagesViewportRef.current;
+    if (!pending || !viewport) {
+      return;
+    }
+
+    viewport.scrollTop = pending.scrollTop + (viewport.scrollHeight - pending.scrollHeight);
+    pendingMessagePrependRef.current = null;
+  }, [messages]);
 
   React.useEffect(() => {
     if (!messagesViewportRef.current || !shouldStickMessagesToBottomRef.current) {
@@ -9120,7 +9213,20 @@ export default function HomePage() {
                   ) : messages.length === 0 ? (
                     <EmptyMessages />
                     ) : (
-                      messages.map((message) => {
+                      <>
+                        {messageHasMore ? (
+                          <div className="sticky top-0 z-10 flex justify-center">
+                            <button
+                              type="button"
+                              onClick={() => void loadOlderMessages()}
+                              disabled={messageOlderLoading}
+                              className="rounded-full border border-slate-200 bg-white/95 px-4 py-2 text-xs font-semibold text-slate-600 shadow-sm backdrop-blur transition hover:bg-white disabled:cursor-wait disabled:opacity-60"
+                            >
+                              {messageOlderLoading ? "Carregando mensagens anteriores..." : "Carregar mensagens anteriores"}
+                            </button>
+                          </div>
+                        ) : null}
+                        {messages.map((message) => {
                         const outgoing = message.direction === "outbound";
                         const system = message.direction === "system";
                         const internalNote = Boolean(message.internalNote);
@@ -9464,7 +9570,8 @@ export default function HomePage() {
                           </div>
                         </div>
                       );
-                    })
+                    })}
+                      </>
                   )}
                 </div>
               </div>
@@ -10127,7 +10234,7 @@ export default function HomePage() {
                             </span>
                           </button>
                         );
-                      })
+                        })
                     )}
                   </div>
                   <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">

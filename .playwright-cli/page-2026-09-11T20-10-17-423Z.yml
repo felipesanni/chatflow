@@ -1,0 +1,593 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e8]:
+      - link "Funcionalidades" [ref=e12] [cursor=pointer]:
+        - /url: "#funcionalidades"
+      - link "Planos" [ref=e18] [cursor=pointer]:
+        - /url: "#planos"
+      - link "Fale Conosco" [ref=e24] [cursor=pointer]:
+        - /url: https://tintim.link/whatsapp/76ece6d7-b100-4343-a699-0b8554fbecd0/6f0cbbd8-a32d-45b5-9db5-fc8235338079
+      - link "Acessar plataforma" [ref=e30] [cursor=pointer]:
+        - /url: https://s.tintim.app
+    - generic [ref=e34]:
+      - generic [ref=e35]:
+        - heading "Utilize o poder dos dados para alavancar suas vendas pelo WhatsApp!" [level=2] [ref=e38]
+        - heading "Rastreie suas conversas e acesse insights valiosos para otimizar suas campanhas." [level=2] [ref=e41]
+      - form "Novo formulário" [ref=e45]:
+        - generic [ref=e46]:
+          - generic [ref=e47]:
+            - generic [ref=e48] [cursor=pointer]: Nome
+            - textbox "Nome" [ref=e49]:
+              - /placeholder: Insira seu Nome e Sobrenome
+          - generic [ref=e50]:
+            - generic [ref=e51] [cursor=pointer]: E-mail Profissional
+            - textbox "E-mail Profissional" [ref=e52]:
+              - /placeholder: Insira seu E-mail Profissional
+          - generic [ref=e53]:
+            - generic [ref=e54] [cursor=pointer]: Insira seu Whatsapp de Contato
+            - textbox "Insira seu Whatsapp de Contato" [ref=e55]:
+              - /placeholder: Insira seu WhatsApp
+          - generic [ref=e56]:
+            - generic [ref=e57] [cursor=pointer]: O que você faz?
+            - combobox "O que você faz?" [ref=e59]:
+              - option "O que você faz?" [selected]
+              - option "Dono de Agência"
+              - option "Gestor de Tráfego"
+              - option "Outro"
+          - generic [ref=e60]:
+            - generic [ref=e61] [cursor=pointer]: Quantos clientes você atende?
+            - combobox "Quantos clientes você atende?" [ref=e63]:
+              - option "Quantos clientes você atende?" [selected]
+              - option "Até 2 clientes"
+              - option "De 3 a 5 clientes"
+              - option "De 6 a 10 clientes"
+              - option "De 11 a 20 clientes"
+              - option "Mais de 21 clientes"
+          - generic [ref=e64]:
+            - generic [ref=e65] [cursor=pointer]: Qual é o faturamento mensal da sua agência/empresa?
+            - combobox "Qual é o faturamento mensal da sua agência/empresa?" [ref=e67]:
+              - option "Faturamento mensal da agência/empresa?" [selected]
+              - option "Ainda estou começando"
+              - option "Até R$5 mil"
+              - option "De R$5 mil a R$10 mil"
+              - option "De R$10 mil a R$30 mil"
+              - option "De R$30 mil a R$60 mil"
+              - option "De R$60 mil a R$100 mil"
+              - option "Acima de R$100 mil"
+          - generic [ref=e68]:
+            - generic [ref=e69] [cursor=pointer]: Aceito termos uso de
+            - generic [ref=e71]:
+              - checkbox "Aceito termos uso de Ao criar minha conta estou de acordo com os Termos de Uso e Política de Privacidade." [checked] [ref=e72]
+              - generic [ref=e74]:
+                - text: Ao criar minha conta estou de acordo com os
+                - link "Termos de Uso" [ref=e75] [cursor=pointer]:
+                  - /url: /termos-de-uso
+                - text: e
+                - link "Política de Privacidade" [ref=e76] [cursor=pointer]:
+                  - /url: /politica-de-privacidade
+                - text: .
+          - button "TESTAR GRÁTIS" [ref=e78] [cursor=pointer]
+    - generic [ref=e90]:
+      - heading "Veja como o Tintim funciona na prática!" [level=2] [ref=e93]
+      - iframe [ref=e97]:
+        - generic [ref=f1e1]:
+          - generic "Player de vídeo do YouTube" [ref=f1e3]
+          - generic [ref=f1e5]:
+            - generic:
+              - generic:
+                - generic [ref=f1e6] [cursor=pointer]
+                - button "Assistir vídeo" [ref=f1e10] [cursor=pointer]
+                - button "Ocultar controles do player" [ref=f1e12] [cursor=pointer]
+                - generic [ref=f1e14]:
+                  - generic [ref=f1e19]:
+                    - generic [ref=f1e20]:
+                      - link "[TINTIM] Como o Tintim FUNCIONA NA PRÁTICA?" [ref=f1e21] [cursor=pointer]:
+                        - /url: https://www.youtube.com/watch?v=dq1O0aNdo90
+                      - link "TINTIM" [ref=f1e22] [cursor=pointer]:
+                        - /url: /channel/UCwTgc1_mURA251wwpxN_qBg
+                    - generic [ref=f1e24]:
+                      - button [ref=f1e25] [cursor=pointer]
+                      - generic [ref=f1e27]:
+                        - generic: TINTIM
+                        - generic: 13,8 mil inscritos
+                  - generic [ref=f1e28]:
+                    - button "Compartilhar" [ref=f1e31] [cursor=pointer]
+                    - link "Assistir no YouTube" [ref=f1e42] [cursor=pointer]:
+                      - /url: https://www.youtube.com/watch?v=dq1O0aNdo90
+                      - generic [ref=f1e43]: Assista no
+    - heading "Mais de 5.000 empresas confiam nos insights do Tintim para alavancar suas vendas. Veja algumas delas:" [level=2] [ref=e102]
+    - region "Carrossel de imagens" [ref=e106]:
+      - generic [ref=e107]:
+        - group [aria-hidden] [ref=e108]:
+          - figure [ref=e109]
+        - group [aria-hidden] [ref=e111]:
+          - figure [ref=e112]
+        - group [aria-hidden] [ref=e114]:
+          - figure [ref=e115]
+        - group [aria-hidden] [ref=e117]:
+          - figure [ref=e118]
+        - group [aria-hidden] [ref=e120]:
+          - figure [ref=e121]
+        - group [aria-hidden] [ref=e123]:
+          - figure [ref=e124]
+        - group [aria-hidden] [ref=e126]:
+          - figure [ref=e127]
+        - group [aria-hidden] [ref=e129]:
+          - figure [ref=e130]
+        - group [aria-hidden] [ref=e132]:
+          - figure [ref=e133]
+        - group [aria-hidden] [ref=e135]:
+          - figure [ref=e136]
+        - group [aria-hidden] [ref=e138]:
+          - figure [ref=e139]
+        - group "3 / 43" [ref=e141]:
+          - figure [ref=e142]:
+            - img "Logotipo_foxyads-1.svg" [ref=e143]
+        - group "4 / 43" [ref=e144]:
+          - figure [ref=e145]:
+            - img "download-1-1.svg" [ref=e146]
+        - group "5 / 43" [ref=e147]:
+          - figure [ref=e148]:
+            - img "logo-digital-eyes-1.svg" [ref=e149]
+        - group "6 / 43" [ref=e150]:
+          - figure [ref=e151]:
+            - img "logo-action-colorida-1024x170-1.svg" [ref=e152]
+        - group "7 / 43" [ref=e153]:
+          - figure [ref=e154]:
+            - img "laverso-logo-degrade-1.svg" [ref=e155]
+        - group "8 / 43" [ref=e156]:
+          - figure [ref=e157]:
+            - img "curseduca.png" [ref=e158]
+        - group "9 / 43" [ref=e159]:
+          - figure [ref=e160]:
+            - img "logo-ccaa-2-1.svg" [ref=e161]
+        - group "10 / 43" [ref=e162]:
+          - figure [ref=e163]:
+            - img "agencia-rei.png" [ref=e164]
+        - group "11 / 43" [ref=e165]:
+          - figure [ref=e166]:
+            - img "eduzz-logo-1-1.svg" [ref=e167]
+        - group [aria-hidden] [ref=e168]:
+          - figure [ref=e169]
+        - group [aria-hidden] [ref=e171]:
+          - figure [ref=e172]
+        - group [aria-hidden] [ref=e174]:
+          - figure [ref=e175]
+        - group [aria-hidden] [ref=e177]:
+          - figure [ref=e178]
+        - group [aria-hidden] [ref=e180]:
+          - figure [ref=e181]
+        - group [aria-hidden] [ref=e183]:
+          - figure [ref=e184]
+        - group [aria-hidden] [ref=e186]:
+          - figure [ref=e187]
+        - group [aria-hidden] [ref=e189]:
+          - figure [ref=e190]
+        - group [aria-hidden] [ref=e192]:
+          - figure [ref=e193]
+        - group [aria-hidden] [ref=e195]:
+          - figure [ref=e196]
+        - group [aria-hidden] [ref=e198]:
+          - figure [ref=e199]
+        - group [aria-hidden] [ref=e201]:
+          - figure [ref=e202]
+        - group [aria-hidden] [ref=e204]:
+          - figure [ref=e205]
+        - group [aria-hidden] [ref=e207]:
+          - figure [ref=e208]
+        - group [aria-hidden] [ref=e210]:
+          - figure [ref=e211]
+        - group [aria-hidden] [ref=e213]:
+          - figure [ref=e214]
+        - group [aria-hidden] [ref=e216]:
+          - figure [ref=e217]
+        - group [aria-hidden] [ref=e219]:
+          - figure [ref=e220]
+        - group [aria-hidden] [ref=e222]:
+          - figure [ref=e223]
+        - group [aria-hidden] [ref=e225]:
+          - figure [ref=e226]
+        - group [aria-hidden] [ref=e228]:
+          - figure [ref=e229]
+        - group [aria-hidden] [ref=e231]:
+          - figure [ref=e232]
+        - group [aria-hidden] [ref=e234]:
+          - figure [ref=e235]
+        - group [aria-hidden] [ref=e237]:
+          - figure [ref=e238]
+        - group [aria-hidden] [ref=e240]:
+          - figure [ref=e241]
+        - group [aria-hidden] [ref=e243]:
+          - figure [ref=e244]
+        - group [aria-hidden] [ref=e246]:
+          - figure [ref=e247]
+        - group [aria-hidden] [ref=e249]:
+          - figure [ref=e250]
+        - group [aria-hidden] [ref=e252]:
+          - figure [ref=e253]
+        - group [aria-hidden] [ref=e255]:
+          - figure [ref=e256]
+        - group [aria-hidden] [ref=e258]:
+          - figure [ref=e259]
+        - group [aria-hidden] [ref=e261]:
+          - figure [ref=e262]
+        - group [aria-hidden] [ref=e264]:
+          - figure [ref=e265]
+        - group [aria-hidden] [ref=e267]:
+          - figure [ref=e268]
+        - group [aria-hidden] [ref=e270]:
+          - figure [ref=e271]
+        - group [aria-hidden] [ref=e273]:
+          - figure [ref=e274]
+        - group [aria-hidden] [ref=e276]:
+          - figure [ref=e277]
+        - group [aria-hidden] [ref=e279]:
+          - figure [ref=e280]
+        - group [aria-hidden] [ref=e282]:
+          - figure [ref=e283]
+        - group [aria-hidden] [ref=e285]:
+          - figure [ref=e286]
+        - group [aria-hidden] [ref=e288]:
+          - figure [ref=e289]
+    - generic [ref=e292]:
+      - heading "Veja o que nossos clientes e parceiros dizem sobre o Tintim:" [level=2] [ref=e295]
+      - generic [ref=e296]:
+        - generic [ref=e297]:
+          - generic [ref=e300]:
+            - figure [ref=e301]
+            - generic [ref=e302]:
+              - heading "Fred Rubio" [level=3] [ref=e303]
+              - paragraph [ref=e304]: V4 Company
+          - paragraph [ref=e307]: Conseguimos resolver nossa principal dificuldade que é mensurar vendas do time comercial. Com isso, apontamos melhorias no processo e melhoramos bastante nossa taxa de retenção de clientes.
+        - generic [ref=e310]:
+          - generic [ref=e313]:
+            - figure [ref=e314]
+            - generic [ref=e315]:
+              - heading "Felipe Rodrigues" [level=3] [ref=e316]
+              - paragraph [ref=e317]: Sete Ads
+          - paragraph [ref=e320]: Utilizo em um projeto de geração de leads via WhatsApp e os resultados estão sendo incríveis. Ajudou MUITO na qualificação do público e já estamos viabilizando a entrada de clientes que vão utilizar o Tintim.
+        - generic [ref=e323]:
+          - generic [ref=e326]:
+            - figure [ref=e327]
+            - generic [ref=e328]:
+              - heading "Reutter Grasso" [level=3] [ref=e329]
+              - paragraph [ref=e330]: Daltro & Grasso Advocacia Estratégica
+          - paragraph [ref=e333]: Com o Tintim eu consegui saber qual criativo me trazia mais contratos. A consequência disso é que aumentei o números de conversas e leads qualificados, já que o tintim retroalimenta o Meta Ads.
+      - generic [ref=e336]:
+        - iframe [ref=e341]:
+          - generic [ref=f2e1]:
+            - generic "Player de vídeo do YouTube" [ref=f2e3]
+            - generic [ref=f2e5]:
+              - generic:
+                - generic:
+                  - generic [ref=f2e6] [cursor=pointer]
+                  - button "Assistir vídeo" [ref=f2e10] [cursor=pointer]
+                  - button "Ocultar controles do player" [ref=f2e12] [cursor=pointer]
+                  - generic [ref=f2e14]:
+                    - generic [ref=f2e19]:
+                      - generic [ref=f2e20]:
+                        - link "Com o Tintim eu identifiquei todos os problemas no processo comercial" [ref=f2e21] [cursor=pointer]:
+                          - /url: https://www.youtube.com/watch?v=ztEybJ-WanI
+                        - link "TINTIM" [ref=f2e22] [cursor=pointer]:
+                          - /url: /channel/UCwTgc1_mURA251wwpxN_qBg
+                      - generic [ref=f2e24]:
+                        - button [ref=f2e25] [cursor=pointer]
+                        - generic [ref=f2e27]:
+                          - generic: TINTIM
+                          - generic: 13,8 mil inscritos
+                    - generic [ref=f2e28]:
+                      - button "Compartilhar" [ref=f2e31] [cursor=pointer]
+                      - link "Assistir no YouTube" [ref=f2e42] [cursor=pointer]:
+                        - /url: https://www.youtube.com/watch?v=ztEybJ-WanI
+                        - generic [ref=f2e43]: Assista no
+        - iframe [ref=e346]:
+          - generic [ref=f3e1]:
+            - generic "Player de vídeo do YouTube" [ref=f3e3]
+            - generic [ref=f3e5]:
+              - generic:
+                - generic:
+                  - generic [ref=f3e6] [cursor=pointer]
+                  - button "Assistir vídeo" [ref=f3e10] [cursor=pointer]
+                  - button "Ocultar controles do player" [ref=f3e12] [cursor=pointer]
+                  - generic [ref=f3e14]:
+                    - generic [ref=f3e19]:
+                      - generic [ref=f3e20]:
+                        - link "É surreal. O Tintim me ajuda demais para fechar novos contratos" [ref=f3e21] [cursor=pointer]:
+                          - /url: https://www.youtube.com/watch?v=kKP26P7P858
+                        - link "TINTIM" [ref=f3e22] [cursor=pointer]:
+                          - /url: /channel/UCwTgc1_mURA251wwpxN_qBg
+                      - generic [ref=f3e24]:
+                        - button [ref=f3e25] [cursor=pointer]
+                        - generic [ref=f3e27]:
+                          - generic: TINTIM
+                          - generic: 13,8 mil inscritos
+                    - generic [ref=f3e28]:
+                      - button "Compartilhar" [ref=f3e31] [cursor=pointer]
+                      - link "Assistir no YouTube" [ref=f3e42] [cursor=pointer]:
+                        - /url: https://www.youtube.com/watch?v=kKP26P7P858
+                        - generic [ref=f3e43]: Assista no
+    - generic [ref=e348]:
+      - heading "Muda a empresa, muda a indústria, mas o sofrimento é sempre o mesmo…" [level=2] [ref=e351]
+      - generic [ref=e352]:
+        - paragraph [ref=e362]: As campanhas vão mal e enchem o WhatsApp de leads desqualificados;
+        - paragraph [ref=e375]: Gerenciador de anúncios entrega informações irrelevantes que dificultam saber qual anúncio traz mais vendas;
+      - generic [ref=e376]:
+        - paragraph [ref=e386]: Os dados do gerenciador de anúncios são imprecisos e fica difícil otimizar as campanhas
+        - paragraph [ref=e396]: Horas perdidas preenchendo planilhas porque o WhatsApp não diz qual conversa virou venda;
+    - generic [ref=e398]:
+      - generic [ref=e399]:
+        - list [ref=e402]:
+          - listitem [ref=e403]:
+            - generic [ref=e407]: PROBLEMAS
+        - heading "A consequência..." [level=2] [ref=e410]
+        - list [ref=e413]:
+          - listitem [ref=e414]:
+            - generic [ref=e421]: Falta de dinheiro no caixa
+          - listitem [ref=e422]:
+            - generic [ref=e430]: Noites mal dormidas
+          - listitem [ref=e431]:
+            - generic [ref=e439]: Dias estressantes
+          - listitem [ref=e440]:
+            - generic [ref=e446]: Concorrência crescendo e você estagnado
+      - generic [ref=e448]:
+        - heading "Tintim é a ferramenta ideal para alavancar as vendas e gerar mais receita!" [level=2] [ref=e453]
+        - heading "De forma automática" [level=2] [ref=e456]
+        - link "QUERO Alavancar minhas vendas!" [ref=e460] [cursor=pointer]:
+          - /url: "#formulario"
+    - generic [ref=e469]:
+      - list [ref=e472]:
+        - listitem [ref=e473]:
+          - generic [ref=e477]: FUNCIONALIDADES
+      - heading "Descubra como o Tintim vai alavancar suas vendas:" [level=2] [ref=e480]
+      - heading "Identifique as vendas em tempo real e de forma automática" [level=2] [ref=e487]
+      - heading "Otimize automaticamente as campanhas coletando dados valiosos do cliente e enviando ao Meta Ads" [level=2] [ref=e497]
+      - heading "Descubra os criativos e públicos que mais vendem através do rastreio da origem das conversas" [level=2] [ref=e507]
+      - heading "Descubra os maiores gargalos do processo comercial mapeando a jornada de compra" [level=2] [ref=e517]
+      - heading "Venda mais usando a inteligência de relatórios e dashboards criados automaticamente" [level=2] [ref=e527]
+      - heading "Avalie a qualidade do atendimento e tenha insights de melhorias no processo comercial" [level=2] [ref=e537]
+      - link "Quero Alavancar minhas vendas!" [ref=e544] [cursor=pointer]:
+        - /url: "#formulario"
+    - generic [ref=e553]:
+      - generic [ref=e554]:
+        - generic [ref=e555]:
+          - list [ref=e558]:
+            - listitem [ref=e559]:
+              - generic [ref=e563]: Recursos do Tintim
+          - heading "Recursos que vão explodir suas vendas!" [level=2] [ref=e566]
+        - paragraph [ref=e570]: "Uma série de recursos únicos feitos com um único objetivo: aumentar suas vendas!"
+      - generic [ref=e571]:
+        - generic [ref=e580]:
+          - heading "Identificação automática de vendas" [level=3] [ref=e581]
+          - paragraph [ref=e582]: O Tintim é capaz de ler suas conversas e identificar quando acontece uma venda. Além disso, o Tintim também consegue identificar o valor da venda. Tudo de forma automática!
+        - generic [ref=e593]:
+          - heading "Rastreamento de Conversas" [level=3] [ref=e594]
+          - paragraph [ref=e595]: O Tintim é capaz de descobrir, de forma automática, qual a campanha, conjunto e anúncio que originou aquela conversa.
+        - generic [ref=e604]:
+          - heading "Classificação de Leads" [level=3] [ref=e605]
+          - paragraph [ref=e606]: O Tintim é capaz de ler a conversa com um lead e identificar a etapa da jornada de compra
+        - generic [ref=e616]:
+          - heading "Dashboards de dados de conversas" [level=3] [ref=e617]
+          - paragraph [ref=e618]: Diversos dashboards para facilitar sua tomada de decisão. Informações como as principais origens das conversas, a porcentagem de conversas rastreadas, o total de vendas do período, taxa de conversão e o total de faturamento
+        - generic [ref=e630]:
+          - heading "Acesso à relatórios e dashboard para terceiros" [level=3] [ref=e631]
+          - paragraph [ref=e632]: O Tintim é capaz de ler suas conversas e identificar quando acontece uma venda. Além disso, o Tintim também consegue identificar o valor da venda. Tudo de forma automática!
+        - generic [ref=e641]:
+          - heading "Exportação de dados" [level=3] [ref=e642]
+          - paragraph [ref=e643]: O Tintim permite que você exporte os dados das suas conversas em formato CSV e importe em softwares como Excel, ou Google Sheets.
+        - generic [ref=e651]:
+          - heading "Disparo de Webhook" [level=3] [ref=e652]
+          - paragraph [ref=e653]: O Tintim permite que você configure disparos de webhook para os principais eventos que acontecem com um lead durante a jornada de compra.
+        - generic [ref=e661]:
+          - heading "Envio de dados para o Meta Ads e Google Ads" [level=3] [ref=e662]
+          - paragraph [ref=e663]: O Tintim envia dados para o Meta Ads de forma 100% automática e disponibiliza relatórios prontos para serem importados no Google Ads.
+        - link "quero Aproveitar todas as funcionalidades" [ref=e667] [cursor=pointer]:
+          - /url: "#formulario"
+    - generic [ref=e676]:
+      - heading "Não importa sua área de atuação, o Tintim vai te ajudar a vender mais!" [level=2] [ref=e679]
+      - generic [ref=e680]:
+        - heading "Consultório Odontológico" [level=3] [ref=e689]
+        - heading "Estética" [level=3] [ref=e700]
+        - heading "Comércio" [level=3] [ref=e712]
+        - heading "Provedor de Internet" [level=3] [ref=e722]
+        - heading "Consultório Médico" [level=3] [ref=e732]
+        - heading "Educação" [level=3] [ref=e741]
+        - heading "Delivery" [level=3] [ref=e750]
+        - heading "Turismo" [level=3] [ref=e779]
+        - heading "Indústria" [level=3] [ref=e797]
+        - heading "Contabilidade" [level=3] [ref=e819]
+        - heading "Advocacia" [level=3] [ref=e828]
+        - heading "Bar e Restaurante" [level=3] [ref=e841]
+        - heading "Loja de Iphone" [level=3] [ref=e850]
+        - heading "Imobiliária" [level=3] [ref=e860]
+        - heading "Academia" [level=3] [ref=e869]
+        - heading "Moda" [level=3] [ref=e878]
+        - heading "Consultoria" [level=3] [ref=e891]
+        - heading "E muito mais..." [level=2] [ref=e894]
+        - link "Quero Alavancar minhas vendas!" [ref=e898] [cursor=pointer]:
+          - /url: "#formulario"
+    - heading "VENDA MAIS" [level=2] [ref=e909]
+    - generic [ref=e1131]:
+      - list [ref=e1134]:
+        - listitem [ref=e1135]:
+          - generic [ref=e1139]: Seja um parceiro
+      - heading "Você é dono de agência ou gestor de tráfego?" [level=2] [ref=e1142]
+      - heading "O Tintim tem um programa de parceiros exclusivo, com descontos e benefícios!" [level=2] [ref=e1145]
+      - link "QUERO Conhecer o programa de parceiros" [ref=e1149] [cursor=pointer]:
+        - /url: https://tintim.app/video-apresentacao-programa-de-parceiros-c036-v2-quente-demo-curta/?utm_campaign=C036_home
+    - list [ref=e1162]:
+      - listitem [ref=e1163]:
+        - generic [ref=e1167]: SEJA UM PARCEIRO
+      - listitem [ref=e1168]:
+        - generic [ref=e1172]: SEJA UM PARCEIRO
+      - listitem [ref=e1173]:
+        - generic [ref=e1177]: SEJA UM PARCEIRO
+      - listitem [ref=e1178]:
+        - generic [ref=e1182]: SEJA UM PARCEIRO
+      - listitem [ref=e1183]:
+        - generic [ref=e1187]: SEJA UM PARCEIRO
+      - listitem [ref=e1188]:
+        - generic [ref=e1192]: SEJA UM PARCEIRO
+      - listitem [ref=e1193]:
+        - generic [ref=e1197]: SEJA UM PARCEIRO
+      - listitem [ref=e1198]:
+        - generic [ref=e1202]: SEJA UM PARCEIRO
+    - generic [ref=e1204]:
+      - list [ref=e1207]:
+        - listitem [ref=e1208]:
+          - generic [ref=e1212]: SEM PERDER NENHUM DADO
+      - heading "Rastreie qualquer fonte de tráfego com o Tintim" [level=2] [ref=e1215]
+      - heading "E muito mais..." [level=2] [ref=e1239]
+      - link "QUero Rastrear minhas campanhas!" [ref=e1243] [cursor=pointer]:
+        - /url: "#formulario"
+    - generic [ref=e1253]:
+      - generic [ref=e1256]:
+        - heading "O Tintim se conecta a sua ferramenta de atendimento!" [level=2] [ref=e1260]
+        - paragraph [ref=e1264]: Não encontrou a ferramenta que você usa? Nossa equipe de engenheiros desenvolve a integração para você!
+      - link "quero Conectar à minha ferramenta!" [ref=e1299] [cursor=pointer]:
+        - /url: "#formulario"
+    - generic [ref=e1308]:
+      - generic [ref=e1309]:
+        - list [ref=e1312]:
+          - listitem [ref=e1313]:
+            - generic [ref=e1317]: INTEGRAÇÕES
+        - heading "Integre os dados às ferramentas que você já utiliza!" [level=2] [ref=e1320]
+        - paragraph [ref=e1323]:
+          - text: Use o poder dos
+          - strong [ref=e1325]: webhooks
+          - text: para integrar com as principais ferramentas do mercado!
+        - link "quero Integrar dados do meu negócio!" [ref=e1329] [cursor=pointer]:
+          - /url: "#formulario"
+      - heading "E muito mais…" [level=2] [ref=e1358]
+    - generic [ref=e1360]:
+      - heading "Como você pode usar todo o poder do Tintim?" [level=2] [ref=e1363]
+      - link "quero configurar o Tintim nas minhas campanhas!" [ref=e1369] [cursor=pointer]:
+        - /url: "#formulario"
+    - generic [ref=e1378]:
+      - list [ref=e1381]:
+        - listitem [ref=e1382]:
+          - generic [ref=e1386]: Nossos planos
+      - heading "O Tintim tem planos para todos os níveis de empresa!" [level=2] [ref=e1389]
+      - paragraph [ref=e1392]:
+        - text: Está na dúvida?
+        - link [ref=e1393] [cursor=pointer]:
+          - /url: "#formulario"
+          - strong [ref=e1395]: Faça um teste gratuito
+        - text: "e ganhe 7 dias do nosso melhor plano: o Escala!"
+      - generic [ref=e1396]:
+        - generic [ref=e1397]:
+          - heading "Inicial" [level=2] [ref=e1400]
+          - heading "Para quem está começando a vender pela internet" [level=2] [ref=e1403]
+          - list [ref=e1406]:
+            - listitem [ref=e1407]:
+              - generic [ref=e1411]: 1 número de WhatsApp rastreado
+            - listitem [ref=e1412]:
+              - generic [ref=e1416]: Conversas ilimitadas
+            - listitem [ref=e1417]:
+              - generic [ref=e1421]: Usuários ilimitados e gratuitos
+            - listitem [ref=e1422]:
+              - generic [ref=e1426]: Rastreamento de Leads
+            - listitem [ref=e1427]:
+              - generic [ref=e1431]: Classificação de Leads
+            - listitem [ref=e1432]:
+              - generic [ref=e1436]: Auditoria de Conversas de WhatsApp
+            - listitem [ref=e1437]:
+              - generic [ref=e1441]: Relatórios de dados de conversas
+            - listitem [ref=e1442]:
+              - generic [ref=e1446]: Exportação de dados
+            - listitem [ref=e1447]:
+              - generic [ref=e1451]: Dashboard para visualização dos dados
+          - heading "R$ 197,00/mês" [level=2] [ref=e1454]
+          - link "Assinar o Plano Inicial" [ref=e1458] [cursor=pointer]:
+            - /url: "#elementor-action%3Aaction%3Dpopup%3Aopen%26settings%3DeyJpZCI6IjE2MTgwMSIsInRvZ2dsZSI6ZmFsc2V9"
+        - generic [ref=e1467]:
+          - heading "Agências" [level=2] [ref=e1470]
+          - heading "Para agencias e gestores que atendem vários clientes que buscam escalar seus resultados e aumentar o lucro do seu negócio" [level=2] [ref=e1473]
+          - list [ref=e1476]:
+            - listitem [ref=e1477]:
+              - generic [ref=e1481]: Tudo do plano Escala e mais...
+            - listitem [ref=e1483]:
+              - generic [ref=e1487]: Descontos especiais
+            - listitem [ref=e1488]:
+              - generic [ref=e1492]: Atendimento Prioritário
+            - listitem [ref=e1493]:
+              - generic [ref=e1497]: Call de implementação com nosso time de Customer Success
+          - heading "Consulte as condições" [level=2] [ref=e1500]
+          - link "Agendar um papo" [ref=e1504] [cursor=pointer]:
+            - /url: "#elementor-action%3Aaction%3Dpopup%3Aopen%26settings%3DeyJpZCI6IjE2MTkwMyIsInRvZ2dsZSI6ZmFsc2V9"
+        - generic [ref=e1513]:
+          - heading "Mais popular" [level=2] [ref=e1518]
+          - generic [ref=e1519]:
+            - heading "Escala" [level=2] [ref=e1522]
+            - heading "Para quem já vende pela internet" [level=2] [ref=e1525]
+            - list [ref=e1528]:
+              - listitem [ref=e1529]:
+                - generic [ref=e1533]: Tudo do plano Inicial e mais...
+              - listitem [ref=e1535]:
+                - generic [ref=e1539]: 1 número de WhatsApp rastreado
+              - listitem [ref=e1540]:
+                - generic [ref=e1544]: Conversas ilimitadas
+              - listitem [ref=e1545]:
+                - generic [ref=e1549]: Usuários ilimitados e gratuitos
+              - listitem [ref=e1550]:
+                - generic [ref=e1554]: Disparo de Webhook
+              - listitem [ref=e1555]:
+                - generic [ref=e1559]: Envio de dados para o Meta Ads e Google Ads
+              - listitem [ref=e1560]:
+                - generic [ref=e1564]: Acesso à relatórios e dashboard para terceiros
+            - heading "R$ 297,00/mês" [level=2] [ref=e1567]
+            - link "Assinar o Plano Escala" [ref=e1571] [cursor=pointer]:
+              - /url: "#elementor-action%3Aaction%3Dpopup%3Aopen%26settings%3DeyJpZCI6IjE2MTgwMSIsInRvZ2dsZSI6ZmFsc2V9"
+    - generic [ref=e1580]:
+      - generic [ref=e1581]:
+        - link [ref=e1585] [cursor=pointer]:
+          - /url: https://gotintim.moacir-moda.workers.dev/
+          - generic [ref=e1587]:
+            - text: Olá!
+            - img "👋" [ref=e1588]
+            - text: Como posso te ajudar?
+        - link [ref=e1591] [cursor=pointer]:
+          - /url: https://gotintim.moacir-moda.workers.dev/
+      - list [ref=e1594]:
+        - listitem [ref=e1595]:
+          - generic [ref=e1599]: FAQ
+      - heading "Perguntas Frequentes" [level=2] [ref=e1602]
+      - generic [ref=e1603]:
+        - generic [ref=e1607]:
+          - button "01. É possível utilizar com o meu WhatsApp Business?" [ref=e1609] [cursor=pointer]
+          - button "02. É possível utilizar a API Oficial?" [ref=e1617] [cursor=pointer]
+          - button "03. É possível utilizar com o meu WhatsApp Pessoal?" [ref=e1625] [cursor=pointer]
+          - button "04. É possível integrar com a minha ferramenta de atendimento?" [ref=e1633] [cursor=pointer]
+          - button "05. É possível capturar leads de outras fontes de comunicação?" [ref=e1641] [cursor=pointer]
+          - button "06. É possível rastrear conversas de campanhas de mensagem do Meta Ads?" [ref=e1649] [cursor=pointer]
+        - generic [ref=e1659]:
+          - button "07. É possível rastrear conversas que vieram do botão do meu site?" [ref=e1661] [cursor=pointer]
+          - button "08. É possível rastrear conversas que vieram do Google Ads?" [ref=e1669] [cursor=pointer]
+          - button "09. O Tintim é um CRM?" [ref=e1677] [cursor=pointer]
+          - button "10. É possível utilizar o Tintim junto com outras ferramentas de WhatsApp, como ferramentas de chatbot e de atendimento?" [ref=e1685] [cursor=pointer]
+          - button "11. É possível rastrear a origem das pessoas que entram em um grupo?" [ref=e1693] [cursor=pointer]
+          - button "12. É possível rastrear pessoas que abriram a conversa mas não enviaram mensagem?" [ref=e1701] [cursor=pointer]
+    - generic [ref=e1709]:
+      - paragraph [ref=e1715]: O Tintim utiliza o poder dos dados para alavancar suas vendas pelo WhatsApp. Rastreie suas conversas e acesse insights valiosos para otimizar suas campanhas.
+      - generic [ref=e1716]:
+        - link "Acesse o Tintim" [ref=e1720] [cursor=pointer]:
+          - /url: https://s.tintim.app
+        - link "Planos e Preços" [ref=e1726] [cursor=pointer]:
+          - /url: "#planos"
+        - link "Programa de parceiros" [ref=e1732] [cursor=pointer]:
+          - /url: "#parceiros"
+        - link "Central de Ajuda" [ref=e1738] [cursor=pointer]:
+          - /url: https://tintim.app/central-de-ajuda/
+        - link "Fale Conosco" [ref=e1744] [cursor=pointer]:
+          - /url: https://tintim.link/whatsapp/76ece6d7-b100-4343-a699-0b8554fbecd0/6f0cbbd8-a32d-45b5-9db5-fc8235338079
+        - link "WhatsApps oficiais do Tintim" [ref=e1750] [cursor=pointer]:
+          - /url: https://tintim.app/numeros-oficiais-do-tintim/
+      - 'heading "Codevance Serviços de Informática LTDA CNPJ: 22.351.899/0001-20" [level=2] [ref=e1756]'
+      - paragraph [ref=e1759]:
+        - text: © 2025 Tintim. All Rights Reserved |
+        - generic [ref=e1760]:
+          - link "Políticas de Privacidade" [ref=e1761] [cursor=pointer]:
+            - /url: https://tintim.app/politica-de-privacidade/
+          - text: –
+          - link "Termos de uso" [ref=e1762] [cursor=pointer]:
+            - /url: https://tintim.app/termos-de-uso/
+  - generic [ref=e1763]: desktop

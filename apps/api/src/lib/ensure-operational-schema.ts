@@ -416,6 +416,10 @@ const operationalStatements = [
         ON automation_executions(automation_id, executed_at DESC);
     `,
     `
+      CREATE INDEX IF NOT EXISTS automation_executions_executed_at_id_idx
+        ON automation_executions(executed_at DESC, id DESC);
+    `,
+    `
       ALTER TABLE automation_executions
       ADD COLUMN IF NOT EXISTS dedupe_key TEXT;
     `,

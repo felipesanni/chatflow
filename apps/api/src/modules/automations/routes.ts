@@ -3,6 +3,10 @@ import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import { Prisma } from '@prisma/client';
 import { requirePermission } from '../../lib/auth-guard.js';
+import {
+  decodeTimestampCursor,
+  encodeTimestampCursor,
+} from '../../lib/timestamp-cursor.js';
 
 const conditionSchema = z.object({
   field: z.string().trim().min(1, 'Informe a condição.'),
@@ -55,6 +59,11 @@ const automationPayloadSchema = z.object({
 
 const automationParamsSchema = z.object({
   automationId: z.string().uuid(),
+});
+
+const automationExecutionsQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(100).default(50),
+  cursor: z.string().trim().min(1).optional(),
 });
 
 function toInputJson(value: unknown) {
@@ -205,9 +214,27 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
     const access = await requirePermission(app, request, reply, 'automations.view');
     if (!access) return;
 
+    const query = automationExecutionsQuerySchema.parse(request.query ?? {});
+    const cursor = query.cursor ? decodeTimestampCursor(query.cursor) : null;
+
+    if (query.cursor && !cursor) {
+      return reply.badRequest('Cursor de execucoes invalido.');
+    }
+
     const items = await app.prisma.automationExecution.findMany({
-      orderBy: { executedAt: 'desc' },
-      take: 50,
+      where: cursor
+        ? {
+            OR: [
+              { executedAt: { lt: cursor.timestamp } },
+              { executedAt: cursor.timestamp, id: { lt: cursor.id } },
+            ],
+          }
+        : undefined,
+      orderBy: [
+        { executedAt: 'desc' },
+        { id: 'desc' },
+      ],
+      take: query.limit + 1,
       include: {
         automation: {
           select: {
@@ -220,8 +247,23 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
       },
     });
 
+    const hasMore = items.length > query.limit;
+    const pageItems = items.slice(0, query.limit);
+    const oldestItem = pageItems[pageItems.length - 1];
+    const nextCursor = hasMore && oldestItem
+      ? encodeTimestampCursor({
+          id: oldestItem.id,
+          timestamp: oldestItem.executedAt,
+        })
+      : null;
+
     return {
-      items: items.map((item) => mapExecution(item)),
+      items: pageItems.map((item) => mapExecution(item)),
+      pagination: {
+        limit: query.limit,
+        hasMore,
+        nextCursor,
+      },
     };
   });
 

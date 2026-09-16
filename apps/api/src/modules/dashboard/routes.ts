@@ -236,31 +236,16 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         direction: true,
         senderAgentId: true,
         createdAt: true,
+        ticket: {
+          select: {
+            isGroup: true,
+          },
+        },
       },
       orderBy: { createdAt: 'asc' },
     });
 
-    const periodNonGroupMessages = await app.prisma.ticketMessage.findMany({
-      where: {
-        createdAt: { gte: range.from, lte: range.to },
-        ticket: {
-          AND: [
-            visibleTicketWhere,
-            dashboardScopedTicketConstraint,
-            selectedAgentConstraint,
-            { isGroup: false },
-          ],
-        },
-      },
-      select: {
-        id: true,
-        ticketId: true,
-        direction: true,
-        senderAgentId: true,
-        createdAt: true,
-      },
-      orderBy: { createdAt: 'asc' },
-    });
+    const periodNonGroupMessages = periodMessages.filter((message) => !message.ticket.isGroup);
 
     const createdTicketMessages = createdTicketIds.length > 0
       ? await app.prisma.ticketMessage.findMany({

@@ -344,6 +344,7 @@ model AutomationExecution {
   automation     Automation                @relation(fields: [automationId], references: [id], onDelete: Cascade)
 
   @@index([automationId, executedAt(sort: Desc)])
+  @@index([executedAt(sort: Desc), id(sort: Desc)])
   @@unique([automationId, dedupeKey])
   @@map("automation_executions")
 }

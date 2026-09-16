@@ -26,6 +26,7 @@ import { apiAccessRoutes } from './modules/api-access/routes.js';
 import { externalRoutes } from './modules/external/routes.js';
 import { browserNotificationRoutes } from './modules/browser-notifications/routes.js';
 import { automationRoutes } from './modules/automations/routes.js';
+import { ZodError } from 'zod';
 
 export async function buildApp() {
   const env = loadEnv();
@@ -76,15 +77,23 @@ export async function buildApp() {
   app.setErrorHandler((error, request, reply) => {
     request.log.error(error);
 
+    const isValidationError = error instanceof ZodError;
+
     const normalizedError = typeof error === 'object' && error !== null
       ? error as { statusCode?: number; code?: string; message?: string }
       : {};
 
-    const statusCode = typeof normalizedError.statusCode === 'number'
+    const statusCode = isValidationError
+      ? 400
+      : typeof normalizedError.statusCode === 'number'
       ? normalizedError.statusCode
       : 500;
 
     const message = (() => {
+      if (isValidationError) {
+        return 'Dados invalidos para a solicitacao.';
+      }
+
       if (normalizedError.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
         return 'O arquivo ou conteudo enviado e grande demais para ser processado.';
       }

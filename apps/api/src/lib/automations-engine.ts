@@ -489,96 +489,6 @@ function isAutomationGeneratedMessage(rawPayload: Prisma.JsonValue | null | unde
   return payload.automationId === automationId;
 }
 
-function formatConditionFailure(
-  condition: AutomationCondition,
-  context: TriggerExecutionContext,
-  conditions: AutomationCondition[] = [],
-  actions: AutomationAction[] = [],
-) {
-  if (condition.field === 'message.keyword') {
-    const keyword = typeof condition.value === 'string' ? condition.value.trim() : '';
-    return keyword
-      ? `Mensagem não contém a palavra-chave "${keyword}".`
-      : 'Palavra-chave da condição não foi informada.';
-  }
-
-  if (condition.field === 'ticket.assignment') {
-    if (condition.value === 'assigned') {
-      return 'Ticket está sem agente responsável.';
-    }
-
-    if (condition.value === 'unassigned') {
-      return 'Ticket já possui agente responsável.';
-    }
-
-    return 'Escopo de atribuição do ticket não foi atendido.';
-  }
-
-  if (condition.field === 'ticket.responsePendingFrom') {
-    const expected = getTicketResponsePendingFrom([condition], actions);
-    if (expected === 'agent') {
-      if (!context.ticket.currentAgentId) {
-        return 'Ticket está sem agente responsável para cobrar resposta.';
-      }
-
-      if (context.ticket.latestMessageDirection !== 'inbound') {
-        return 'Última mensagem não foi do cliente; não há resposta pendente do agente.';
-      }
-
-      return 'Condição de resposta pendente do agente não foi atendida.';
-    }
-
-    if (context.ticket.latestMessageDirection !== 'outbound') {
-      return 'Última mensagem não foi do agente; não há resposta pendente do cliente.';
-    }
-
-    return 'Condição de resposta pendente do cliente não foi atendida.';
-  }
-
-  if (condition.field === 'ticket.inactivityMinutes') {
-    const expectedMinutes = Number(condition.value);
-    const expectedPendingFrom = getTicketResponsePendingFrom(conditions, actions);
-
-    if (!Number.isFinite(expectedMinutes) || expectedMinutes <= 0) {
-      return 'Tempo de inatividade configurado é inválido.';
-    }
-
-    if (!context.ticket.latestMessageCreatedAt) {
-      return 'Ticket ainda não possui mensagem válida para iniciar a contagem.';
-    }
-
-    if (expectedPendingFrom === 'agent') {
-      if (!context.ticket.currentAgentId) {
-        return 'Ticket está sem agente responsável para medir resposta pendente.';
-      }
-
-      if (context.ticket.latestMessageDirection !== 'inbound') {
-        return 'Última mensagem não foi do cliente; a contagem para resposta do agente não começou.';
-      }
-    } else if (context.ticket.latestMessageDirection !== 'outbound') {
-      return 'Última mensagem não foi do agente; a contagem para resposta do cliente não começou.';
-    } else if (isAutomationGeneratedMessage(context.ticket.latestMessageRawPayload)) {
-      return 'Última mensagem foi enviada por automação; o timer não reinicia sobre a própria mensagem automática.';
-    }
-
-    const now = context.now ?? new Date();
-    const elapsedMinutes = Math.floor((now.getTime() - context.ticket.latestMessageCreatedAt.getTime()) / 60_000);
-    const remainingMinutes = Math.max(0, expectedMinutes - elapsedMinutes);
-
-    if (remainingMinutes > 0) {
-      return expectedPendingFrom === 'agent'
-        ? `Ainda faltam ${remainingMinutes} min para cobrar resposta do agente.`
-        : `Ainda faltam ${remainingMinutes} min para cobrar resposta do cliente.`;
-    }
-
-    return 'Tempo mínimo de inatividade ainda não foi atendido.';
-  }
-
-  return condition.valueLabel
-    ? `Condição "${condition.valueLabel}" não foi atendida.`
-    : `Condição "${condition.field}" não foi atendida.`;
-}
-
 function asActions(value: Prisma.JsonValue): AutomationAction[] {
   return Array.isArray(value) ? value as AutomationAction[] : [];
 }
@@ -787,7 +697,7 @@ function dedupeKeyForContext(
     const latestMessageAt = context.ticket.latestMessageCreatedAt ?? context.ticket.lastMessageAt;
     const now = context.now ?? new Date();
     const elapsedMinutes = Math.max(0, Math.floor((now.getTime() - latestMessageAt.getTime()) / 60_000));
-    const phase = elapsedMinutes >= inactivityMinutes ? 'threshold-reached' : `waiting:${elapsedMinutes}`;
+    const phase = elapsedMinutes >= inactivityMinutes ? 'threshold-reached' : 'waiting';
     return `${automation.id}:inactive:${context.ticket.id}:${latestMessageKey}:${expectedPendingFrom}:${inactivityMinutes}:${phase}`;
   }
 
@@ -1196,6 +1106,12 @@ async function runAutomationAgainstContext(
 
   const conditions = asConditions(automation.conditions);
   const actions = asActions(automation.actions);
+  // Maintenance runs every minute; non-matching candidates must not create history rows.
+  const conditionsMatched = conditions.every((condition) => evaluateCondition(condition, context, conditions, actions));
+  if (!conditionsMatched) {
+    return null;
+  }
+
   const dedupeKey = dedupeKeyForContext(automation, context, conditions, actions);
   if (!registerAutomationDedupe(dedupeKey, context.triggerType === 'scheduled_time' ? AUTOMATION_TICK_INTERVAL_MS + 5_000 : 60 * 60 * 1000)) {
     return null;
@@ -1214,27 +1130,6 @@ async function runAutomationAgainstContext(
   });
 
   if (!executionId) {
-    return null;
-  }
-
-  const failedConditions = conditions
-    .filter((condition) => !evaluateCondition(condition, context, conditions, actions))
-    .map((condition) => ({
-      field: condition.field,
-      message: formatConditionFailure(condition, context, conditions, actions),
-    }));
-  const conditionsMatched = failedConditions.length === 0;
-  if (!conditionsMatched) {
-    await finalizeAutomationExecution(app, {
-      id: executionId,
-      status: 'skipped',
-      message: failedConditions[0]?.message ?? 'Condições não atendidas para este evento.',
-      resultPayload: {
-        ticketId: context.ticket.id,
-        messageId: context.message?.id ?? null,
-        failedConditions,
-      },
-    });
     return null;
   }
 
@@ -1537,13 +1432,25 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
     }
   }
 
-  if (inactiveAutomations.length > 0) {
+  const actionableInactiveAutomations = inactiveAutomations.filter((automation) =>
+    getTicketInactivityMinutes(asConditions(automation.conditions)) !== null,
+  );
+
+  if (actionableInactiveAutomations.length > 0) {
+    const minimumInactivityMinutes = Math.min(
+      ...actionableInactiveAutomations.map((automation) =>
+        getTicketInactivityMinutes(asConditions(automation.conditions)) ?? Number.MAX_SAFE_INTEGER,
+      ),
+    );
     const inactiveTickets = await app.prisma.ticket.findMany({
       where: {
         status: {
           in: ['open', 'pending'],
         },
         isGroup: false,
+        lastMessageAt: {
+          lte: new Date(now.getTime() - minimumInactivityMinutes * 60_000),
+        },
       },
       select: {
         id: true,
@@ -1577,7 +1484,7 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
     });
 
     for (const ticket of inactiveTickets) {
-      for (const automation of inactiveAutomations) {
+      for (const automation of actionableInactiveAutomations) {
         await runAutomationAgainstContext(app, automation, {
           triggerType: 'ticket_inactive',
           ticket: {
@@ -1595,63 +1502,69 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
 
   if (scheduledAutomations.length > 0) {
     const parts = getSaoPauloParts(now);
-    const scheduledTickets = await app.prisma.ticket.findMany({
-      where: {
-        status: {
-          in: ['open', 'pending'],
-        },
-        isGroup: false,
-      },
-      select: {
-        id: true,
-        status: true,
-        currentAgentId: true,
-        currentQueueId: true,
-        whatsappInstanceId: true,
-        lastMessageAt: true,
-        messages: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-          select: {
-            direction: true,
-            senderAgentId: true,
-            createdAt: true,
-            rawPayload: true,
-          },
-        },
-        createdAt: true,
-        customerNameSnapshot: true,
-        externalChatId: true,
-        externalContactId: true,
-        isGroup: true,
-      },
-      orderBy: {
-        updatedAt: 'desc',
-      },
-    });
-
-    for (const automation of scheduledAutomations) {
+    const currentScheduledAutomations = scheduledAutomations.filter((automation) => {
       const schedule = asScheduleConfig(automation.scheduleConfig);
       if (!schedule?.time || schedule.time !== parts.time) {
-        continue;
+        return false;
       }
 
       if (Array.isArray(schedule.daysOfWeek) && schedule.daysOfWeek.length > 0 && !schedule.daysOfWeek.includes(parts.weekday)) {
-        continue;
+        return false;
       }
 
-      for (const ticket of scheduledTickets) {
-        await runAutomationAgainstContext(app, automation, {
-          triggerType: 'scheduled_time',
-          ticket: {
-            ...ticket,
-            latestMessageDirection: ticket.messages[0]?.direction ?? null,
-            latestMessageCreatedAt: ticket.messages[0]?.createdAt ?? null,
-            latestMessageSenderAgentId: ticket.messages[0]?.senderAgentId ?? null,
-            latestMessageRawPayload: ticket.messages[0]?.rawPayload ?? null,
+      return true;
+    });
+
+    if (currentScheduledAutomations.length > 0) {
+      const scheduledTickets = await app.prisma.ticket.findMany({
+        where: {
+          status: {
+            in: ['open', 'pending'],
           },
-          now,
-        });
+          isGroup: false,
+        },
+        select: {
+          id: true,
+          status: true,
+          currentAgentId: true,
+          currentQueueId: true,
+          whatsappInstanceId: true,
+          lastMessageAt: true,
+          messages: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: {
+              direction: true,
+              senderAgentId: true,
+              createdAt: true,
+              rawPayload: true,
+            },
+          },
+          createdAt: true,
+          customerNameSnapshot: true,
+          externalChatId: true,
+          externalContactId: true,
+          isGroup: true,
+        },
+        orderBy: {
+          updatedAt: 'desc',
+        },
+      });
+
+      for (const automation of currentScheduledAutomations) {
+        for (const ticket of scheduledTickets) {
+          await runAutomationAgainstContext(app, automation, {
+            triggerType: 'scheduled_time',
+            ticket: {
+              ...ticket,
+              latestMessageDirection: ticket.messages[0]?.direction ?? null,
+              latestMessageCreatedAt: ticket.messages[0]?.createdAt ?? null,
+              latestMessageSenderAgentId: ticket.messages[0]?.senderAgentId ?? null,
+              latestMessageRawPayload: ticket.messages[0]?.rawPayload ?? null,
+            },
+            now,
+          });
+        }
       }
     }
   }
