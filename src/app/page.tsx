@@ -17,6 +17,7 @@ import {
   EyeOff,
   FileAudio,
   FileText,
+  History,
   Info,
   LayoutGrid,
   Lock,
@@ -318,7 +319,7 @@ type AutomationItem = {
   executionCount: number;
   latestExecution?: {
     id: string;
-    status: "success" | "skipped" | "failed";
+    status: "success" | "processing" | "skipped" | "failed";
     executedAt: string;
     message?: string | null;
   } | null;
@@ -326,7 +327,7 @@ type AutomationItem = {
 
 type AutomationExecutionItem = {
   id: string;
-  status: "success" | "skipped" | "failed";
+  status: "success" | "processing" | "skipped" | "failed";
   message?: string | null;
   triggerPayload?: unknown;
   resultPayload?: unknown;
@@ -363,10 +364,18 @@ type CustomerItem = {
   } | null;
 };
 
-type CustomerTicketsViewerState = {
-  customer: CustomerItem;
+type RelatedTicketsViewerState = {
+  title: string;
+  sourceTicketId?: string | null;
+  sourceCustomerId?: string | null;
   tickets: TicketItem[];
   loading: boolean;
+  selectedTicketId: string | null;
+  selectedMessages: MessageItem[];
+  selectedMessagesLoading: boolean;
+  selectedMessagesHasMore: boolean;
+  selectedMessagesBeforeCursor: string | null;
+  selectedMessagesOlderLoading: boolean;
 };
 
 type ForwardDestination = {
@@ -559,6 +568,7 @@ const permissionDefinitions = [
   { key: "tickets.close", group: "Atendimento", label: "Encerrar atendimentos" },
   { key: "tickets.closeWithoutAccept", group: "Atendimento", label: "Encerrar tickets sem aceitar atendimento" },
   { key: "tickets.closedView", group: "Atendimento", label: "Visualizar módulo de tickets fechados" },
+  { key: "tickets.relatedHistory", group: "Atendimento", label: "Consultar histórico de tickets relacionados" },
   { key: "tickets.bulkDelete", group: "Atendimento", label: "Apagar tickets em lote" },
   { key: "messages.bulkDelete", group: "Atendimento", label: "Apagar mensagens em lote" },
   { key: "tickets.groups", group: "Atendimento", label: "Visualizar grupos" },
@@ -630,6 +640,7 @@ function defaultPermissionsForRole(role: "admin" | "agent"): PermissionMap {
     "tickets.close": true,
     "tickets.closeWithoutAccept": false,
     "tickets.closedView": false,
+    "tickets.relatedHistory": false,
     "tickets.bulkDelete": false,
     "messages.bulkDelete": false,
     "tickets.groups": true,
@@ -672,7 +683,10 @@ function normalizePermissions(role: "admin" | "agent", raw?: Partial<Record<Perm
 }
 
 const API_URL = "/api-proxy";
-const MESSAGE_PAGE_SIZE = 200;
+const MESSAGE_PAGE_SIZE = 100;
+const ACTIVE_TICKET_PAGE_SIZE = 500;
+const CLOSED_TICKET_PAGE_SIZE = 300;
+const PERIODIC_REFRESH_INTERVAL_MS = 10_000;
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL ?? null;
 const BRAND_LOGO_STORAGE_KEY = "chatflow.brand.logo";
 const BRAND_MODE_STORAGE_KEY = "chatflow.brand.mode";
@@ -1889,8 +1903,9 @@ function translateAutomationStatus(status: AutomationItem["status"]) {
 
 function translateAutomationExecutionStatus(status: AutomationExecutionItem["status"]) {
   if (status === "success") return "Executada";
+  if (status === "processing") return "Processando";
   if (status === "failed") return "Falhou";
-  return "Ignorada";
+  return "Ignorada (legado)";
 }
 
 function translateAutomationAction(type: AutomationAction["type"]) {
@@ -2093,12 +2108,26 @@ function parseSharedContactMessage(body: string | null | undefined) {
   };
 }
 
-function resolveAttachmentUrl(ticketId: string, attachment: AttachmentItem) {
+function resolveAttachmentUrl(
+  ticketId: string,
+  attachment: AttachmentItem,
+  relatedContext?: { sourceTicketId?: string | null; customerId?: string | null },
+) {
   if (attachment.publicUrl?.startsWith("data:")) {
     return attachment.publicUrl;
   }
 
-  return `${API_URL}/tickets/${ticketId}/attachments/${attachment.id}/content`;
+  const query = new URLSearchParams();
+  if (relatedContext?.sourceTicketId) {
+    query.set("related", "true");
+    query.set("relatedFrom", relatedContext.sourceTicketId);
+  } else if (relatedContext?.customerId) {
+    query.set("related", "true");
+    query.set("relatedCustomerId", relatedContext.customerId);
+  }
+
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return `${API_URL}/tickets/${ticketId}/attachments/${attachment.id}/content${suffix}`;
 }
 
 function initials(name: string) {
@@ -2312,7 +2341,7 @@ export default function HomePage() {
   }>(null);
   const [scheduledMessageDeleteTarget, setScheduledMessageDeleteTarget] = React.useState<ScheduledMessageItem | null>(null);
   const [forwardLoading, setForwardLoading] = React.useState(false);
-  const [customerTicketsViewer, setCustomerTicketsViewer] = React.useState<CustomerTicketsViewerState | null>(null);
+  const [customerTicketsViewer, setCustomerTicketsViewer] = React.useState<RelatedTicketsViewerState | null>(null);
   const currentSearchScope = React.useMemo<SearchScopeKey>(() => {
     if (activeWorkspace === "tickets" || activeWorkspace === "closedTickets") {
       return "tickets";
@@ -2498,6 +2527,9 @@ export default function HomePage() {
   const selectedTicketIdRef = React.useRef<string | null>(null);
   const activeWorkspaceRef = React.useRef(activeWorkspace);
   const periodicRefreshInFlightRef = React.useRef(false);
+  const ticketRefreshInFlightRef = React.useRef<{ key: string; promise: Promise<TicketItem[]> } | null>(null);
+  const ticketViewKeyRef = React.useRef(`${activeWorkspace}:${showArchivedTickets ? "archived" : "active"}`);
+  ticketViewKeyRef.current = `${activeWorkspace}:${showArchivedTickets ? "archived" : "active"}`;
   const ticketsRef = React.useRef<TicketItem[]>([]);
   const browserNotificationRegistrationRef = React.useRef<ServiceWorkerRegistration | null>(null);
   const appDialogResolverRef = React.useRef<((value: boolean) => void) | null>(null);
@@ -2525,6 +2557,10 @@ export default function HomePage() {
   const selectedTicket = React.useMemo(
     () => tickets.find((ticket) => ticket.id === selectedTicketId) ?? null,
     [tickets, selectedTicketId],
+  );
+  const relatedViewerSelectedTicket = React.useMemo(
+    () => customerTicketsViewer?.tickets.find((ticket) => ticket.id === customerTicketsViewer.selectedTicketId) ?? null,
+    [customerTicketsViewer],
   );
   const selectedCustomer = React.useMemo(() => {
     if (!selectedTicket) return null;
@@ -2894,6 +2930,7 @@ export default function HomePage() {
   const canBulkDeleteTickets = currentUser.permissions["tickets.bulkDelete"];
   const canBulkDeleteMessages = currentUser.permissions["messages.bulkDelete"];
   const canViewClosedTickets = currentUser.permissions["tickets.closedView"];
+  const canViewRelatedHistory = currentUser.permissions["tickets.relatedHistory"];
   const canManageSelectedGroupVisibility = Boolean(selectedTicket?.isGroup && canManageUserAccess);
   const visibleGroupVisibilityAgents = React.useMemo(
     () => [...agents]
@@ -3470,57 +3507,86 @@ export default function HomePage() {
 
   const refreshTickets = React.useCallback(async () => {
     if (!user) return [] as TicketItem[];
-    setTicketLoading(true);
-    try {
-      let items: TicketItem[] = [];
+    const viewKey = `${activeWorkspace}:${showArchivedTickets ? "archived" : "active"}`;
+    const inFlight = ticketRefreshInFlightRef.current;
+    if (inFlight?.key === viewKey) {
+      return inFlight.promise;
+    }
 
-      if (activeWorkspace === "closedTickets") {
-        const payload = await apiFetch<{ items: TicketItem[] }>("/tickets?status=closed", { method: "GET" });
-        items = payload.items;
-      } else {
-        const requests: Array<Promise<{ items: TicketItem[] }>> = [
-          apiFetch<{ items: TicketItem[] }>("/tickets?status=open&isGroup=false", { method: "GET" }),
-          apiFetch<{ items: TicketItem[] }>("/tickets?status=pending&isGroup=false", { method: "GET" }),
-          apiFetch<{ items: TicketItem[] }>("/tickets?isGroup=true", { method: "GET" }),
-        ];
+    const request = (async () => {
+      setTicketLoading(true);
+      try {
+        let items: TicketItem[] = [];
 
-        if (showArchivedTickets) {
-          requests.push(apiFetch<{ items: TicketItem[] }>("/tickets?status=closed&isGroup=false", { method: "GET" }));
+        if (activeWorkspace === "closedTickets") {
+          const payload = await apiFetch<{ items: TicketItem[] }>(
+            `/tickets?status=closed&isGroup=false&limit=${CLOSED_TICKET_PAGE_SIZE}`,
+            { method: "GET" },
+          );
+          items = payload.items;
+        } else {
+          const requests: Array<Promise<{ items: TicketItem[] }>> = [
+            apiFetch<{ items: TicketItem[] }>(`/tickets?status=open&isGroup=false&limit=${ACTIVE_TICKET_PAGE_SIZE}`, { method: "GET" }),
+            apiFetch<{ items: TicketItem[] }>(`/tickets?status=pending&isGroup=false&limit=${ACTIVE_TICKET_PAGE_SIZE}`, { method: "GET" }),
+            apiFetch<{ items: TicketItem[] }>(`/tickets?status=open&isGroup=true&limit=${ACTIVE_TICKET_PAGE_SIZE}`, { method: "GET" }),
+          ];
+
+          if (showArchivedTickets) {
+            requests.push(apiFetch<{ items: TicketItem[] }>(`/tickets?status=closed&isGroup=false&limit=${CLOSED_TICKET_PAGE_SIZE}`, { method: "GET" }));
+          }
+
+          const [openPayload, pendingPayload, groupsPayload, closedPayload] = await Promise.all(requests);
+
+          const deduped = new Map<string, TicketItem>();
+          [
+            ...openPayload.items,
+            ...pendingPayload.items,
+            ...groupsPayload.items,
+            ...(closedPayload?.items ?? []),
+          ].forEach((ticket) => {
+            deduped.set(ticket.id, ticket);
+          });
+
+          items = Array.from(deduped.values()).sort((a, b) => {
+            const aTime = new Date(a.lastMessageAt ?? a.updatedAt).getTime();
+            const bTime = new Date(b.lastMessageAt ?? b.updatedAt).getTime();
+            return bTime - aTime;
+          });
         }
 
-        const [openPayload, pendingPayload, groupsPayload, closedPayload] = await Promise.all(requests);
-
-        const deduped = new Map<string, TicketItem>();
-        [
-          ...openPayload.items,
-          ...pendingPayload.items,
-          ...groupsPayload.items,
-          ...(closedPayload?.items ?? []),
-        ].forEach((ticket) => {
-          deduped.set(ticket.id, ticket);
-        });
-
-        items = Array.from(deduped.values()).sort((a, b) => {
-          const aTime = new Date(a.lastMessageAt ?? a.updatedAt).getTime();
-          const bTime = new Date(b.lastMessageAt ?? b.updatedAt).getTime();
-          return bTime - aTime;
-        });
+        // A response from a previous workspace must not replace the current
+        // list after the user navigates while the request is still pending.
+      if (ticketViewKeyRef.current !== viewKey) {
+        return items;
       }
 
-      setTickets(items);
-      setSelectedTicketId((current) => {
-        if (current && items.some((ticket) => ticket.id === current)) {
-          return current;
+        setTickets(items);
+        setSelectedTicketId((current) => {
+          if (current && items.some((ticket) => ticket.id === current)) {
+            return current;
+          }
+          return null;
+        });
+        return items;
+      } catch (error) {
+        if (ticketViewKeyRef.current === viewKey) {
+          setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar tickets.");
         }
-        return null;
-      });
-      return items;
-    } catch (error) {
-      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar tickets.");
-      return [] as TicketItem[];
-    } finally {
-      setTicketLoading(false);
-    }
+        return [] as TicketItem[];
+      } finally {
+        if (ticketViewKeyRef.current === viewKey) {
+          setTicketLoading(false);
+        }
+      }
+    })();
+
+    const trackedRequest = request.finally(() => {
+      if (ticketRefreshInFlightRef.current?.promise === trackedRequest) {
+        ticketRefreshInFlightRef.current = null;
+      }
+    });
+    ticketRefreshInFlightRef.current = { key: viewKey, promise: trackedRequest };
+    return trackedRequest;
   }, [activeWorkspace, showArchivedTickets, user]);
 
   const openTicketFromNotification = React.useCallback((ticket: TicketItem) => {
@@ -3806,24 +3872,51 @@ export default function HomePage() {
   }, [dashboardAgentId, dashboardRange, user]);
 
   const refreshAll = React.useCallback(async () => {
-    const selectedTicketRefreshes = selectedTicketId
-      ? [refreshMessages(selectedTicketId), refreshScheduledMessages(selectedTicketId)]
-      : [];
+    const requests: Array<Promise<unknown>> = [];
+    const isTicketWorkspace = activeWorkspace === "tickets" || activeWorkspace === "closedTickets";
 
-    await Promise.all([
-      refreshDashboard(),
-      refreshTickets(),
-      ...selectedTicketRefreshes,
-      refreshScheduledMessageOverview(),
-      refreshInstances(),
-      refreshAgents(),
-      refreshQueues(),
-      refreshCustomers(),
-      refreshQuickReplies(),
-      refreshAutomations(),
-      refreshAutomationExecutions(),
-    ]);
-  }, [refreshAgents, refreshAutomationExecutions, refreshAutomations, refreshCustomers, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId]);
+    if (activeWorkspace === "dashboard") {
+      requests.push(refreshDashboard());
+      if (canViewTeam) requests.push(refreshAgents());
+    }
+
+    if (isTicketWorkspace) {
+      requests.push(refreshTickets());
+      if (selectedTicketId) {
+        requests.push(refreshMessages(selectedTicketId));
+        requests.push(refreshScheduledMessages(selectedTicketId));
+      }
+      if (activeWorkspace === "tickets") {
+        if (canViewChannels) requests.push(refreshInstances());
+        if (canViewTeam || canTransferTickets) {
+          requests.push(refreshAgents());
+          requests.push(refreshQueues());
+        }
+        if (canViewQuickReplies) requests.push(refreshQuickReplies());
+      }
+    }
+
+    if (activeWorkspace === "channels" && canViewChannels) requests.push(refreshInstances());
+    if (activeWorkspace === "quickReplies" && canViewQuickReplies) requests.push(refreshQuickReplies());
+    if (activeWorkspace === "contacts" && canViewContacts) requests.push(refreshCustomers());
+    if (activeWorkspace === "calendar") requests.push(refreshScheduledMessageOverview());
+    if (activeWorkspace === "automations" && canViewAutomations) {
+      requests.push(refreshAutomations());
+      requests.push(refreshAutomationExecutions());
+    }
+    if (activeWorkspace === "team" && (canViewTeam || canTransferTickets)) {
+      requests.push(refreshAgents());
+      requests.push(refreshQueues());
+    }
+    if (activeWorkspace === "api") requests.push(refreshApiTokens());
+    if (activeWorkspace === "settings") {
+      if (adminSection === "instances" && canViewChannels) requests.push(refreshInstances());
+      if (adminSection === "agents" && (canViewTeam || canTransferTickets)) requests.push(refreshAgents());
+      if (adminSection === "queues" && (canViewTeam || canTransferTickets)) requests.push(refreshQueues());
+    }
+
+    await Promise.all(requests);
+  }, [activeWorkspace, adminSection, canTransferTickets, canViewAutomations, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshApiTokens, refreshAutomationExecutions, refreshAutomations, refreshCustomers, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId]);
 
   React.useEffect(() => {
     void refreshAuth();
@@ -3850,31 +3943,84 @@ export default function HomePage() {
       return;
     }
 
+    const isTicketWorkspace = activeWorkspace === "tickets" || activeWorkspace === "closedTickets";
+
     if (activeWorkspace === "dashboard") {
       void refreshDashboard();
+      if (canViewTeam) {
+        void refreshAgents();
+      }
     }
-    void refreshTickets();
-    if (canViewChannels) {
+
+    if (isTicketWorkspace) {
+      void refreshTickets();
+
+      // These datasets support actions inside Atendimento. The archived
+      // workspace is read-only and does not need them on first load.
+      if (activeWorkspace === "tickets") {
+        if (canViewChannels) {
+          void refreshInstances();
+        }
+        if (canViewTeam || canTransferTickets) {
+          void refreshAgents();
+          void refreshQueues();
+        }
+        if (canViewQuickReplies) {
+          void refreshQuickReplies();
+        }
+      }
+    }
+
+    if (activeWorkspace === "channels" && canViewChannels) {
       void refreshInstances();
     }
-    if (canViewTeam || canTransferTickets) {
-      void refreshAgents();
-      void refreshQueues();
-    }
-    if (canViewContacts) {
-      void refreshCustomers();
-    }
-    if (canViewQuickReplies) {
+
+    if (activeWorkspace === "quickReplies" && canViewQuickReplies) {
       void refreshQuickReplies();
     }
-    if (canViewAutomations) {
+
+    if (activeWorkspace === "contacts" && canViewContacts) {
+      void refreshCustomers();
+    }
+
+    if (activeWorkspace === "calendar" && user.permissions["calendar.view"]) {
+      void refreshScheduledMessageOverview();
+    }
+
+    if (activeWorkspace === "automations" && canViewAutomations) {
       void refreshAutomations();
       void refreshAutomationExecutions();
     }
-    if (normalizePermissions(user.role, user.permissions)["calendar.view"]) {
-      void refreshScheduledMessageOverview();
+
+    if (activeWorkspace === "team") {
+      if (canViewTeam || canTransferTickets) {
+        void refreshAgents();
+        void refreshQueues();
+      }
     }
-  }, [activeWorkspace, canTransferTickets, canViewAutomations, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshAutomationExecutions, refreshAutomations, refreshCustomers, refreshDashboard, refreshInstances, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshTickets, user]);
+
+    if (activeWorkspace === "settings") {
+      if (adminSection === "instances" && canViewChannels) {
+        void refreshInstances();
+      }
+      if (adminSection === "agents" && (canViewTeam || canTransferTickets)) {
+        void refreshAgents();
+      }
+      if (adminSection === "queues" && (canViewTeam || canTransferTickets)) {
+        void refreshQueues();
+      }
+    }
+  }, [activeWorkspace, adminSection, canTransferTickets, canViewAutomations, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshAutomationExecutions, refreshAutomations, refreshCustomers, refreshDashboard, refreshInstances, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshTickets, user]);
+
+  React.useEffect(() => {
+    if (!user || !canViewContacts) {
+      return;
+    }
+
+    if (managementModal === "conversation" || showForwardModal) {
+      void refreshCustomers();
+    }
+  }, [canViewContacts, managementModal, refreshCustomers, showForwardModal, user]);
 
   React.useEffect(() => {
     if (!selectedTicketId || !user) {
@@ -4107,16 +4253,26 @@ export default function HomePage() {
       }
     };
     socket.on("connect", () => {
-        if (activeWorkspaceRef.current === "dashboard") {
-          void refreshDashboard();
-        }
+      const workspace = activeWorkspaceRef.current;
+      const isTicketWorkspace = workspace === "tickets" || workspace === "closedTickets";
+
+      if (workspace === "dashboard") {
+        void refreshDashboard();
+      }
+
+      if (isTicketWorkspace) {
         void refreshTickets();
-        void refreshScheduledMessageOverview();
-        if (selectedTicketId) {
-          void refreshMessages(selectedTicketId, { silent: true });
-          void refreshScheduledMessages(selectedTicketId);
+        const ticketId = selectedTicketIdRef.current;
+        if (ticketId) {
+          void refreshMessages(ticketId, { silent: true });
+          void refreshScheduledMessages(ticketId);
         }
-      });
+      }
+
+      if (workspace === "calendar") {
+        void refreshScheduledMessageOverview();
+      }
+    });
     socket.on("connect_error", () => {
       setPanelMessage("Conexão em tempo real indisponível. O painel continua funcionando por atualização periódica.");
     });
@@ -4411,46 +4567,58 @@ export default function HomePage() {
       }
 
       periodicRefreshInFlightRef.current = true;
-      const requests: Array<Promise<unknown>> = [
-        refreshTickets(),
-        refreshScheduledMessageOverview(),
-      ];
+      const workspace = activeWorkspaceRef.current;
+      const isTicketWorkspace = workspace === "tickets" || workspace === "closedTickets";
+      const requests: Array<Promise<unknown>> = [];
 
-      if (activeWorkspaceRef.current === "dashboard") {
+      if (isTicketWorkspace) {
+        requests.push(refreshTickets());
+      }
+
+      if (workspace === "calendar") {
+        requests.push(refreshScheduledMessageOverview());
+      }
+
+      if (workspace === "dashboard") {
         requests.push(refreshDashboard());
       }
 
-      if (selectedTicketId) {
-        requests.push(refreshMessages(selectedTicketId, { silent: true }));
-        requests.push(refreshScheduledMessages(selectedTicketId));
-      }
-
-      if (user.role === "admin") {
-        requests.push(refreshInstances());
-        requests.push(refreshAgents());
-        requests.push(refreshQueues());
+      const ticketId = selectedTicketIdRef.current;
+      if (isTicketWorkspace && ticketId) {
+        requests.push(refreshMessages(ticketId, { silent: true }));
+        requests.push(refreshScheduledMessages(ticketId));
       }
 
       void Promise.all(requests).finally(() => {
         periodicRefreshInFlightRef.current = false;
       });
-    }, 5000);
+    }, PERIODIC_REFRESH_INTERVAL_MS);
 
     return () => clearInterval(interval);
-    }, [refreshAgents, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
+    }, [refreshDashboard, refreshMessages, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, user]);
 
   React.useEffect(() => {
     if (!user) return;
 
       const handleVisibilityOrFocus = () => {
-        if (activeWorkspaceRef.current === "dashboard") {
+        const workspace = activeWorkspaceRef.current;
+        const isTicketWorkspace = workspace === "tickets" || workspace === "closedTickets";
+
+        if (workspace === "dashboard") {
           void refreshDashboard();
         }
-        void refreshTickets();
-        void refreshScheduledMessageOverview();
-        if (selectedTicketId) {
-          void refreshMessages(selectedTicketId, { silent: true });
-          void refreshScheduledMessages(selectedTicketId);
+
+        if (isTicketWorkspace) {
+          void refreshTickets();
+          const ticketId = selectedTicketIdRef.current;
+          if (ticketId) {
+            void refreshMessages(ticketId, { silent: true });
+            void refreshScheduledMessages(ticketId);
+          }
+        }
+
+        if (workspace === "calendar") {
+          void refreshScheduledMessageOverview();
         }
       };
 
@@ -4470,7 +4638,7 @@ export default function HomePage() {
         document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
       }
     };
-    }, [refreshDashboard, refreshMessages, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId, user]);
+    }, [refreshDashboard, refreshMessages, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, user]);
 
   React.useLayoutEffect(() => {
     const pending = pendingMessagePrependRef.current;
@@ -6630,28 +6798,196 @@ export default function HomePage() {
 
   async function handleOpenCustomerTickets(customer: CustomerItem) {
     setCustomerTicketsViewer({
-      customer,
+      title: customer.name,
+      sourceCustomerId: customer.id,
       tickets: [],
       loading: true,
+      selectedTicketId: null,
+      selectedMessages: [],
+      selectedMessagesLoading: false,
+      selectedMessagesHasMore: false,
+      selectedMessagesBeforeCursor: null,
+      selectedMessagesOlderLoading: false,
     });
 
     try {
       const payload = await apiFetch<{ item: { id: string; name: string }; tickets: TicketItem[] }>(`/customers/${customer.id}/tickets`, { method: "GET" });
       setCustomerTicketsViewer({
-        customer: {
-          ...customer,
-          name: payload.item.name,
-        },
+        title: payload.item.name,
+        sourceCustomerId: customer.id,
         tickets: payload.tickets,
         loading: false,
+        selectedTicketId: null,
+        selectedMessages: [],
+        selectedMessagesLoading: false,
+        selectedMessagesHasMore: false,
+        selectedMessagesBeforeCursor: null,
+        selectedMessagesOlderLoading: false,
       });
     } catch (error) {
       setCustomerTicketsViewer({
-        customer,
+        title: customer.name,
+        sourceCustomerId: customer.id,
         tickets: [],
         loading: false,
+        selectedTicketId: null,
+        selectedMessages: [],
+        selectedMessagesLoading: false,
+        selectedMessagesHasMore: false,
+        selectedMessagesBeforeCursor: null,
+        selectedMessagesOlderLoading: false,
       });
       setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar tickets do contato.");
+    }
+  }
+
+  async function handleOpenRelatedTickets(ticket: TicketItem) {
+    setCustomerTicketsViewer({
+      title: ticket.customerName,
+      sourceTicketId: ticket.id,
+      sourceCustomerId: ticket.customerId ?? null,
+      tickets: [],
+      loading: true,
+      selectedTicketId: null,
+      selectedMessages: [],
+      selectedMessagesLoading: false,
+      selectedMessagesHasMore: false,
+      selectedMessagesBeforeCursor: null,
+      selectedMessagesOlderLoading: false,
+    });
+
+    try {
+      const payload = await apiFetch<{
+        item?: { customerName?: string | null };
+        items?: TicketItem[];
+      }>(`/tickets/${ticket.id}/related?limit=25`, { method: "GET" });
+      setCustomerTicketsViewer({
+        title: payload.item?.customerName?.trim() || ticket.customerName,
+        sourceTicketId: ticket.id,
+        sourceCustomerId: ticket.customerId ?? null,
+        tickets: Array.isArray(payload.items) ? payload.items : [],
+        loading: false,
+        selectedTicketId: null,
+        selectedMessages: [],
+        selectedMessagesLoading: false,
+        selectedMessagesHasMore: false,
+        selectedMessagesBeforeCursor: null,
+        selectedMessagesOlderLoading: false,
+      });
+    } catch (error) {
+      setCustomerTicketsViewer({
+        title: ticket.customerName,
+        sourceTicketId: ticket.id,
+        sourceCustomerId: ticket.customerId ?? null,
+        tickets: [],
+        loading: false,
+        selectedTicketId: null,
+        selectedMessages: [],
+        selectedMessagesLoading: false,
+        selectedMessagesHasMore: false,
+        selectedMessagesBeforeCursor: null,
+        selectedMessagesOlderLoading: false,
+      });
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar o histórico deste contato.");
+    }
+  }
+
+  async function handleOpenRelatedTicketMessages(ticket: TicketItem) {
+    if (!customerTicketsViewer) {
+      return;
+    }
+
+    const sourceTicketId = customerTicketsViewer.sourceTicketId;
+    const sourceCustomerId = customerTicketsViewer.sourceCustomerId;
+
+    setCustomerTicketsViewer((current) => current
+      ? {
+          ...current,
+          selectedTicketId: ticket.id,
+          selectedMessages: [],
+          selectedMessagesLoading: true,
+          selectedMessagesHasMore: false,
+          selectedMessagesBeforeCursor: null,
+          selectedMessagesOlderLoading: false,
+        }
+      : current);
+
+    try {
+      const query = new URLSearchParams({ limit: "100", related: "true" });
+      if (sourceTicketId) {
+        query.set("relatedFrom", sourceTicketId);
+      } else if (sourceCustomerId) {
+        query.set("relatedCustomerId", sourceCustomerId);
+      }
+      const payload = await apiFetch<MessagePageResponse>(`/tickets/${ticket.id}/messages?${query.toString()}`, { method: "GET" });
+      setCustomerTicketsViewer((current) => current
+        && current.sourceTicketId === sourceTicketId
+        && current.selectedTicketId === ticket.id
+        ? {
+            ...current,
+            selectedMessages: Array.isArray(payload.items) ? payload.items : [],
+            selectedMessagesLoading: false,
+            selectedMessagesHasMore: Boolean(payload.pagination?.hasMore),
+            selectedMessagesBeforeCursor: payload.pagination?.nextCursor ?? null,
+            selectedMessagesOlderLoading: false,
+          }
+        : current);
+    } catch (error) {
+      setCustomerTicketsViewer((current) => current
+        && current.sourceTicketId === sourceTicketId
+        && current.selectedTicketId === ticket.id
+        ? {
+            ...current,
+            selectedTicketId: null,
+            selectedMessages: [],
+            selectedMessagesLoading: false,
+            selectedMessagesHasMore: false,
+            selectedMessagesBeforeCursor: null,
+            selectedMessagesOlderLoading: false,
+          }
+        : current);
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar as mensagens deste ticket.");
+    }
+  }
+
+  async function handleLoadOlderRelatedTicketMessages() {
+    const viewer = customerTicketsViewer;
+    const ticketId = viewer?.selectedTicketId;
+    const sourceTicketId = viewer?.sourceTicketId;
+    const sourceCustomerId = viewer?.sourceCustomerId;
+    const cursor = viewer?.selectedMessagesBeforeCursor;
+    if (!ticketId || !cursor || !viewer?.selectedMessagesHasMore || viewer.selectedMessagesOlderLoading) {
+      return;
+    }
+
+    setCustomerTicketsViewer((current) => current
+      ? { ...current, selectedMessagesOlderLoading: true }
+      : current);
+
+    try {
+      const query = new URLSearchParams({ limit: "100", cursor, related: "true" });
+      if (sourceTicketId) {
+        query.set("relatedFrom", sourceTicketId);
+      } else if (sourceCustomerId) {
+        query.set("relatedCustomerId", sourceCustomerId);
+      }
+      const payload = await apiFetch<MessagePageResponse>(`/tickets/${ticketId}/messages?${query.toString()}`, { method: "GET" });
+      setCustomerTicketsViewer((current) => current
+        && current.sourceTicketId === sourceTicketId
+        && current.selectedTicketId === ticketId
+        ? {
+            ...current,
+            selectedMessages: mergeMessageItems(current.selectedMessages, Array.isArray(payload.items) ? payload.items : []),
+            selectedMessagesHasMore: Boolean(payload.pagination?.hasMore),
+            selectedMessagesBeforeCursor: payload.pagination?.nextCursor ?? null,
+            selectedMessagesOlderLoading: false,
+          }
+        : current);
+    } catch (error) {
+      setCustomerTicketsViewer((current) => current
+        ? { ...current, selectedMessagesOlderLoading: false }
+        : current);
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar mensagens anteriores.");
     }
   }
 
@@ -6728,7 +7064,7 @@ export default function HomePage() {
 
     const confirmed = await openConfirmDialog({
       title: "Limpar histórico de automações",
-      description: "Serão removidas permanentemente apenas as execuções ignoradas com mais de 7 dias. Mensagens, tickets e execuções concluídas ou com falha não serão alterados.",
+      description: "Serão removidos permanentemente os históricos de automação e logs técnicos com mais de 7 dias. Mensagens e tickets não serão alterados.",
       confirmLabel: "Limpar histórico",
       cancelLabel: "Cancelar",
       tone: "danger",
@@ -6740,14 +7076,15 @@ export default function HomePage() {
 
     try {
       setAutomationCleanupLoading(true);
-      const payload = await apiFetch<{ removed: number; remaining: number; retentionDays: number }>("/automations/executions/cleanup", {
+      const payload = await apiFetch<{ removed: number; logsRemoved?: number; remaining: number; retentionDays: number }>("/automations/executions/cleanup", {
         method: "POST",
       });
       const executionLabel = payload.removed === 1 ? "execução" : "execuções";
+      const removedTotal = payload.removed + (payload.logsRemoved ?? 0);
       setPanelMessage(
-        payload.removed > 0
-          ? `${payload.removed} ${executionLabel} antiga(s) removida(s).`
-          : "Nenhuma execução antiga encontrada para remover.",
+        removedTotal > 0
+          ? `${payload.removed} ${executionLabel} e ${payload.logsRemoved ?? 0} log(s) antigo(s) removido(s).`
+          : "Nenhum histórico antigo encontrado para remover.",
       );
       await Promise.all([refreshAutomations(), refreshAutomationExecutions()]);
     } catch (error) {
@@ -8522,7 +8859,7 @@ export default function HomePage() {
 
             {automationView === "executions" ? (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
-                O sistema remove automaticamente, uma vez por dia, apenas execuções ignoradas com mais de 7 dias. Mensagens e tickets não são afetados.
+                Avaliações sem ação não geram novas execuções. Históricos de automação e logs técnicos são removidos automaticamente após 7 dias. Mensagens e tickets não são afetados.
               </div>
             ) : null}
 
@@ -9014,6 +9351,16 @@ export default function HomePage() {
                       <span>{formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)}</span>
                       <span className="text-slate-300">•</span>
                       <span>{selectedTicket.isGroup ? "Conversa compartilhada" : (selectedTicket.currentAgent?.name ?? "Aguardando atendente")}</span>
+                      {!selectedTicket.isGroup && canViewRelatedHistory ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleOpenRelatedTickets(selectedTicket)}
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-semibold text-sky-700 transition hover:bg-sky-50 hover:text-sky-900"
+                        >
+                          <History className="h-3 w-3" />
+                          Ver mais
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -9283,6 +9630,22 @@ export default function HomePage() {
                           {bulkDeleteLoading ? "Apagando..." : "Apagar selecionadas"}
                         </button>
                       </div>
+                    </div>
+                  ) : null}
+                  {!selectedTicket.isGroup && canViewRelatedHistory && !messageLoading ? (
+                    <div className="flex items-center justify-between gap-3 rounded-2xl border border-sky-100 bg-white/85 px-4 py-3 shadow-sm">
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-sky-700">Histórico do contato</div>
+                        <div className="mt-1 truncate text-xs text-slate-500">Veja conversas anteriores sem sair deste atendimento.</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleOpenRelatedTickets(selectedTicket)}
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-700 transition hover:bg-sky-50"
+                      >
+                        <History className="h-3.5 w-3.5" />
+                        Ver mais
+                      </button>
                     </div>
                   ) : null}
                   {messageLoading ? (
@@ -10495,115 +10858,6 @@ export default function HomePage() {
         ) : (
           <EmptyCenter />
         )}
-        {customerTicketsViewer ? (
-          <div className="fixed inset-0 z-[118] flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
-            <div className="my-auto flex w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
-              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
-                <div>
-                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">Contatos</div>
-                  <div className="mt-1 text-lg font-semibold text-[#1A1C32]">Tickets vinculados a {customerTicketsViewer.customer.name}</div>
-                  <div className="mt-1 text-sm text-slate-500">
-                    {customerTicketsViewer.loading ? "Carregando histórico..." : `${customerTicketsViewer.tickets.length} ticket(s) encontrados para este contato.`}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setCustomerTicketsViewer(null)}
-                  className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="max-h-[70vh] overflow-y-auto px-6 py-6">
-                {customerTicketsViewer.loading ? (
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                    Carregando tickets deste contato...
-                  </div>
-                ) : customerTicketsViewer.tickets.length === 0 ? (
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                    Nenhum ticket visível encontrado para este contato.
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {customerTicketsViewer.tickets.map((ticket) => (
-                      <div key={ticket.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
-                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <div className="truncate text-sm font-semibold text-slate-900">{ticket.customerName}</div>
-                              <StatusChip tone={ticket.status === "open" ? "success" : ticket.status === "pending" ? "warning" : "default"}>
-                                {traduzirStatusTicket(ticket.status)}
-                              </StatusChip>
-                              {ticket.isGroup ? <StatusChip tone="default">Grupo</StatusChip> : null}
-                            </div>
-                            <div className="mt-2 grid gap-2 text-sm text-slate-500 md:grid-cols-2">
-                              <div>Fila: {ticket.currentQueue?.name ?? "Sem fila"}</div>
-                              <div>Responsável: {ticket.currentAgent?.name ?? "Sem agente"}</div>
-                              <div>Instância: {ticket.whatsappInstance.name}</div>
-                              <div>Atualizado em: {formatDateTime(ticket.updatedAt)}</div>
-                            </div>
-                            <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-3 text-sm text-slate-600">
-                              {ticket.lastMessagePreview?.trim() || "Sem prévia de mensagem."}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
-                <button
-                  type="button"
-                  onClick={() => setCustomerTicketsViewer(null)}
-                  className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
-                >
-                  Fechar
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
-        {appDialog ? (
-          <div className="fixed inset-0 z-[120] flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
-            <div className="my-auto flex w-full max-w-lg flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
-              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
-                <div>
-                  <div className={`text-[11px] font-bold uppercase tracking-[0.16em] ${appDialog.tone === "danger" ? "text-red-500" : "text-sky-600"}`}>
-                    {appDialog.kind === "confirm" ? "Confirmação" : "Aviso"}
-                  </div>
-                  <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{appDialog.title}</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => resolveAppDialog(false)}
-                  className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="px-6 py-6 text-sm leading-7 text-slate-600">{appDialog.description}</div>
-              <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
-                {appDialog.kind === "confirm" ? (
-                  <button
-                    type="button"
-                    onClick={() => resolveAppDialog(false)}
-                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
-                  >
-                    {appDialog.cancelLabel ?? "Cancelar"}
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => resolveAppDialog(true)}
-                  className={`inline-flex h-11 items-center justify-center rounded-2xl px-5 text-sm font-semibold text-white transition disabled:cursor-not-allowed ${appDialog.tone === "danger" ? "bg-red-600 hover:bg-red-700" : "bg-[#1A1C32] hover:bg-[#111426]"}`}
-                >
-                  {appDialog.confirmLabel ?? "Entendi"}
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
       </>
     );
   })();
@@ -12212,6 +12466,231 @@ export default function HomePage() {
           </section>
         </div>
       </div>
+
+      {appDialog ? (
+        <div className="fixed inset-0 z-[120] flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+          <div className="my-auto flex w-full max-w-lg flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+              <div>
+                <div className={`text-[11px] font-bold uppercase tracking-[0.16em] ${appDialog.tone === "danger" ? "text-red-500" : "text-sky-600"}`}>
+                  {appDialog.kind === "confirm" ? "Confirmação" : "Aviso"}
+                </div>
+                <div className="mt-1 text-lg font-semibold text-[#1A1C32]">{appDialog.title}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => resolveAppDialog(false)}
+                className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-6 py-6 text-sm leading-7 text-slate-600">{appDialog.description}</div>
+            <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
+              {appDialog.kind === "confirm" ? (
+                <button
+                  type="button"
+                  onClick={() => resolveAppDialog(false)}
+                  className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                >
+                  {appDialog.cancelLabel ?? "Cancelar"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => resolveAppDialog(true)}
+                className={`inline-flex h-11 items-center justify-center rounded-2xl px-5 text-sm font-semibold text-white transition disabled:cursor-not-allowed ${appDialog.tone === "danger" ? "bg-red-600 hover:bg-red-700" : "bg-[#1A1C32] hover:bg-[#111426]"}`}
+              >
+                {appDialog.confirmLabel ?? "Entendi"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {customerTicketsViewer ? (
+        <div className="fixed inset-0 z-[118] flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">
+          <div className="my-auto flex w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_32px_80px_rgba(15,23,42,0.22)]">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-600">
+                  {customerTicketsViewer.sourceTicketId ? "Histórico do contato" : "Contatos"}
+                </div>
+                <div className="mt-1 text-lg font-semibold text-[#1A1C32]">Tickets vinculados a {customerTicketsViewer.title}</div>
+                <div className="mt-1 text-sm text-slate-500">
+                  {customerTicketsViewer.loading
+                    ? "Carregando histórico..."
+                    : customerTicketsViewer.selectedTicketId
+                      ? "Mensagens do ticket anterior, em modo de leitura."
+                      : `${customerTicketsViewer.tickets.length} ticket(s) encontrados para este contato.`}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCustomerTicketsViewer(null)}
+                className="grid h-10 w-10 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="max-h-[70vh] overflow-y-auto px-6 py-6">
+              {customerTicketsViewer.loading ? (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                  Carregando tickets deste contato...
+                </div>
+              ) : customerTicketsViewer.selectedTicketId ? (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-100 bg-sky-50/60 px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="truncate text-sm font-semibold text-slate-900">{relatedViewerSelectedTicket?.customerName ?? customerTicketsViewer.title}</div>
+                        {relatedViewerSelectedTicket ? (
+                          <StatusChip tone={relatedViewerSelectedTicket.status === "open" ? "success" : relatedViewerSelectedTicket.status === "pending" ? "warning" : "default"}>
+                            {traduzirStatusTicket(relatedViewerSelectedTicket.status)}
+                          </StatusChip>
+                        ) : null}
+                      </div>
+                      {relatedViewerSelectedTicket ? (
+                        <div className="mt-1 text-xs text-slate-500">Atualizado em {formatDateTime(relatedViewerSelectedTicket.updatedAt)}</div>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCustomerTicketsViewer((current) => current
+                        ? {
+                            ...current,
+                            selectedTicketId: null,
+                            selectedMessages: [],
+                            selectedMessagesHasMore: false,
+                            selectedMessagesBeforeCursor: null,
+                            selectedMessagesOlderLoading: false,
+                          }
+                        : current)}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-700 transition hover:bg-sky-50"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                      Voltar aos tickets
+                    </button>
+                  </div>
+
+                  {customerTicketsViewer.selectedMessagesLoading ? (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                      Carregando mensagens do ticket...
+                    </div>
+                  ) : customerTicketsViewer.selectedMessages.length === 0 ? (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                      Nenhuma mensagem encontrada neste ticket.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {customerTicketsViewer.selectedMessagesHasMore ? (
+                        <div className="flex justify-center">
+                          <button
+                            type="button"
+                            onClick={() => void handleLoadOlderRelatedTicketMessages()}
+                            disabled={customerTicketsViewer.selectedMessagesOlderLoading}
+                            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {customerTicketsViewer.selectedMessagesOlderLoading ? "Carregando anteriores..." : "Carregar mensagens anteriores"}
+                          </button>
+                        </div>
+                      ) : null}
+                      {customerTicketsViewer.selectedMessages.map((message) => {
+                        const outgoing = message.direction === "outbound";
+                        const attachmentCount = message.attachments?.length ?? 0;
+                        return (
+                          <div key={message.id} className={`flex ${outgoing ? "justify-end" : "justify-start"}`}>
+                            <div className={`max-w-[min(720px,92%)] rounded-2xl border px-4 py-3 shadow-sm ${outgoing ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"}`}>
+                              {message.internalNote ? <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700">Observação interna</div> : null}
+                              {message.body?.trim() ? (
+                                <div className="whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{message.body}</div>
+                              ) : null}
+                              {attachmentCount > 0 ? (
+                                <div className="mt-2 space-y-1">
+                                  {message.attachments?.map((attachment) => (
+                                    <a
+                                      key={attachment.id}
+                                      href={relatedViewerSelectedTicket
+                                        ? resolveAttachmentUrl(relatedViewerSelectedTicket.id, attachment, {
+                                            sourceTicketId: customerTicketsViewer.sourceTicketId,
+                                            customerId: customerTicketsViewer.sourceCustomerId,
+                                          })
+                                        : undefined}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="block truncate rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-50"
+                                    >
+                                      {attachment.fileName ?? `Anexo (${attachment.mimeType})`}
+                                    </a>
+                                  ))}
+                                </div>
+                              ) : null}
+                              <div className="mt-2 flex items-center justify-end gap-2 text-[10px] text-slate-400">
+                                {message.editedAt ? <span className="italic">Editada</span> : null}
+                                <span>{formatDateTime(message.createdAt)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : customerTicketsViewer.tickets.length === 0 ? (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                  Nenhum ticket visível encontrado para este contato.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {customerTicketsViewer.tickets.map((ticket) => (
+                    <div key={ticket.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="truncate text-sm font-semibold text-slate-900">{ticket.customerName}</div>
+                            <StatusChip tone={ticket.status === "open" ? "success" : ticket.status === "pending" ? "warning" : "default"}>
+                              {traduzirStatusTicket(ticket.status)}
+                            </StatusChip>
+                            {ticket.isGroup ? <StatusChip tone="default">Grupo</StatusChip> : null}
+                          </div>
+                          <div className="mt-2 grid gap-2 text-sm text-slate-500 md:grid-cols-2">
+                            <div>Fila: {ticket.currentQueue?.name ?? "Sem fila"}</div>
+                            <div>Responsável: {ticket.currentAgent?.name ?? "Sem agente"}</div>
+                            <div>Instância: {ticket.whatsappInstance.name}</div>
+                            <div>Atualizado em: {formatDateTime(ticket.updatedAt)}</div>
+                          </div>
+                          <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                            {ticket.lastMessagePreview?.trim() || "Sem prévia de mensagem."}
+                          </div>
+                        </div>
+                        {canViewRelatedHistory ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleOpenRelatedTicketMessages(ticket)}
+                            className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-700 transition hover:bg-sky-50"
+                          >
+                            <MessageSquare className="h-3.5 w-3.5" />
+                            Ver mensagens
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
+              <button
+                type="button"
+                onClick={() => setCustomerTicketsViewer(null)}
+                className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {scheduledMessageEditor ? (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/18 px-4 py-6 backdrop-blur-[2px] sm:py-10">

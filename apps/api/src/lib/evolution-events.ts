@@ -569,26 +569,18 @@ export async function processEvolutionEvent(app: FastifyInstance, params: Proces
       })
     : null;
 
-  const webhookLog = await app.prisma.webhookLog.create({
-    data: {
-      id: randomUUID(),
+  async function finalize(statusCode: number, errorMessage?: string) {
+    if (statusCode < 400) {
+      return;
+    }
+
+    app.log.warn({
+      action: 'evolution_webhook_rejected',
       source: params.source,
       eventName: parsed.event,
-      whatsappInstanceId: instance?.id,
-      payload: parsed.rawPayload as Prisma.InputJsonValue,
-      receivedAt: new Date(),
-    },
-  });
-
-  async function finalize(statusCode: number, errorMessage?: string) {
-    await app.prisma.webhookLog.update({
-      where: { id: webhookLog.id },
-      data: {
-        processedAt: new Date(),
-        statusCode,
-        errorMessage,
-      },
-    });
+      statusCode,
+      errorMessage,
+    }, 'Webhook da Evolution rejeitado.');
   }
 
   if (params.validateSecret && instance?.webhookSecret && params.incomingSecret !== instance.webhookSecret) {

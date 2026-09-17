@@ -91,7 +91,7 @@ function mapAutomation(item: {
   updatedByUser: { id: string; email: string; agent: { name: string } | null } | null;
   queue: { id: string; name: string; color: string | null } | null;
   whatsappInstance: { id: string; name: string } | null;
-  executions?: Array<{ id: string; status: 'success' | 'skipped' | 'failed'; executedAt: Date; message: string | null }>;
+  executions?: Array<{ id: string; status: 'success' | 'processing' | 'skipped' | 'failed'; executedAt: Date; message: string | null }>;
   _count?: { executions: number };
 }) {
   return {
@@ -135,7 +135,7 @@ function mapAutomation(item: {
 
 function mapExecution(item: {
   id: string;
-  status: 'success' | 'skipped' | 'failed';
+  status: 'success' | 'processing' | 'skipped' | 'failed';
   message: string | null;
   triggerPayload: Prisma.JsonValue | null;
   resultPayload: Prisma.JsonValue | null;
@@ -192,6 +192,9 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
           },
         },
         executions: {
+          where: {
+            status: { not: 'skipped' },
+          },
           orderBy: { executedAt: 'desc' },
           take: 1,
           select: {
@@ -203,7 +206,11 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
         },
         _count: {
           select: {
-            executions: true,
+            executions: {
+              where: {
+                status: { not: 'skipped' },
+              },
+            },
           },
         },
       },
@@ -226,14 +233,17 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const items = await app.prisma.automationExecution.findMany({
-      where: cursor
-        ? {
-            OR: [
-              { executedAt: { lt: cursor.timestamp } },
-              { executedAt: cursor.timestamp, id: { lt: cursor.id } },
-            ],
-          }
-        : undefined,
+      where: {
+        status: { not: 'skipped' },
+        ...(cursor
+          ? {
+              OR: [
+                { executedAt: { lt: cursor.timestamp } },
+                { executedAt: cursor.timestamp, id: { lt: cursor.id } },
+              ],
+            }
+          : {}),
+      },
       orderBy: [
         { executedAt: 'desc' },
         { id: 'desc' },
@@ -279,6 +289,7 @@ export const automationRoutes: FastifyPluginAsync = async (app) => {
 
     return {
       removed: result.deleted,
+      logsRemoved: result.deletedWebhookLogs,
       remaining: result.remaining,
       retentionDays: AUTOMATION_EXECUTION_RETENTION_DAYS,
       cutoff: result.cutoff,

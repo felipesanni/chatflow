@@ -682,6 +682,29 @@ function automationMatchesScope(automation: AutomationWithRuntime, context: Trig
   return true;
 }
 
+function buildAutomationScopeWhere(automations: AutomationWithRuntime[]): Prisma.TicketWhereInput | null {
+  const scopedFilters = automations.map((automation) => {
+    const filter: Prisma.TicketWhereInput = {};
+
+    if (automation.queueId) {
+      filter.currentQueueId = automation.queueId;
+    }
+
+    if (automation.whatsappInstanceId) {
+      filter.whatsappInstanceId = automation.whatsappInstanceId;
+    }
+
+    return filter;
+  });
+
+  // One unscoped automation means every open ticket is a candidate.
+  if (scopedFilters.some((filter) => Object.keys(filter).length === 0)) {
+    return null;
+  }
+
+  return scopedFilters.length > 0 ? { OR: scopedFilters } : null;
+}
+
 function dedupeKeyForContext(
   automation: AutomationWithRuntime,
   context: TriggerExecutionContext,
@@ -711,35 +734,12 @@ function dedupeKeyForContext(
   return `${automation.id}:scheduled:${context.ticket.id}:${parts.dateKey}:${parts.time}`;
 }
 
-async function createAutomationExecution(
-  app: FastifyInstance,
-  params: {
-    id?: string;
-    automationId: string;
-    dedupeKey?: string | null;
-    status: 'success' | 'skipped' | 'failed';
-    message: string;
-    triggerPayload: Record<string, unknown>;
-    resultPayload?: Record<string, unknown> | null;
-  },
-) {
-  await app.prisma.automationExecution.create({
-    data: {
-      id: params.id ?? randomUUID(),
-      automationId: params.automationId,
-      dedupeKey: params.dedupeKey ?? null,
-      status: params.status,
-      message: params.message,
-      triggerPayload: params.triggerPayload as Prisma.InputJsonValue,
-      resultPayload: params.resultPayload ? params.resultPayload as Prisma.InputJsonValue : Prisma.JsonNull,
-    },
-  });
-}
-
 async function claimAutomationExecution(
   app: FastifyInstance,
   params: {
     automationId: string;
+    ticketId: string;
+    triggerType: TriggerExecutionContext['triggerType'];
     dedupeKey: string;
     triggerPayload: Record<string, unknown>;
   },
@@ -747,16 +747,60 @@ async function claimAutomationExecution(
   const executionId = randomUUID();
 
   try {
-    await createAutomationExecution(app, {
-      id: executionId,
-      automationId: params.automationId,
-      dedupeKey: params.dedupeKey,
-      status: 'skipped',
-      message: 'Execucao reservada para processamento.',
-      triggerPayload: params.triggerPayload,
-      resultPayload: null,
+    return await app.prisma.$transaction(async (transaction) => {
+      // Preserve dedupe behavior for executions created before the durable
+      // dedupe table existed, then keep history independent from that lock.
+      const legacyExecution = await transaction.automationExecution.findFirst({
+        where: {
+          automationId: params.automationId,
+          dedupeKey: params.dedupeKey,
+        },
+        select: {
+          id: true,
+          status: true,
+          executedAt: true,
+        },
+      });
+
+      if (legacyExecution) {
+        await transaction.automationExecutionDedupe.create({
+          data: {
+            id: legacyExecution.id,
+            automationId: params.automationId,
+            ticketId: params.ticketId,
+            triggerType: params.triggerType,
+            dedupeKey: params.dedupeKey,
+            claimedAt: legacyExecution.executedAt,
+            completedAt: legacyExecution.status === 'processing' ? null : legacyExecution.executedAt,
+          },
+        });
+        return null;
+      }
+
+      await transaction.automationExecutionDedupe.create({
+        data: {
+          id: randomUUID(),
+          automationId: params.automationId,
+          ticketId: params.ticketId,
+          triggerType: params.triggerType,
+          dedupeKey: params.dedupeKey,
+        },
+      });
+
+      await transaction.automationExecution.create({
+        data: {
+          id: executionId,
+          automationId: params.automationId,
+          dedupeKey: null,
+          status: 'processing',
+          message: 'Execucao em processamento.',
+          triggerPayload: params.triggerPayload as Prisma.InputJsonValue,
+          resultPayload: Prisma.JsonNull,
+        },
+      });
+
+      return executionId;
     });
-    return executionId;
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       return null;
@@ -770,19 +814,32 @@ async function finalizeAutomationExecution(
   app: FastifyInstance,
   params: {
     id: string;
-    status: 'success' | 'skipped' | 'failed';
+    automationId: string;
+    dedupeKey: string;
+    status: 'success' | 'failed';
     message: string;
     resultPayload?: Record<string, unknown> | null;
   },
 ) {
-  await app.prisma.automationExecution.update({
-    where: { id: params.id },
-    data: {
-      status: params.status,
-      message: params.message,
-      resultPayload: params.resultPayload ? params.resultPayload as Prisma.InputJsonValue : Prisma.JsonNull,
-    },
-  });
+  await app.prisma.$transaction([
+    app.prisma.automationExecution.update({
+      where: { id: params.id },
+      data: {
+        status: params.status,
+        message: params.message,
+        resultPayload: params.resultPayload ? params.resultPayload as Prisma.InputJsonValue : Prisma.JsonNull,
+      },
+    }),
+    app.prisma.automationExecutionDedupe.updateMany({
+      where: {
+        automationId: params.automationId,
+        dedupeKey: params.dedupeKey,
+      },
+      data: {
+        completedAt: new Date(),
+      },
+    }),
+  ]);
 }
 
 async function executeAction(
@@ -1141,6 +1198,8 @@ async function runAutomationAgainstContext(
   try {
     executionId = await claimAutomationExecution(app, {
       automationId: automation.id,
+      ticketId: context.ticket.id,
+      triggerType: context.triggerType,
       dedupeKey,
       triggerPayload,
     });
@@ -1170,6 +1229,8 @@ async function runAutomationAgainstContext(
 
     await finalizeAutomationExecution(app, {
       id: executionId,
+      automationId: automation.id,
+      dedupeKey,
       status: 'success',
       message: `${results.length} ação(ões) executada(s) com sucesso.`,
       resultPayload: {
@@ -1182,6 +1243,8 @@ async function runAutomationAgainstContext(
     const message = error instanceof Error ? error.message : 'Falha ao executar automação.';
     await finalizeAutomationExecution(app, {
       id: executionId,
+      automationId: automation.id,
+      dedupeKey,
       status: 'failed',
       message,
       resultPayload: {
@@ -1203,7 +1266,7 @@ async function loadActiveAutomations(
   app: FastifyInstance,
   triggerType: AutomationWithRuntime['triggerType'],
 ) {
-  return app.prisma.automation.findMany({
+  const automations = await app.prisma.automation.findMany({
     where: {
       status: 'active',
       triggerType,
@@ -1225,6 +1288,10 @@ async function loadActiveAutomations(
       updatedAt: 'desc',
     },
   });
+
+  // An active automation without actions cannot do anything and should not
+  // participate in message or maintenance scans.
+  return automations.filter((automation) => asActions(automation.actions).length > 0);
 }
 
 export async function processAutomationMessageReceived(
@@ -1334,7 +1401,33 @@ export async function processAutomationMessageReceived(
     isGroup: ticket.isGroup,
   };
 
-  const shouldEmbedAttachmentBase64 = automations.some((automation) =>
+  const messageContextWithoutAttachments: AutomationMessageContext = {
+    id: message.id,
+    direction: message.direction,
+    contentType: message.contentType,
+    body: message.body,
+    senderName: message.senderNameSnapshot,
+    externalMessageId: message.externalMessageId,
+    createdAt: message.createdAt,
+    attachments: [],
+  };
+
+  const matchingAutomations = automations.filter((automation) => {
+    if (!automationMatchesScope(automation, { ticket: ticketContext, message: messageContextWithoutAttachments, triggerType: 'message_received' })) {
+      return false;
+    }
+
+    const conditions = asConditions(automation.conditions);
+    const actions = asActions(automation.actions);
+    return conditions.every((condition) => evaluateCondition(
+      condition,
+      { ticket: ticketContext, message: messageContextWithoutAttachments, triggerType: 'message_received' },
+      conditions,
+      actions,
+    ));
+  });
+
+  const shouldEmbedAttachmentBase64 = matchingAutomations.some((automation) =>
     asActions(automation.actions).some((action) => action.type === 'webhook'),
   );
 
@@ -1379,17 +1472,11 @@ export async function processAutomationMessageReceived(
   );
 
   const messageContext: AutomationMessageContext = {
-    id: message.id,
-    direction: message.direction,
-    contentType: message.contentType,
-    body: message.body,
-    senderName: message.senderNameSnapshot,
-    externalMessageId: message.externalMessageId,
-    createdAt: message.createdAt,
+    ...messageContextWithoutAttachments,
     attachments: messageAttachments,
   };
 
-  for (const automation of automations) {
+  for (const automation of matchingAutomations) {
     await runAutomationAgainstContext(app, automation, {
       triggerType: 'message_received',
       ticket: ticketContext,
@@ -1408,6 +1495,7 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
   ]);
 
   if (ticketCreatedAutomations.length > 0) {
+    const ticketCreatedScopeWhere = buildAutomationScopeWhere(ticketCreatedAutomations);
     const recentTickets = await app.prisma.ticket.findMany({
       where: {
         status: {
@@ -1417,6 +1505,7 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
           gte: new Date(now.getTime() - 2 * AUTOMATION_TICK_INTERVAL_MS),
         },
         isGroup: false,
+        ...(ticketCreatedScopeWhere ?? {}),
       },
       select: {
         id: true,
@@ -1473,6 +1562,7 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
         getTicketInactivityMinutes(asConditions(automation.conditions)) ?? Number.MAX_SAFE_INTEGER,
       ),
     );
+    const inactiveScopeWhere = buildAutomationScopeWhere(actionableInactiveAutomations);
     const inactiveTickets = await app.prisma.ticket.findMany({
       where: {
         status: {
@@ -1482,6 +1572,7 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
         lastMessageAt: {
           lte: new Date(now.getTime() - minimumInactivityMinutes * 60_000),
         },
+        ...(inactiveScopeWhere ?? {}),
       },
       select: {
         id: true,
@@ -1547,12 +1638,14 @@ export async function runAutomationMaintenance(app: FastifyInstance) {
     });
 
     if (currentScheduledAutomations.length > 0) {
+      const scheduledScopeWhere = buildAutomationScopeWhere(currentScheduledAutomations);
       const scheduledTickets = await app.prisma.ticket.findMany({
         where: {
           status: {
             in: ['open', 'pending'],
           },
           isGroup: false,
+          ...(scheduledScopeWhere ?? {}),
         },
         select: {
           id: true,

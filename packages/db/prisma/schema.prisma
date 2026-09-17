@@ -98,6 +98,7 @@ enum AutomationTriggerType {
 
 enum AutomationExecutionStatus {
   success
+  processing
   skipped
   failed
 }
@@ -283,8 +284,12 @@ model Ticket {
   events               TicketEvent[]
   scheduledMessages    ScheduledMessage[]
   hiddenForUsers       TicketGroupHiddenUser[]
+  automationExecutionDedupes AutomationExecutionDedupe[]
 
   @@index([status, lastMessageAt(sort: Desc)])
+  @@index([status, isGroup, lastMessageAt(sort: Desc)])
+  @@index([customerId, updatedAt(sort: Desc)])
+  @@index([whatsappInstanceId, externalChatId, updatedAt(sort: Desc)])
   @@index([currentAgentId, lastMessageAt(sort: Desc)])
   @@index([currentQueueId, lastMessageAt(sort: Desc)])
   @@map("tickets")
@@ -324,6 +329,7 @@ model Automation {
   queue              Queue?                @relation(fields: [queueId], references: [id], onDelete: SetNull)
   whatsappInstance   WhatsAppInstance?     @relation(fields: [whatsappInstanceId], references: [id], onDelete: SetNull)
   executions         AutomationExecution[]
+  executionDedupes   AutomationExecutionDedupe[]
 
   @@index([status, updatedAt(sort: Desc)])
   @@index([triggerType, status])
@@ -347,6 +353,23 @@ model AutomationExecution {
   @@index([executedAt(sort: Desc), id(sort: Desc)])
   @@unique([automationId, dedupeKey])
   @@map("automation_executions")
+}
+
+model AutomationExecutionDedupe {
+  id           String                 @id @db.Uuid
+  automationId String                 @map("automation_id") @db.Uuid
+  ticketId     String                 @map("ticket_id") @db.Uuid
+  triggerType  AutomationTriggerType  @map("trigger_type")
+  dedupeKey    String                 @map("dedupe_key")
+  claimedAt    DateTime               @default(now()) @map("claimed_at")
+  completedAt  DateTime?              @map("completed_at")
+  automation   Automation              @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  ticket       Ticket                  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@unique([automationId, dedupeKey])
+  @@index([claimedAt])
+  @@index([ticketId, triggerType])
+  @@map("automation_execution_dedupes")
 }
 
 model TicketChatAlias {

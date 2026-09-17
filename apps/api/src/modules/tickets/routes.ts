@@ -42,7 +42,11 @@ const ticketListQuerySchema = z.object({
   agentId: z.string().uuid().optional(),
   queueId: z.string().uuid().optional(),
   search: z.string().min(1).optional(),
-  limit: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(500).default(300),
+});
+
+const relatedTicketsQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(50).default(25),
 });
 
 const createTicketBodySchema = z.object({
@@ -227,6 +231,10 @@ function serializeTicket(ticket: any) {
     ? ticket.title.trim()
     : null;
   const displayName = manualGroupName ?? ticket.customerNameSnapshot;
+  const rawPreview = typeof ticket.lastMessagePreview === 'string' ? ticket.lastMessagePreview : null;
+  const lastMessagePreview = rawPreview && rawPreview.length > 280
+    ? `${rawPreview.slice(0, 277)}...`
+    : rawPreview;
   const ticketEvents = Array.isArray(ticket.events) ? ticket.events : [];
   const latestNudgeEvent = ticketEvents.find((event: any) => event.eventType === 'nudged') ?? null;
   const latestTransferEvent = ticketEvents.find((event: any) => event.eventType === 'transferred') ?? null;
@@ -241,7 +249,7 @@ function serializeTicket(ticket: any) {
     externalChatId: ticket.externalChatId,
     externalContactId: ticket.externalContactId,
       customerAvatarUrl: ticket.customerAvatarUrl,
-      lastMessagePreview: ticket.lastMessagePreview,
+    lastMessagePreview,
       lastMessageAt: ticket.lastMessageAt,
       unreadCount: ticket.unreadCount,
     currentAgent: ticket.currentAgent ? { id: ticket.currentAgent.id, name: ticket.currentAgent.name } : null,
@@ -359,13 +367,22 @@ function canViewTicket(
     isGroup?: boolean | null;
     hiddenForUsers?: Array<{ userId: string }>;
   },
+  allowRelatedHistory = false,
 ) {
-  if (ticket.status === 'closed' && !permissions['tickets.closedView']) {
+  if (ticket.status === 'closed' && !permissions['tickets.closedView'] && !allowRelatedHistory) {
     return false;
   }
 
   if (ticket.isGroup) {
     return permissions['tickets.groups'] && !isGroupTicketHiddenForViewer(ticket, { id: viewerId, role: viewerRole });
+  }
+
+  // Closed tickets are read-only archive entries. The explicit archive
+  // permission or a validated related-history scope grants access regardless
+  // of the active assignment or queue; management/reply permissions remain
+  // unchanged elsewhere.
+  if (ticket.status === 'closed' && (permissions['tickets.closedView'] || allowRelatedHistory)) {
+    return true;
   }
 
   if (permissions['tickets.viewAll']) {
@@ -570,6 +587,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
           }]
         : []),
     ];
+    const canViewClosedArchive = query.status === 'closed' && access.permissions['tickets.closedView'];
 
     const where = {
       status: query.status,
@@ -588,7 +606,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
               status: { in: ['open', 'pending'] as TicketStatus[] },
             }]
           : []),
-        ...(!access.permissions['tickets.viewAll']
+        ...(!access.permissions['tickets.viewAll'] && !canViewClosedArchive
           ? [{
               OR: visibilityFilters,
             }]
@@ -610,9 +628,25 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     const items = await app.prisma.ticket.findMany({
       where,
       include: {
-        currentAgent: true,
-        currentQueue: true,
-        whatsappInstance: true,
+        currentAgent: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        currentQueue: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+        whatsappInstance: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
         hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
         events: {
           where: { eventType: { in: ['nudged', 'transferred'] } },
@@ -620,8 +654,14 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
           take: 4,
           include: {
             actorUser: {
-              include: {
-                agent: true,
+              select: {
+                id: true,
+                email: true,
+                agent: {
+                  select: {
+                    name: true,
+                  },
+                },
               },
             },
           },
@@ -631,7 +671,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         { lastMessageAt: 'desc' },
         { updatedAt: 'desc' },
       ],
-      ...(typeof query.limit === 'number' ? { take: query.limit } : {}),
+      take: query.limit,
     });
 
     return {
@@ -708,6 +748,147 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       viewer: {
         id: session.userId,
         role: session.role,
+      },
+    };
+  });
+
+  app.get('/tickets/:ticketId/related', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.relatedHistory');
+    if (!access) return;
+    if (!access.permissions['tickets.view']) {
+      return reply.forbidden('A permissao de visualizar tickets e necessaria para consultar o historico relacionado.');
+    }
+    const session = access.session;
+    const params = z.object({ ticketId: z.string().uuid() }).parse(request.params);
+    const query = relatedTicketsQuerySchema.parse(request.query ?? {});
+
+    const currentTicket = await app.prisma.ticket.findUnique({
+      where: { id: params.ticketId },
+      select: {
+        id: true,
+        customerId: true,
+        customerNameSnapshot: true,
+        title: true,
+        externalChatId: true,
+        externalContactId: true,
+        whatsappInstanceId: true,
+        status: true,
+        isGroup: true,
+        currentAgentId: true,
+        currentQueueId: true,
+        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
+      },
+    });
+
+    if (!currentTicket) {
+      return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, currentTicket, true)) {
+      return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
+    }
+
+    if (currentTicket.isGroup) {
+      return {
+        item: {
+          id: currentTicket.id,
+          customerName: currentTicket.title?.trim() || currentTicket.customerNameSnapshot,
+        },
+        items: [],
+        pagination: {
+          limit: query.limit,
+          hasMore: false,
+        },
+      };
+    }
+
+    const identityFilters: Prisma.TicketWhereInput[] = [
+      {
+        whatsappInstanceId: currentTicket.whatsappInstanceId,
+        externalChatId: currentTicket.externalChatId,
+      },
+    ];
+
+    if (currentTicket.externalContactId) {
+      identityFilters.push({
+        whatsappInstanceId: currentTicket.whatsappInstanceId,
+        externalContactId: currentTicket.externalContactId,
+      });
+    }
+
+    if (currentTicket.customerId) {
+      identityFilters.push({ customerId: currentTicket.customerId });
+    }
+
+    const relatedTickets = await app.prisma.ticket.findMany({
+      where: {
+        id: { not: currentTicket.id },
+        isGroup: false,
+        OR: identityFilters,
+      },
+      select: {
+        id: true,
+        status: true,
+        customerId: true,
+        customerNameSnapshot: true,
+        title: true,
+        externalChatId: true,
+        externalContactId: true,
+        customerAvatarUrl: true,
+        lastMessagePreview: true,
+        lastMessageAt: true,
+        unreadCount: true,
+        isGroup: true,
+        updatedAt: true,
+        currentAgentId: true,
+        currentQueueId: true,
+        currentAgent: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        currentQueue: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+        whatsappInstance: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+      orderBy: [
+        { updatedAt: 'desc' },
+        { id: 'desc' },
+      ],
+      take: query.limit + 1,
+    });
+
+    const visibleTickets = relatedTickets
+      .filter((ticket) => canViewTicket(
+        session.userId,
+        access.user.role,
+        access.permissions,
+        access.queueIds,
+        ticket,
+        true,
+      ));
+    const pageItems = visibleTickets.slice(0, query.limit);
+
+    return {
+      item: {
+        id: currentTicket.id,
+        customerName: currentTicket.title?.trim() || currentTicket.customerNameSnapshot,
+      },
+      items: pageItems.map(serializeTicket),
+      pagination: {
+        limit: query.limit,
+        hasMore: visibleTickets.length > query.limit,
       },
     };
   });

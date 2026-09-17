@@ -71,10 +71,16 @@ const forwardMessageBodySchema = z.object({
   targetTicketId: z.string().uuid('Informe o ticket de destino.'),
 });
 
+const relatedAccessQuerySchema = z.object({
+  related: z.preprocess((value) => value === true || (typeof value === 'string' && value.trim().toLowerCase() === 'true'), z.boolean()).default(false),
+  relatedFrom: z.string().uuid().optional(),
+  relatedCustomerId: z.string().uuid().optional(),
+});
+
 const ticketMessagesQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).default(200),
   cursor: z.string().trim().min(1).optional(),
-});
+}).merge(relatedAccessQuerySchema);
 
 const env = loadEnv();
 
@@ -414,13 +420,21 @@ function canViewTicket(
     isGroup?: boolean | null;
     hiddenForUsers?: Array<{ userId: string }>;
   },
+  allowRelatedHistory = false,
 ) {
-  if (ticket.status === 'closed' && !permissions['tickets.closedView']) {
+  if (ticket.status === 'closed' && !permissions['tickets.closedView'] && !allowRelatedHistory) {
     return false;
   }
 
   if (ticket.isGroup) {
     return permissions['tickets.groups'] && !isGroupTicketHiddenForViewer(ticket, { id: viewerId, role: viewerRole });
+  }
+
+  // Closed tickets are read-only archive entries. The archive permission or a
+  // validated related-history scope is independent from active assignment or
+  // queue visibility.
+  if (ticket.status === 'closed' && (permissions['tickets.closedView'] || allowRelatedHistory)) {
+    return true;
   }
 
   if (permissions['tickets.viewAll']) {
@@ -827,6 +841,15 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       ticketId: z.string().uuid(),
       attachmentId: z.string().uuid(),
     }).parse(request.params);
+    const query = relatedAccessQuerySchema.parse(request.query ?? {});
+
+    if (query.related && !access.permissions['tickets.relatedHistory']) {
+      return reply.forbidden('Voce nao possui permissao para consultar o historico relacionado.');
+    }
+
+    if ((query.relatedFrom || query.relatedCustomerId) && !query.related) {
+      return reply.badRequest('O escopo de historico so pode ser usado no historico relacionado.');
+    }
 
     const attachment = await app.prisma.attachment.findFirst({
       where: {
@@ -853,8 +876,54 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Anexo nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, attachment.message.ticket)) {
+    const hasRelatedHistoryScope = query.related && Boolean(query.relatedFrom || query.relatedCustomerId);
+    const attachmentTicket = attachment.message.ticket;
+
+    if (query.relatedCustomerId && (attachmentTicket.isGroup || attachmentTicket.customerId !== query.relatedCustomerId)) {
+      return reply.forbidden('Este anexo nao pertence ao contato consultado.');
+    }
+
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, attachmentTicket, hasRelatedHistoryScope)) {
       return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
+    }
+
+    if (query.relatedFrom) {
+      const sourceTicket = await app.prisma.ticket.findUnique({
+        where: { id: query.relatedFrom },
+        select: {
+          id: true,
+          customerId: true,
+          whatsappInstanceId: true,
+          externalChatId: true,
+          externalContactId: true,
+          status: true,
+          isGroup: true,
+          currentAgentId: true,
+          currentQueueId: true,
+          hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
+        },
+      });
+
+      if (!sourceTicket) {
+        return reply.notFound('Ticket de origem nao encontrado.');
+      }
+
+      if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, sourceTicket, hasRelatedHistoryScope)) {
+        return reply.forbidden('Voce nao possui permissao para visualizar o ticket de origem.');
+      }
+
+      const sameCustomer = Boolean(sourceTicket.customerId)
+        && sourceTicket.customerId === attachmentTicket.customerId;
+      const sameExternalIdentity = sourceTicket.whatsappInstanceId === attachmentTicket.whatsappInstanceId
+        && (
+          sourceTicket.externalChatId === attachmentTicket.externalChatId
+          || Boolean(sourceTicket.externalContactId)
+            && sourceTicket.externalContactId === attachmentTicket.externalContactId
+        );
+
+      if (sourceTicket.isGroup || attachmentTicket.isGroup || sourceTicket.id === attachmentTicket.id || (!sameCustomer && !sameExternalIdentity)) {
+        return reply.forbidden('Este anexo nao pertence ao mesmo contato do ticket de origem.');
+      }
     }
 
       const source = attachment.publicUrl ?? attachment.storageKey;
@@ -969,6 +1038,14 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     const query = ticketMessagesQuerySchema.parse(request.query ?? {});
     const cursor = query.cursor ? decodeTimestampCursor(query.cursor) : null;
 
+    if (query.related && !access.permissions['tickets.relatedHistory']) {
+      return reply.forbidden('Voce nao possui permissao para consultar o historico relacionado.');
+    }
+
+    if ((query.relatedFrom || query.relatedCustomerId) && !query.related) {
+      return reply.badRequest('O escopo de historico so pode ser usado no historico relacionado.');
+    }
+
     if (query.cursor && !cursor) {
       return reply.badRequest('Cursor de mensagens invalido.');
     }
@@ -977,6 +1054,10 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       where: { id: params.ticketId },
       select: {
         id: true,
+        customerId: true,
+        whatsappInstanceId: true,
+        externalChatId: true,
+        externalContactId: true,
         currentAgentId: true,
         currentQueueId: true,
         status: true,
@@ -989,8 +1070,53 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
-    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket)) {
+    const hasRelatedHistoryScope = query.related && Boolean(query.relatedFrom || query.relatedCustomerId);
+
+    if (query.relatedCustomerId && (ticket.isGroup || ticket.customerId !== query.relatedCustomerId)) {
+      return reply.forbidden('Este ticket nao pertence ao contato consultado.');
+    }
+
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket, hasRelatedHistoryScope)) {
       return reply.forbidden('Voce nao possui permissao para visualizar este ticket.');
+    }
+
+    if (query.relatedFrom) {
+      const sourceTicket = await app.prisma.ticket.findUnique({
+        where: { id: query.relatedFrom },
+        select: {
+          id: true,
+          customerId: true,
+          whatsappInstanceId: true,
+          externalChatId: true,
+          externalContactId: true,
+          status: true,
+          isGroup: true,
+          currentAgentId: true,
+          currentQueueId: true,
+          hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
+        },
+      });
+
+      if (!sourceTicket) {
+        return reply.notFound('Ticket de origem nao encontrado.');
+      }
+
+      if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, sourceTicket, hasRelatedHistoryScope)) {
+        return reply.forbidden('Voce nao possui permissao para visualizar o ticket de origem.');
+      }
+
+      const sameCustomer = Boolean(sourceTicket.customerId)
+        && sourceTicket.customerId === ticket.customerId;
+      const sameExternalIdentity = sourceTicket.whatsappInstanceId === ticket.whatsappInstanceId
+        && (
+          sourceTicket.externalChatId === ticket.externalChatId
+          || Boolean(sourceTicket.externalContactId)
+            && sourceTicket.externalContactId === ticket.externalContactId
+        );
+
+      if (sourceTicket.isGroup || ticket.isGroup || sourceTicket.id === ticket.id || (!sameCustomer && !sameExternalIdentity)) {
+        return reply.forbidden('Este ticket nao pertence ao mesmo contato do ticket de origem.');
+      }
     }
 
     const items = await app.prisma.ticketMessage.findMany({

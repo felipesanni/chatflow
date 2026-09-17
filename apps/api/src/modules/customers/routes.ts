@@ -27,13 +27,18 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
     permissions: Record<string, boolean>,
     viewerQueueIds: string[],
     ticket: { currentAgentId: string | null; currentQueueId: string | null; status: string; isGroup: boolean },
+    allowRelatedHistory = false,
   ) {
-    if (ticket.status === 'closed' && !permissions['tickets.closedView']) {
+    if (ticket.status === 'closed' && !permissions['tickets.closedView'] && !allowRelatedHistory) {
       return false;
     }
 
     if (ticket.isGroup) {
       return permissions['tickets.groups'];
+    }
+
+    if (ticket.status === 'closed' && (permissions['tickets.closedView'] || allowRelatedHistory)) {
+      return true;
     }
 
     if (permissions['tickets.viewAll']) {
@@ -225,7 +230,7 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
           currentQueueId: ticket.currentQueueId,
           status: ticket.status,
           isGroup: ticket.isGroup,
-        }))
+        }, access.permissions['tickets.relatedHistory']))
       .map(serializeCustomerTicket);
 
     return reply.send({

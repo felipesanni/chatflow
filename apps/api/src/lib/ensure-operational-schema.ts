@@ -129,7 +129,15 @@ const operationalStatements = [
   `
     DO $$
     BEGIN
-      CREATE TYPE "AutomationExecutionStatus" AS ENUM ('success', 'skipped', 'failed');
+      CREATE TYPE "AutomationExecutionStatus" AS ENUM ('success', 'processing', 'skipped', 'failed');
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `,
+  `
+    DO $$
+    BEGIN
+      ALTER TYPE "AutomationExecutionStatus" ADD VALUE IF NOT EXISTS 'processing';
     EXCEPTION
       WHEN duplicate_object THEN NULL;
     END $$;
@@ -480,10 +488,45 @@ const operationalStatements = [
     CREATE INDEX IF NOT EXISTS tickets_status_last_message_at_idx ON tickets(status, last_message_at DESC);
   `,
   `
+    CREATE INDEX IF NOT EXISTS tickets_status_group_last_message_at_idx
+      ON tickets(status, is_group, last_message_at DESC);
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS tickets_customer_id_updated_at_idx
+      ON tickets(customer_id, updated_at DESC);
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS tickets_instance_external_chat_updated_at_idx
+      ON tickets(whatsapp_instance_id, external_chat_id, updated_at DESC);
+  `,
+  `
     CREATE INDEX IF NOT EXISTS tickets_current_agent_id_last_message_at_idx ON tickets(current_agent_id, last_message_at DESC);
   `,
   `
     CREATE INDEX IF NOT EXISTS tickets_current_queue_id_last_message_at_idx ON tickets(current_queue_id, last_message_at DESC);
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS automation_execution_dedupes (
+      id UUID PRIMARY KEY,
+      automation_id UUID NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+      ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+      trigger_type "AutomationTriggerType" NOT NULL,
+      dedupe_key TEXT NOT NULL,
+      claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    );
+  `,
+  `
+    CREATE UNIQUE INDEX IF NOT EXISTS automation_execution_dedupes_automation_id_dedupe_key_key
+      ON automation_execution_dedupes(automation_id, dedupe_key);
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS automation_execution_dedupes_claimed_at_idx
+      ON automation_execution_dedupes(claimed_at DESC);
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS automation_execution_dedupes_ticket_id_trigger_type_idx
+      ON automation_execution_dedupes(ticket_id, trigger_type);
   `,
   `
     CREATE TABLE IF NOT EXISTS ticket_group_hidden_users (
