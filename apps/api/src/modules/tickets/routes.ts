@@ -124,6 +124,34 @@ function normalizePhone(value: string) {
   return digits;
 }
 
+const ticketCustomerSelect = {
+  id: true,
+  name: true,
+  phoneE164: true,
+  avatarUrl: true,
+  email: true,
+  companyName: true,
+  notes: true,
+  dashboardExcludedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+function phoneLookupCandidates(value: string | null | undefined) {
+  if (!value) return [];
+
+  const digits = value.replace(/\D+/g, '');
+  if (!digits) return [];
+
+  const normalized = normalizePhone(digits);
+  const candidates = new Set([digits, normalized]);
+  if (digits.startsWith('55') && digits.length > 11) {
+    candidates.add(digits.slice(2));
+  }
+
+  return Array.from(candidates);
+}
+
 class TicketMergeConflictError extends Error {}
 
 function calculateClosedTicketServiceMinutes(ticket: { createdAt: Date; closedAt: Date | null }) {
@@ -224,11 +252,70 @@ async function findOrCreateCustomer(
   });
 }
 
+function serializeTicketCustomer(customer: any) {
+  if (!customer) return null;
+
+  return {
+    id: customer.id,
+    name: customer.name,
+    phone: customer.phoneE164,
+    avatarUrl: customer.avatarUrl,
+    email: customer.email,
+    companyName: customer.companyName,
+    notes: customer.notes,
+    dashboardExcluded: Boolean(customer.dashboardExcludedAt),
+    createdAt: customer.createdAt,
+    updatedAt: customer.updatedAt,
+    lastTicket: null,
+  };
+}
+
+async function hydrateTicketCustomers(prisma: any, tickets: any[]) {
+  const phoneCandidates = new Set<string>();
+
+  for (const ticket of tickets) {
+    if (ticket.isGroup || ticket.customer) continue;
+
+    for (const candidate of phoneLookupCandidates(ticket.externalContactId ?? ticket.externalChatId)) {
+      phoneCandidates.add(candidate);
+    }
+  }
+
+  if (phoneCandidates.size === 0) {
+    return tickets;
+  }
+
+  const customers = await prisma.customer.findMany({
+    where: { phoneE164: { in: Array.from(phoneCandidates) } },
+    select: ticketCustomerSelect,
+  });
+  const customersByPhone = new Map<string, any>(
+    customers
+      .filter((customer: any) => typeof customer.phoneE164 === 'string')
+      .map((customer: any) => [customer.phoneE164, customer]),
+  );
+
+  return tickets.map((ticket) => {
+    if (ticket.isGroup || ticket.customer) {
+      return ticket;
+    }
+
+    const customer = phoneLookupCandidates(ticket.externalContactId ?? ticket.externalChatId)
+      .map((candidate) => customersByPhone.get(candidate))
+      .find(Boolean) ?? null;
+
+    return customer
+      ? { ...ticket, customer, customerId: ticket.customerId ?? customer.id }
+      : ticket;
+  });
+}
+
 function serializeTicket(ticket: any) {
   const manualGroupName = ticket.isGroup && typeof ticket.title === 'string' && ticket.title.trim().length > 0
     ? ticket.title.trim()
     : null;
-  const displayName = manualGroupName ?? ticket.customerNameSnapshot;
+  const customer = !ticket.isGroup ? ticket.customer ?? null : null;
+  const displayName = manualGroupName ?? customer?.name ?? ticket.customerNameSnapshot;
   const rawPreview = typeof ticket.lastMessagePreview === 'string' ? ticket.lastMessagePreview : null;
   const lastMessagePreview = rawPreview && rawPreview.length > 280
     ? `${rawPreview.slice(0, 277)}...`
@@ -241,15 +328,16 @@ function serializeTicket(ticket: any) {
   return {
     id: ticket.id,
     status: ticket.status,
-    customerId: ticket.customerId,
+    customerId: customer?.id ?? ticket.customerId,
     customerName: displayName,
     manualGroupName,
     externalChatId: ticket.externalChatId,
     externalContactId: ticket.externalContactId,
-      customerAvatarUrl: ticket.customerAvatarUrl,
+    customerAvatarUrl: customer?.avatarUrl ?? ticket.customerAvatarUrl,
+    customer: serializeTicketCustomer(customer),
     lastMessagePreview,
-      lastMessageAt: ticket.lastMessageAt,
-      unreadCount: ticket.unreadCount,
+    lastMessageAt: ticket.lastMessageAt,
+    unreadCount: ticket.unreadCount,
     currentAgent: ticket.currentAgent ? { id: ticket.currentAgent.id, name: ticket.currentAgent.name } : null,
     currentQueue: ticket.currentQueue ? { id: ticket.currentQueue.id, name: ticket.currentQueue.name, color: ticket.currentQueue.color } : null,
     whatsappInstance: { id: ticket.whatsappInstance.id, name: ticket.whatsappInstance.name },
@@ -617,6 +705,10 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
                 { title: { contains: query.search, mode: 'insensitive' as const } },
                 { externalChatId: { contains: query.search, mode: 'insensitive' as const } },
                 { lastMessagePreview: { contains: query.search, mode: 'insensitive' as const } },
+                { customer: { name: { contains: query.search, mode: 'insensitive' as const } } },
+                { customer: { companyName: { contains: query.search, mode: 'insensitive' as const } } },
+                { customer: { email: { contains: query.search, mode: 'insensitive' as const } } },
+                { customer: { phoneE164: { contains: query.search } } },
               ],
             }]
           : []),
@@ -626,6 +718,9 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     const items = await app.prisma.ticket.findMany({
       where,
       include: {
+        customer: {
+          select: ticketCustomerSelect,
+        },
         currentAgent: {
           select: {
             id: true,
@@ -672,8 +767,10 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       take: query.limit,
     });
 
+    const hydratedItems = await hydrateTicketCustomers(app.prisma, items);
+
     return {
-      items: items.map(serializeTicket),
+      items: hydratedItems.map(serializeTicket),
       filters: query,
       viewer: {
         id: session.userId,
@@ -828,6 +925,9 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
         id: true,
         status: true,
         customerId: true,
+        customer: {
+          select: ticketCustomerSelect,
+        },
         customerNameSnapshot: true,
         title: true,
         externalChatId: true,
@@ -867,7 +967,8 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       take: query.limit + 1,
     });
 
-    const visibleTickets = relatedTickets
+    const hydratedRelatedTickets = await hydrateTicketCustomers(app.prisma, relatedTickets);
+    const visibleTickets = hydratedRelatedTickets
       .filter((ticket) => canViewTicket(
         session.userId,
         access.user.role,

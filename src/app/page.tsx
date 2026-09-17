@@ -66,6 +66,7 @@ type TicketItem = {
   id: string;
   status: "open" | "pending" | "closed";
   customerId?: string | null;
+  customer?: CustomerItem | null;
   customerName: string;
   manualGroupName?: string | null;
   externalChatId: string;
@@ -1108,6 +1109,26 @@ const API_REFERENCE_MODULES: ApiModuleDoc[] = [
         summary: "Carrega os contatos da operação para consulta e manutenção.",
         publicPath: "/api/customers",
         testerPath: "/customers",
+        auth: "sessao",
+      },
+      {
+        key: "customers-get",
+        method: "GET",
+        module: "Contatos",
+        title: "Consultar contato",
+        summary: "Carrega os dados completos de um contato selecionado, mesmo fora da página atual da lista.",
+        publicPath: "/api/customers/:customerId",
+        testerPath: "/customers/SEU_CONTATO_ID",
+        auth: "sessao",
+      },
+      {
+        key: "customers-lookup",
+        method: "GET",
+        module: "Contatos",
+        title: "Localizar contato por telefone",
+        summary: "Resolve o cadastro completo na agenda quando um ticket antigo não possui o contato associado ou está fora da página atual.",
+        publicPath: "/api/customers/lookup",
+        testerPath: "/customers/lookup?phone=5511999999999",
         auth: "sessao",
       },
       {
@@ -2244,6 +2265,7 @@ export default function HomePage() {
   const [agents, setAgents] = React.useState<AgentItem[]>([]);
   const [queues, setQueues] = React.useState<QueueItem[]>([]);
   const [customers, setCustomers] = React.useState<CustomerItem[]>([]);
+  const [selectedTicketCustomer, setSelectedTicketCustomer] = React.useState<CustomerItem | null>(null);
   const [quickReplies, setQuickReplies] = React.useState<QuickReplyItem[]>([]);
   const [automations, setAutomations] = React.useState<AutomationItem[]>([]);
   const [automationExecutions, setAutomationExecutions] = React.useState<AutomationExecutionItem[]>([]);
@@ -2603,19 +2625,32 @@ export default function HomePage() {
   const selectedCustomer = React.useMemo(() => {
     if (!selectedTicket) return null;
 
-    if (selectedTicket.customerId) {
-      const customerById = customers.find((customer) => customer.id === selectedTicket.customerId);
-      if (customerById) return customerById;
-    }
+    const customerById = selectedTicket.customerId
+      ? customers.find((customer) => customer.id === selectedTicket.customerId)
+      : null;
+    if (customerById) return customerById;
 
     const selectedDigits = onlyPhoneDigits(selectedTicket.externalContactId ?? selectedTicket.externalChatId);
-    return customers.find((customer) => onlyPhoneDigits(customer.phone ?? "") === selectedDigits) ?? null;
-  }, [customers, selectedTicket]);
+    const customerByPhone = customers.find((customer) => onlyPhoneDigits(customer.phone ?? "") === selectedDigits);
+    if (customerByPhone) return customerByPhone;
+
+    if (selectedTicket.customer) return selectedTicket.customer;
+
+    if (selectedTicket.customerId) {
+      if (selectedTicketCustomer?.id === selectedTicket.customerId) {
+        return selectedTicketCustomer;
+      }
+    }
+
+    return selectedTicketCustomer && onlyPhoneDigits(selectedTicketCustomer.phone ?? "") === selectedDigits
+      ? selectedTicketCustomer
+      : null;
+  }, [customers, selectedTicket, selectedTicketCustomer]);
   const selectedTicketDisplayName = React.useMemo(() => {
     if (!selectedTicket) return "";
     const baseName = selectedTicket.isGroup ? selectedTicket.customerName : (selectedCustomer?.name ?? selectedTicket.customerName);
     return selectedTicket.isGroup ? baseName : (selectedCustomer?.companyName ? `${baseName} - ${selectedCustomer.companyName}` : baseName);
-  }, [selectedCustomer?.companyName, selectedTicket]);
+  }, [selectedCustomer?.companyName, selectedCustomer?.name, selectedTicket]);
   const forwardSourceMessage = React.useMemo(
     () => messages.find((message) => message.id === forwardMessageId) ?? null,
     [forwardMessageId, messages],
@@ -2639,7 +2674,7 @@ export default function HomePage() {
         return haystack.includes(query) || (digitsQuery.length > 0 && ticketDigits.includes(digitsQuery));
       })
       .slice(0, 8);
-  }, [forwardSearch, selectedTicketId, tickets]);
+  }, [forwardSearch, selectedTicketCustomer, selectedTicketId, tickets]);
   const filteredForwardCustomers = React.useMemo(() => {
     const query = forwardSearch.trim().toLowerCase();
     const digitsQuery = onlyPhoneDigits(forwardSearch);
@@ -2922,9 +2957,11 @@ export default function HomePage() {
   };
 
   function formatTicketDisplayName(ticket: TicketItem) {
-    const matchedCustomer = ticket.customerId
-      ? customers.find((customer) => customer.id === ticket.customerId)
-      : customers.find((customer) => onlyPhoneDigits(customer.phone ?? "") === onlyPhoneDigits(ticket.externalContactId ?? ticket.externalChatId));
+    const matchedCustomer = ticket.customer
+      ?? (ticket.id === selectedTicketId ? selectedTicketCustomer : null)
+      ?? (ticket.customerId
+        ? customers.find((customer) => customer.id === ticket.customerId)
+        : customers.find((customer) => onlyPhoneDigits(customer.phone ?? "") === onlyPhoneDigits(ticket.externalContactId ?? ticket.externalChatId)));
 
     const baseName = ticket.isGroup ? ticket.customerName : (matchedCustomer?.name ?? ticket.customerName);
     return ticket.isGroup ? baseName : (matchedCustomer?.companyName ? `${baseName} - ${matchedCustomer.companyName}` : baseName);
@@ -2937,9 +2974,11 @@ export default function HomePage() {
   }
 
   function findCustomerForTicket(ticket: TicketItem) {
-    return ticket.customerId
-      ? customers.find((customer) => customer.id === ticket.customerId) ?? null
-      : customers.find((customer) => onlyPhoneDigits(customer.phone ?? "") === onlyPhoneDigits(ticket.externalContactId ?? ticket.externalChatId)) ?? null;
+    return ticket.customer
+      ?? (ticket.id === selectedTicketId ? selectedTicketCustomer : null)
+      ?? (ticket.customerId
+        ? customers.find((customer) => customer.id === ticket.customerId) ?? null
+        : customers.find((customer) => onlyPhoneDigits(customer.phone ?? "") === onlyPhoneDigits(ticket.externalContactId ?? ticket.externalChatId)) ?? null);
   }
 
   const canViewGroups = currentUser.permissions["tickets.groups"];
@@ -3149,7 +3188,7 @@ export default function HomePage() {
         .toLowerCase()
         .includes(search);
     });
-  }, [canViewOtherTickets, customers, isClosedTicketsWorkspace, searchQuery, selectedQueueFilter, showAllTickets, showOnlyUnread, tickets, user?.id]);
+  }, [canViewOtherTickets, customers, isClosedTicketsWorkspace, searchQuery, selectedQueueFilter, selectedTicketCustomer, selectedTicketId, showAllTickets, showOnlyUnread, tickets, user?.id]);
 
   const visibleTickets = React.useMemo(() => {
     return scopedTickets.filter((ticket) => {
@@ -3313,6 +3352,72 @@ export default function HomePage() {
       setSelectedTicketId(null);
     }
   }, [selectedTicketId, tickets]);
+
+  React.useEffect(() => {
+    const customerId = selectedTicket?.customerId;
+    const phone = selectedTicket
+      ? onlyPhoneDigits(selectedTicket.externalContactId ?? selectedTicket.externalChatId)
+      : "";
+
+    if (!showTicketDetails || !user || !canViewContacts || !selectedTicket || selectedTicket.isGroup) {
+      setSelectedTicketCustomer(null);
+      return;
+    }
+
+    if (selectedTicket.customer) {
+      setSelectedTicketCustomer(null);
+      return;
+    }
+
+    const localCustomer = (customerId ? customers.find((customer) => customer.id === customerId) : null)
+      ?? customers.find((customer) => onlyPhoneDigits(customer.phone ?? "") === phone);
+
+    if (localCustomer) {
+      setSelectedTicketCustomer(null);
+      return;
+    }
+
+    if (!customerId && phone.length < 8) {
+      setSelectedTicketCustomer(null);
+      return;
+    }
+
+    let cancelled = false;
+    setSelectedTicketCustomer(null);
+    const loadCustomer = async () => {
+      let customer: CustomerItem | null = null;
+
+      if (customerId) {
+        try {
+          const payload = await apiFetch<{ item?: CustomerItem }>(`/customers/${customerId}`, { method: "GET" });
+          customer = payload.item ?? null;
+        } catch {
+          // Tickets antigos podem manter um customerId que já não existe.
+          // Nesse caso, a agenda por telefone continua sendo a fonte de verdade.
+        }
+      }
+
+      if (!customer && phone.length >= 8) {
+        const query = new URLSearchParams({ phone });
+        const payload = await apiFetch<{ item?: CustomerItem | null }>(`/customers/lookup?${query.toString()}`, { method: "GET" });
+        customer = payload.item ?? null;
+      }
+
+      if (!cancelled) {
+        setSelectedTicketCustomer(customer);
+      }
+    };
+
+    void loadCustomer().catch((error) => {
+      if (!cancelled) {
+        setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar os dados do contato.");
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canViewContacts, customers, selectedTicket?.customerId, selectedTicket?.externalChatId, selectedTicket?.externalContactId, selectedTicket?.id, selectedTicket?.isGroup, showTicketDetails, user?.id]);
 
   React.useEffect(() => {
     ticketsRef.current = tickets;
@@ -9531,9 +9636,9 @@ export default function HomePage() {
                     </button>
                   ) : null}
                   <SafeAvatar
-                    src={selectedTicket.customerAvatarUrl}
-                    name={selectedTicket.customerName}
-                    alt={`Foto de ${selectedTicket.customerName}`}
+                    src={selectedCustomer?.avatarUrl ?? selectedTicket.customerAvatarUrl}
+                    name={selectedCustomer?.name ?? selectedTicket.customerName}
+                    alt={`Foto de ${selectedCustomer?.name ?? selectedTicket.customerName}`}
                     className="grid h-12 w-12 place-items-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700"
                   />
                   <div className="min-w-0">
@@ -9545,7 +9650,7 @@ export default function HomePage() {
                       <h3 className="truncate text-[16px] font-semibold leading-tight tracking-[-0.02em] text-[#1A1C32]">{selectedTicketDisplayName}</h3>
                     </button>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12px] text-slate-500">
-                      <span>{formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)}</span>
+                      <span>{formatContactIdentity(selectedCustomer?.phone ?? selectedTicket.externalContactId ?? selectedTicket.externalChatId)}</span>
                       <span className="text-slate-300">•</span>
                       <span>{selectedTicket.isGroup ? "Conversa compartilhada" : (selectedTicket.currentAgent?.name ?? "Aguardando atendente")}</span>
                     </div>
@@ -10457,13 +10562,13 @@ export default function HomePage() {
                   <div className="space-y-5 overflow-y-auto px-5 py-5">
                     <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-5">
                       <SafeAvatar
-                        src={selectedTicket.customerAvatarUrl}
-                        name={selectedTicket.customerName}
-                        alt={`Foto de ${selectedTicket.customerName}`}
+                        src={selectedCustomer?.avatarUrl ?? selectedTicket.customerAvatarUrl}
+                        name={selectedCustomer?.name ?? selectedTicket.customerName}
+                        alt={`Foto de ${selectedCustomer?.name ?? selectedTicket.customerName}`}
                         className="mx-auto grid h-24 w-24 place-items-center overflow-hidden rounded-full bg-slate-200 text-2xl font-semibold text-slate-600"
                       />
                       <div className="mt-4 text-center">
-                        <div className="text-xl font-semibold text-slate-900">{selectedTicket.customerName}</div>
+                        <div className="text-xl font-semibold text-slate-900">{selectedTicketDisplayName}</div>
                         <div className="mt-4 grid gap-3 text-left">
                           <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                             <div className="flex items-center justify-between gap-3 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
@@ -10525,7 +10630,7 @@ export default function HomePage() {
                                   : "Identificador"}
                             </div>
                             <div className="mt-1 break-all text-sm font-semibold text-slate-800">
-                              {formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)}
+                              {formatContactIdentity(selectedCustomer?.phone ?? selectedTicket.externalContactId ?? selectedTicket.externalChatId)}
                             </div>
                           </div>
                         </div>
@@ -10553,7 +10658,7 @@ export default function HomePage() {
                           </button>
                         ) : null}
                       </div>
-                      <InfoRow title={selectedTicket.isGroup ? "Instância" : "Contato"} subtitle={selectedTicket.isGroup ? selectedTicket.whatsappInstance.name : formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)} meta={selectedTicket.isGroup ? formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId) : selectedTicket.whatsappInstance.name} />
+                      <InfoRow title={selectedTicket.isGroup ? "Instância" : "Contato"} subtitle={selectedTicket.isGroup ? selectedTicket.whatsappInstance.name : formatContactIdentity(selectedCustomer?.phone ?? selectedTicket.externalContactId ?? selectedTicket.externalChatId)} meta={selectedTicket.isGroup ? formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId) : selectedTicket.whatsappInstance.name} />
                       <InfoRow title="Atualizado em" subtitle={formatDateTime(selectedTicket.updatedAt)} meta={selectedTicket.status === "closed" ? "ticket encerrado" : "ticket ativo"} />
                       {!selectedTicket.isGroup && selectedCustomer ? (
                         <div className={`rounded-2xl border px-4 py-3 ${selectedCustomer.dashboardExcluded ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>

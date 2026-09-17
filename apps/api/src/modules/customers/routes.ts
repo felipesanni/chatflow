@@ -14,6 +14,10 @@ const customerListQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(500).default(300),
 });
 
+const customerLookupQuerySchema = z.object({
+  phone: z.string().trim().min(8).max(80),
+});
+
 export const customerRoutes: FastifyPluginAsync = async (app) => {
   const customerBodySchema = z.object({
     name: z.string().trim().min(1, 'Informe o nome do contato.'),
@@ -31,6 +35,20 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
     if (!value) return null;
     const digits = value.replace(/\D+/g, '');
     return digits || null;
+  }
+
+  function phoneLookupCandidates(value: string | null | undefined) {
+    const normalized = normalizePhone(value);
+    if (!normalized) return [];
+
+    const candidates = new Set([normalized]);
+    if (normalized.startsWith('55') && normalized.length > 11) {
+      candidates.add(normalized.slice(2));
+    } else if ((normalized.length === 10 || normalized.length === 11) && !normalized.startsWith('55')) {
+      candidates.add(`55${normalized}`);
+    }
+
+    return Array.from(candidates);
   }
 
   function canViewCustomerTicket(
@@ -233,6 +251,137 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
+  app.get('/customers/lookup', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'contacts.view');
+    if (!access) return;
+
+    const query = customerLookupQuerySchema.parse(request.query ?? {});
+    const phoneCandidates = phoneLookupCandidates(query.phone);
+    const customer = phoneCandidates.length > 0
+      ? await app.prisma.customer.findFirst({
+          where: { phoneE164: { in: phoneCandidates } },
+          select: {
+            id: true,
+            name: true,
+            phoneE164: true,
+            avatarUrl: true,
+            email: true,
+            companyName: true,
+            notes: true,
+            dashboardExcludedAt: true,
+            createdAt: true,
+            updatedAt: true,
+            tickets: {
+              select: {
+                id: true,
+                status: true,
+                updatedAt: true,
+                currentQueue: {
+                  select: {
+                    name: true,
+                  },
+                },
+              },
+              orderBy: {
+                updatedAt: 'desc',
+              },
+              take: 1,
+            },
+          },
+        })
+      : null;
+
+    return {
+      item: customer
+        ? {
+            id: customer.id,
+            name: customer.name,
+            phone: customer.phoneE164,
+            avatarUrl: customer.avatarUrl,
+            email: customer.email,
+            companyName: customer.companyName,
+            notes: customer.notes,
+            dashboardExcluded: Boolean(customer.dashboardExcludedAt),
+            createdAt: customer.createdAt,
+            updatedAt: customer.updatedAt,
+            lastTicket: customer.tickets[0]
+              ? {
+                  id: customer.tickets[0].id,
+                  status: customer.tickets[0].status,
+                  updatedAt: customer.tickets[0].updatedAt,
+                  queueName: customer.tickets[0].currentQueue?.name ?? null,
+                }
+              : null,
+          }
+        : null,
+    };
+  });
+
+  app.get('/customers/:customerId', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'contacts.view');
+    if (!access) return;
+
+    const params = z.object({ customerId: z.string().uuid() }).parse(request.params);
+    const customer = await app.prisma.customer.findUnique({
+      where: { id: params.customerId },
+      select: {
+        id: true,
+        name: true,
+        phoneE164: true,
+        avatarUrl: true,
+        email: true,
+        companyName: true,
+        notes: true,
+        dashboardExcludedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        tickets: {
+          select: {
+            id: true,
+            status: true,
+            updatedAt: true,
+            currentQueue: {
+              select: {
+                name: true,
+              },
+            },
+          },
+          orderBy: {
+            updatedAt: 'desc',
+          },
+          take: 1,
+        },
+      },
+    });
+
+    if (!customer) {
+      return reply.notFound('Contato nao encontrado.');
+    }
+
+    return {
+      item: {
+        id: customer.id,
+        name: customer.name,
+        phone: customer.phoneE164,
+        avatarUrl: customer.avatarUrl,
+        email: customer.email,
+        companyName: customer.companyName,
+        notes: customer.notes,
+        dashboardExcluded: Boolean(customer.dashboardExcludedAt),
+        createdAt: customer.createdAt,
+        updatedAt: customer.updatedAt,
+        lastTicket: customer.tickets[0]
+          ? {
+              id: customer.tickets[0].id,
+              status: customer.tickets[0].status,
+              updatedAt: customer.tickets[0].updatedAt,
+              queueName: customer.tickets[0].currentQueue?.name ?? null,
+            }
+          : null,
+      },
+    };
+  });
+
   app.get('/customers/:customerId/tickets', async (request, reply) => {
     const access = await requirePermission(app, request, reply, 'contacts.view');
     if (!access) return;
@@ -244,6 +393,7 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
       select: {
         id: true,
         name: true,
+        phoneE164: true,
       },
     });
 
@@ -251,9 +401,29 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Contato nao encontrado.');
     }
 
+    const ticketIdentityCandidates = Array.from(new Set(
+      phoneLookupCandidates(customer.phoneE164).flatMap((phone) => [
+        phone,
+        `${phone}@s.whatsapp.net`,
+        `${phone}@c.us`,
+      ]),
+    ));
+
     const tickets = await app.prisma.ticket.findMany({
       where: {
-        customerId: params.customerId,
+        OR: [
+          { customerId: params.customerId },
+          ...(ticketIdentityCandidates.length > 0
+            ? [{
+                customerId: null,
+                isGroup: false,
+                OR: [
+                  { externalContactId: { in: ticketIdentityCandidates } },
+                  { externalChatId: { in: ticketIdentityCandidates } },
+                ],
+              }]
+            : []),
+        ],
       },
       select: {
         id: true,
@@ -295,7 +465,15 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
       },
     });
 
-    const visibleTickets = tickets
+    const customerTickets = tickets.map((ticket) => ticket.customerId
+      ? ticket
+      : {
+          ...ticket,
+          customerId: customer.id,
+          customerNameSnapshot: customer.name,
+        });
+
+    const visibleTickets = customerTickets
       .filter((ticket) =>
         canViewCustomerTicket(access.session.userId, access.permissions, access.queueIds, {
           currentAgentId: ticket.currentAgentId,
