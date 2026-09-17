@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { Prisma, type TicketStatus } from '@prisma/client';
 import { requirePermission } from '../../lib/auth-guard.js';
 import type { PermissionMap } from '../../lib/permissions.js';
@@ -75,7 +75,7 @@ const duplicateTicketsQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(1000).default(300),
 });
 
-const mergeDuplicateTicketsBodySchema = z.object({
+const mergeTicketsBodySchema = z.object({
   primaryTicketId: z.string().uuid(),
   duplicateTicketIds: z.array(z.string().uuid()).min(1, 'Informe ao menos um ticket duplicado.').max(50, 'Limite de 50 tickets por operacao.'),
 }).superRefine((value, ctx) => {
@@ -124,16 +124,14 @@ function normalizePhone(value: string) {
   return digits;
 }
 
-function pickMergedStatus(statuses: TicketStatus[]) {
-  if (statuses.includes('open')) {
-    return 'open' as const;
+class TicketMergeConflictError extends Error {}
+
+function calculateClosedTicketServiceMinutes(ticket: { createdAt: Date; closedAt: Date | null }) {
+  if (!ticket.closedAt) {
+    return 0;
   }
 
-  if (statuses.includes('pending')) {
-    return 'pending' as const;
-  }
-
-  return 'closed' as const;
+  return Math.max(0, Math.round((ticket.closedAt.getTime() - ticket.createdAt.getTime()) / 60_000));
 }
 
 function buildDuplicateDetectionKey(ticket: {
@@ -1903,11 +1901,17 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
-  app.post('/tickets/merge-duplicates', async (request, reply) => {
-    const access = await requirePermission(app, request, reply, 'tickets.bulkDelete');
+  const mergeTicketsHandler = async (request: FastifyRequest, reply: FastifyReply) => {
+    const access = await requirePermission(app, request, reply, 'tickets.merge');
     if (!access) return;
+    if (!access.permissions['tickets.view']) {
+      return reply.forbidden('A permissao de visualizar tickets e necessaria para combinar atendimentos.');
+    }
+    if (!access.permissions['tickets.relatedHistory']) {
+      return reply.forbidden('A permissao de consultar o historico relacionado e necessaria para combinar atendimentos.');
+    }
     const session = access.session;
-    const body = mergeDuplicateTicketsBodySchema.parse(request.body ?? {});
+    const body = mergeTicketsBodySchema.parse(request.body ?? {});
 
     const tickets = await app.prisma.ticket.findMany({
       where: {
@@ -1937,168 +1941,256 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     }
 
     for (const ticket of duplicateTickets) {
-      if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket)) {
+      if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket, true)) {
         return reply.forbidden('Voce nao possui permissao para mesclar um ou mais tickets duplicados.');
       }
     }
 
+    if (primaryTicket.isGroup || duplicateTickets.some((ticket) => ticket.isGroup)) {
+      return reply.badRequest('A combinacao esta disponivel somente para conversas individuais.');
+    }
+
+    if (primaryTicket.status !== 'open' && primaryTicket.status !== 'pending') {
+      return reply.badRequest('O ticket principal precisa estar aberto ou aguardando atendimento.');
+    }
+
+    const closedDuplicate = duplicateTickets.find((ticket) => ticket.status !== 'closed');
+    if (closedDuplicate) {
+      return reply.badRequest('Somente tickets fechados podem ser incorporados ao atendimento atual.');
+    }
+
+    const primaryIdentityKey = buildDuplicateDetectionKey(primaryTicket);
     const inconsistentDuplicate = duplicateTickets.find((ticket) => (
-      ticket.whatsappInstanceId !== primaryTicket.whatsappInstanceId
-      || ticket.isGroup !== primaryTicket.isGroup
+      buildDuplicateDetectionKey(ticket) !== primaryIdentityKey
     ));
 
     if (inconsistentDuplicate) {
-      return reply.badRequest('Todos os tickets devem pertencer a mesma instancia e ao mesmo tipo de conversa.');
+      return reply.badRequest('Todos os tickets devem pertencer ao mesmo contato e a mesma instancia.');
     }
 
-    const merged = await app.prisma.$transaction(async (tx) => {
-      const currentPrimary = await tx.ticket.findUnique({
-        where: { id: primaryTicket.id },
-      });
+    const chatIdentity = buildTicketChatIdentity({
+      remoteJid: primaryTicket.externalChatId,
+      phone: primaryTicket.externalContactId,
+      isGroup: false,
+    });
 
-      if (!currentPrimary) {
-        throw new Error('Ticket principal nao encontrado durante a mesclagem.');
-      }
+    let merged;
+    try {
+      merged = await withTicketIdentityLock(app.prisma, {
+        whatsappInstanceId: primaryTicket.whatsappInstanceId,
+        canonicalChatId: chatIdentity.canonicalChatId ?? primaryTicket.externalChatId,
+      }, async (tx) => {
+        const currentPrimary = await tx.ticket.findUnique({
+          where: { id: primaryTicket.id },
+        });
 
-      const currentDuplicates = await tx.ticket.findMany({
-        where: {
-          id: {
-            in: duplicateTickets.map((ticket) => ticket.id),
-          },
-        },
-      });
+        if (!currentPrimary) {
+          throw new TicketMergeConflictError('O ticket principal nao esta mais disponivel.');
+        }
 
-      const duplicateIds = currentDuplicates.map((ticket) => ticket.id);
-      const primaryMessages = await tx.ticketMessage.findMany({
-        where: {
-          ticketId: currentPrimary.id,
-        },
-        select: {
-          id: true,
-          externalMessageId: true,
-        },
-      });
-      const duplicateMessages = await tx.ticketMessage.findMany({
-        where: {
-          ticketId: { in: duplicateIds },
-        },
-        select: {
-          id: true,
-          ticketId: true,
-          externalMessageId: true,
-          createdAt: true,
-        },
-      });
-
-      const primaryExternalIds = new Set(
-        primaryMessages
-          .map((message) => message.externalMessageId)
-          .filter((value): value is string => typeof value === 'string' && value.length > 0),
-      );
-
-      const duplicateMessageIdsToDelete = duplicateMessages
-        .filter((message) => message.externalMessageId && primaryExternalIds.has(message.externalMessageId))
-        .map((message) => message.id);
-
-      const duplicateMessageIdsToMove = duplicateMessages
-        .filter((message) => !duplicateMessageIdsToDelete.includes(message.id))
-        .map((message) => message.id);
-
-      if (duplicateMessageIdsToMove.length > 0) {
-        await tx.ticketMessage.updateMany({
+        const currentDuplicates = await tx.ticket.findMany({
           where: {
-            id: { in: duplicateMessageIdsToMove },
+            id: {
+              in: duplicateTickets.map((ticket) => ticket.id),
+            },
+          },
+        });
+
+        if (
+          currentPrimary.status !== 'open'
+          && currentPrimary.status !== 'pending'
+        ) {
+          throw new TicketMergeConflictError('O ticket principal deixou de estar aberto. Atualize a tela e tente novamente.');
+        }
+
+        if (
+          currentDuplicates.length !== duplicateTickets.length
+          || currentDuplicates.some((ticket) => ticket.status !== 'closed')
+          || currentDuplicates.some((ticket) => buildDuplicateDetectionKey(ticket) !== primaryIdentityKey)
+        ) {
+          throw new TicketMergeConflictError('Um dos tickets mudou de estado. Atualize a tela e tente novamente.');
+        }
+
+        const duplicateIds = currentDuplicates.map((ticket) => ticket.id);
+        const duplicateMessageCount = await tx.ticketMessage.count({
+          where: {
+            ticketId: { in: duplicateIds },
+          },
+        });
+        const movedMessages = await tx.ticketMessage.updateMany({
+          where: {
+            ticketId: { in: duplicateIds },
           },
           data: {
             ticketId: currentPrimary.id,
           },
         });
-      }
+        const mergedServiceMinutes = currentDuplicates.reduce(
+          (total, ticket) => total + calculateClosedTicketServiceMinutes(ticket),
+          0,
+        );
 
-      if (duplicateMessageIdsToDelete.length > 0) {
-        await tx.ticketMessage.deleteMany({
+        await tx.ticketEvent.updateMany({
           where: {
-            id: { in: duplicateMessageIdsToDelete },
+            ticketId: { in: duplicateIds },
+          },
+          data: {
+            ticketId: currentPrimary.id,
           },
         });
+
+        await tx.ticketAssignment.updateMany({
+          where: {
+            ticketId: { in: duplicateIds },
+          },
+          data: {
+            ticketId: currentPrimary.id,
+          },
+        });
+
+        await tx.scheduledMessage.updateMany({
+          where: {
+            ticketId: { in: duplicateIds },
+          },
+          data: {
+            ticketId: currentPrimary.id,
+          },
+        });
+
+        const primaryAliases = await tx.ticketChatAlias.findMany({
+          where: { ticketId: currentPrimary.id },
+          select: {
+            id: true,
+            whatsappInstanceId: true,
+            alias: true,
+          },
+        });
+        const duplicateAliases = await tx.ticketChatAlias.findMany({
+          where: { ticketId: { in: duplicateIds } },
+          select: {
+            id: true,
+            whatsappInstanceId: true,
+            alias: true,
+          },
+        });
+        const knownAliasKeys = new Set(primaryAliases.map((alias) => `${alias.whatsappInstanceId}:${alias.alias}`));
+
+        for (const alias of duplicateAliases) {
+          const aliasKey = `${alias.whatsappInstanceId}:${alias.alias}`;
+          if (knownAliasKeys.has(aliasKey)) {
+            await tx.ticketChatAlias.delete({ where: { id: alias.id } });
+            continue;
+          }
+
+          await tx.ticketChatAlias.update({
+            where: { id: alias.id },
+            data: {
+              ticketId: currentPrimary.id,
+              lastSeenAt: new Date(),
+            },
+          });
+          knownAliasKeys.add(aliasKey);
+        }
+
+        const primaryDedupes = await tx.automationExecutionDedupe.findMany({
+          where: { ticketId: currentPrimary.id },
+          select: {
+            id: true,
+            automationId: true,
+            dedupeKey: true,
+          },
+        });
+        const duplicateDedupes = await tx.automationExecutionDedupe.findMany({
+          where: { ticketId: { in: duplicateIds } },
+          select: {
+            id: true,
+            automationId: true,
+            dedupeKey: true,
+          },
+        });
+        const knownDedupeKeys = new Set(primaryDedupes.map((dedupe) => `${dedupe.automationId}:${dedupe.dedupeKey}`));
+        let discardedAutomationDedupeCount = 0;
+
+        for (const dedupe of duplicateDedupes) {
+          const dedupeKey = `${dedupe.automationId}:${dedupe.dedupeKey}`;
+          if (knownDedupeKeys.has(dedupeKey)) {
+            await tx.automationExecutionDedupe.delete({ where: { id: dedupe.id } });
+            discardedAutomationDedupeCount += 1;
+            continue;
+          }
+
+          await tx.automationExecutionDedupe.update({
+            where: { id: dedupe.id },
+            data: { ticketId: currentPrimary.id },
+          });
+          knownDedupeKeys.add(dedupeKey);
+        }
+
+        const mergeTimestamp = new Date();
+        const latestPreviewOwner = [currentPrimary, ...currentDuplicates]
+          .sort((a, b) => {
+            const messageTimeDifference = new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime();
+            return messageTimeDifference || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+          })[0];
+
+        const updatedPrimary = await tx.ticket.update({
+          where: { id: currentPrimary.id },
+          data: {
+            customerId: currentPrimary.customerId ?? currentDuplicates.find((ticket) => ticket.customerId)?.customerId ?? null,
+            externalContactId: currentPrimary.externalContactId ?? currentDuplicates.find((ticket) => ticket.externalContactId)?.externalContactId ?? null,
+            customerNameSnapshot: currentPrimary.customerNameSnapshot || currentDuplicates.find((ticket) => ticket.customerNameSnapshot)?.customerNameSnapshot || currentPrimary.externalChatId,
+            customerAvatarUrl: currentPrimary.customerAvatarUrl ?? currentDuplicates.find((ticket) => ticket.customerAvatarUrl)?.customerAvatarUrl ?? null,
+            currentAgentId: currentPrimary.currentAgentId ?? currentDuplicates.find((ticket) => ticket.currentAgentId)?.currentAgentId ?? null,
+            currentQueueId: currentPrimary.currentQueueId ?? currentDuplicates.find((ticket) => ticket.currentQueueId)?.currentQueueId ?? null,
+            status: currentPrimary.status,
+            unreadCount: currentPrimary.unreadCount + currentDuplicates.reduce((sum, ticket) => sum + ticket.unreadCount, 0),
+            lastMessagePreview: latestPreviewOwner.lastMessagePreview ?? currentPrimary.lastMessagePreview,
+            lastMessageAt: latestPreviewOwner.lastMessageAt,
+            closedReason: null,
+            closedAt: null,
+            updatedAt: mergeTimestamp,
+          },
+        });
+
+        await tx.ticketEvent.create({
+          data: {
+            id: randomUUID(),
+            ticketId: updatedPrimary.id,
+            eventType: 'assigned',
+            actorUserId: session.userId,
+            metadata: {
+              action: 'merged_tickets',
+              primaryTicketId: updatedPrimary.id,
+              mergedTicketIds: duplicateIds,
+              preservedMessageCount: movedMessages.count,
+              discardedAutomationDedupeCount,
+              mergedServiceMinutes,
+              serviceTimePolicy: 'sum_closed_segments_without_gap',
+            },
+          },
+        });
+
+        await tx.ticket.deleteMany({
+          where: {
+            id: { in: duplicateIds },
+          },
+        });
+
+        return {
+          primaryTicketId: updatedPrimary.id,
+          mergedTicketIds: duplicateIds,
+          movedMessageCount: movedMessages.count,
+          preservedMessageCount: duplicateMessageCount,
+          discardedAutomationDedupeCount,
+        };
+      });
+    } catch (error) {
+      if (error instanceof TicketMergeConflictError) {
+        return reply.conflict(error.message);
       }
 
-      await tx.ticketEvent.updateMany({
-        where: {
-          ticketId: { in: duplicateIds },
-        },
-        data: {
-          ticketId: currentPrimary.id,
-        },
-      });
-
-      await tx.ticketAssignment.updateMany({
-        where: {
-          ticketId: { in: duplicateIds },
-        },
-        data: {
-          ticketId: currentPrimary.id,
-        },
-      });
-
-      await tx.ticketChatAlias.updateMany({
-        where: {
-          ticketId: { in: duplicateIds },
-        },
-        data: {
-          ticketId: currentPrimary.id,
-          lastSeenAt: new Date(),
-        },
-      });
-
-      const mergedStatuses = [currentPrimary.status, ...currentDuplicates.map((ticket) => ticket.status)];
-      const latestPreviewOwner = [currentPrimary, ...currentDuplicates]
-        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
-
-      const updatedPrimary = await tx.ticket.update({
-        where: { id: currentPrimary.id },
-        data: {
-          customerId: currentPrimary.customerId ?? currentDuplicates.find((ticket) => ticket.customerId)?.customerId ?? null,
-          externalContactId: currentPrimary.externalContactId ?? currentDuplicates.find((ticket) => ticket.externalContactId)?.externalContactId ?? null,
-          customerNameSnapshot: currentPrimary.customerNameSnapshot || currentDuplicates.find((ticket) => ticket.customerNameSnapshot)?.customerNameSnapshot || currentPrimary.externalChatId,
-          customerAvatarUrl: currentPrimary.customerAvatarUrl ?? currentDuplicates.find((ticket) => ticket.customerAvatarUrl)?.customerAvatarUrl ?? null,
-          currentAgentId: currentPrimary.currentAgentId ?? currentDuplicates.find((ticket) => ticket.currentAgentId)?.currentAgentId ?? null,
-          currentQueueId: currentPrimary.currentQueueId ?? currentDuplicates.find((ticket) => ticket.currentQueueId)?.currentQueueId ?? null,
-          status: pickMergedStatus(mergedStatuses),
-          unreadCount: currentPrimary.unreadCount + currentDuplicates.reduce((sum, ticket) => sum + ticket.unreadCount, 0),
-          lastMessagePreview: latestPreviewOwner.lastMessagePreview ?? currentPrimary.lastMessagePreview,
-          updatedAt: new Date(),
-        },
-      });
-
-      await tx.ticketEvent.create({
-        data: {
-          id: randomUUID(),
-          ticketId: updatedPrimary.id,
-          eventType: 'assigned',
-          actorUserId: session.userId,
-          metadata: {
-            action: 'merged_duplicates',
-            primaryTicketId: updatedPrimary.id,
-            mergedTicketIds: duplicateIds,
-            deletedDuplicateMessageIds: duplicateMessageIdsToDelete,
-          },
-        },
-      });
-
-      await tx.ticket.deleteMany({
-        where: {
-          id: { in: duplicateIds },
-        },
-      });
-
-      return {
-        primaryTicketId: updatedPrimary.id,
-        mergedTicketIds: duplicateIds,
-        movedMessageCount: duplicateMessageIdsToMove.length,
-        deletedDuplicateMessageCount: duplicateMessageIdsToDelete.length,
-      };
-    });
+      throw error;
+    }
 
     app.io.emit('ticket.updated', {
       ticketId: merged.primaryTicketId,
@@ -2109,5 +2201,10 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return reply.code(201).send(merged);
-  });
+  };
+
+  app.post('/tickets/merge', mergeTicketsHandler);
+  // Keep the previous internal path working while clients migrate to the
+  // explicit combine-tickets endpoint.
+  app.post('/tickets/merge-duplicates', mergeTicketsHandler);
 };

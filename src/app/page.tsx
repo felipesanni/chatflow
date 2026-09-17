@@ -364,6 +364,21 @@ type CustomerItem = {
   } | null;
 };
 
+type CustomerPageResponse = {
+  items: CustomerItem[];
+  pagination?: {
+    limit: number;
+    hasMore: boolean;
+    nextCursor: string | null;
+  };
+};
+
+type CustomerRefreshOptions = {
+  search?: string;
+  cursor?: string | null;
+  append?: boolean;
+};
+
 type RelatedTicketsViewerState = {
   title: string;
   sourceTicketId?: string | null;
@@ -569,6 +584,7 @@ const permissionDefinitions = [
   { key: "tickets.closeWithoutAccept", group: "Atendimento", label: "Encerrar tickets sem aceitar atendimento" },
   { key: "tickets.closedView", group: "Atendimento", label: "Visualizar módulo de tickets fechados" },
   { key: "tickets.relatedHistory", group: "Atendimento", label: "Consultar histórico de tickets relacionados" },
+  { key: "tickets.merge", group: "Atendimento", label: "Combinar tickets" },
   { key: "tickets.bulkDelete", group: "Atendimento", label: "Apagar tickets em lote" },
   { key: "messages.bulkDelete", group: "Atendimento", label: "Apagar mensagens em lote" },
   { key: "tickets.groups", group: "Atendimento", label: "Visualizar grupos" },
@@ -641,6 +657,7 @@ function defaultPermissionsForRole(role: "admin" | "agent"): PermissionMap {
     "tickets.closeWithoutAccept": false,
     "tickets.closedView": false,
     "tickets.relatedHistory": false,
+    "tickets.merge": false,
     "tickets.bulkDelete": false,
     "messages.bulkDelete": false,
     "tickets.groups": true,
@@ -686,6 +703,7 @@ const API_URL = "/api-proxy";
 const MESSAGE_PAGE_SIZE = 100;
 const ACTIVE_TICKET_PAGE_SIZE = 500;
 const CLOSED_TICKET_PAGE_SIZE = 300;
+const CUSTOMER_PAGE_SIZE = 300;
 const PERIODIC_REFRESH_INTERVAL_MS = 10_000;
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL ?? null;
 const BRAND_LOGO_STORAGE_KEY = "chatflow.brand.logo";
@@ -990,6 +1008,19 @@ const API_REFERENCE_MODULES: ApiModuleDoc[] = [
         publicPath: "/api/tickets/duplicates",
         testerPath: "/tickets/duplicates",
         auth: "sessao",
+      },
+      {
+        key: "tickets-merge",
+        method: "POST",
+        module: "Tickets",
+        title: "Combinar tickets",
+        summary: "Incorpora tickets fechados do mesmo contato ao atendimento principal, preservando as mensagens.",
+        publicPath: "/api/tickets/merge",
+        testerPath: "/tickets/merge",
+        auth: "sessao",
+        permission: "tickets.merge",
+        bodyExample: JSON.stringify({ primaryTicketId: "UUID_DO_TICKET_ABERTO", duplicateTicketIds: ["UUID_DO_TICKET_FECHADO"] }, null, 2),
+        notes: ["O ticket principal deve estar aberto ou aguardando; o dashboard soma somente os períodos efetivamente atendidos e ignora os intervalos entre tickets."],
       },
     ],
   },
@@ -2234,6 +2265,10 @@ export default function HomePage() {
   const [automationExecutionLoading, setAutomationExecutionLoading] = React.useState(false);
   const [automationCleanupLoading, setAutomationCleanupLoading] = React.useState(false);
   const [customerLoading, setCustomerLoading] = React.useState(false);
+  const [customerListLoading, setCustomerListLoading] = React.useState(false);
+  const [customerOlderLoading, setCustomerOlderLoading] = React.useState(false);
+  const [customerHasMore, setCustomerHasMore] = React.useState(false);
+  const [customerBeforeCursor, setCustomerBeforeCursor] = React.useState<string | null>(null);
   const [conversationLoading, setConversationLoading] = React.useState(false);
   const [sharedContactLoadingKey, setSharedContactLoadingKey] = React.useState<string | null>(null);
   const [dashboardLoading, setDashboardLoading] = React.useState(false);
@@ -2411,6 +2446,7 @@ export default function HomePage() {
   const [messageBulkSelectionMode, setMessageBulkSelectionMode] = React.useState(false);
   const [selectedMessageIdsForBulkDelete, setSelectedMessageIdsForBulkDelete] = React.useState<string[]>([]);
   const [bulkDeleteLoading, setBulkDeleteLoading] = React.useState(false);
+  const [mergeTicketLoadingId, setMergeTicketLoadingId] = React.useState<string | null>(null);
 
   const [loginForm, setLoginForm] = React.useState({ email: "", password: "" });
   const [bootstrapForm, setBootstrapForm] = React.useState({ name: "", email: "", password: "" });
@@ -2529,6 +2565,8 @@ export default function HomePage() {
   const periodicRefreshInFlightRef = React.useRef(false);
   const ticketRefreshInFlightRef = React.useRef<{ key: string; promise: Promise<TicketItem[]> } | null>(null);
   const ticketViewKeyRef = React.useRef(`${activeWorkspace}:${showArchivedTickets ? "archived" : "active"}`);
+  const customerRequestIdRef = React.useRef(0);
+  const customerSearchRef = React.useRef("");
   ticketViewKeyRef.current = `${activeWorkspace}:${showArchivedTickets ? "archived" : "active"}`;
   const ticketsRef = React.useRef<TicketItem[]>([]);
   const browserNotificationRegistrationRef = React.useRef<ServiceWorkerRegistration | null>(null);
@@ -2931,6 +2969,7 @@ export default function HomePage() {
   const canBulkDeleteMessages = currentUser.permissions["messages.bulkDelete"];
   const canViewClosedTickets = currentUser.permissions["tickets.closedView"];
   const canViewRelatedHistory = currentUser.permissions["tickets.relatedHistory"];
+  const canMergeTickets = currentUser.permissions["tickets.merge"];
   const canManageSelectedGroupVisibility = Boolean(selectedTicket?.isGroup && canManageUserAccess);
   const visibleGroupVisibilityAgents = React.useMemo(
     () => [...agents]
@@ -3185,11 +3224,13 @@ export default function HomePage() {
 
   const filteredCustomers = React.useMemo(() => {
     if (!managementSearch) return customers;
+    const digitsQuery = onlyPhoneDigits(managementSearch);
     return customers.filter((customer) =>
       [customer.name, customer.phone ?? "", customer.email ?? "", customer.companyName ?? "", customer.notes ?? ""]
         .join(" ")
         .toLowerCase()
-        .includes(managementSearch),
+        .includes(managementSearch)
+      || (digitsQuery.length > 0 && onlyPhoneDigits(customer.phone ?? "").includes(digitsQuery)),
     );
   }, [customers, managementSearch]);
 
@@ -3807,15 +3848,66 @@ export default function HomePage() {
     }
   }, [user]);
 
-  const refreshCustomers = React.useCallback(async () => {
+  const refreshCustomers = React.useCallback(async (options: CustomerRefreshOptions = {}) => {
     if (!user || !normalizePermissions(user.role, user.permissions)["contacts.view"]) return;
+
+    const append = options.append === true;
+    const search = (options.search ?? "").trim();
+    const requestId = customerRequestIdRef.current + 1;
+    customerRequestIdRef.current = requestId;
+    customerSearchRef.current = search;
+
+    if (append) {
+      setCustomerOlderLoading(true);
+    } else {
+      setCustomerListLoading(true);
+      setCustomerOlderLoading(false);
+      setCustomerHasMore(false);
+      setCustomerBeforeCursor(null);
+    }
+
     try {
-      const payload = await apiFetch<{ items: CustomerItem[] }>("/customers", { method: "GET" });
-      setCustomers(payload.items);
+      const query = new URLSearchParams({ limit: String(CUSTOMER_PAGE_SIZE) });
+      if (search) {
+        query.set("search", search);
+      }
+      if (options.cursor) {
+        query.set("cursor", options.cursor);
+      }
+
+      const payload = await apiFetch<CustomerPageResponse>(`/customers?${query.toString()}`, { method: "GET" });
+      if (requestId !== customerRequestIdRef.current) return;
+
+      const incomingItems = Array.isArray(payload.items) ? payload.items : [];
+      setCustomers((current) => {
+        const nextItems = append ? [...current, ...incomingItems] : incomingItems;
+        return Array.from(new Map(nextItems.map((item) => [item.id, item])).values());
+      });
+      setCustomerHasMore(Boolean(payload.pagination?.hasMore));
+      setCustomerBeforeCursor(payload.pagination?.nextCursor ?? null);
     } catch (error) {
-      setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar contatos.");
+      if (requestId === customerRequestIdRef.current) {
+        setPanelMessage(error instanceof Error ? error.message : "Falha ao carregar contatos.");
+      }
+    } finally {
+      if (requestId !== customerRequestIdRef.current) return;
+      if (append) {
+        setCustomerOlderLoading(false);
+      } else {
+        setCustomerListLoading(false);
+      }
     }
   }, [user]);
+
+  const loadMoreCustomers = React.useCallback(async () => {
+    if (!customerHasMore || !customerBeforeCursor || customerOlderLoading || customerListLoading) return;
+
+    await refreshCustomers({
+      append: true,
+      cursor: customerBeforeCursor,
+      search: customerSearchRef.current,
+    });
+  }, [customerBeforeCursor, customerHasMore, customerListLoading, customerOlderLoading, refreshCustomers]);
 
   const refreshQuickReplies = React.useCallback(async () => {
     if (!user || !normalizePermissions(user.role, user.permissions)["quickReplies.view"]) return;
@@ -3898,7 +3990,7 @@ export default function HomePage() {
 
     if (activeWorkspace === "channels" && canViewChannels) requests.push(refreshInstances());
     if (activeWorkspace === "quickReplies" && canViewQuickReplies) requests.push(refreshQuickReplies());
-    if (activeWorkspace === "contacts" && canViewContacts) requests.push(refreshCustomers());
+    if (activeWorkspace === "contacts" && canViewContacts) requests.push(refreshCustomers({ search: searchQuery }));
     if (activeWorkspace === "calendar") requests.push(refreshScheduledMessageOverview());
     if (activeWorkspace === "automations" && canViewAutomations) {
       requests.push(refreshAutomations());
@@ -3916,7 +4008,7 @@ export default function HomePage() {
     }
 
     await Promise.all(requests);
-  }, [activeWorkspace, adminSection, canTransferTickets, canViewAutomations, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshApiTokens, refreshAutomationExecutions, refreshAutomations, refreshCustomers, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, selectedTicketId]);
+  }, [activeWorkspace, adminSection, canTransferTickets, canViewAutomations, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshApiTokens, refreshAutomationExecutions, refreshAutomations, refreshCustomers, refreshDashboard, refreshInstances, refreshMessages, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshScheduledMessages, refreshTickets, searchQuery, selectedTicketId]);
 
   React.useEffect(() => {
     void refreshAuth();
@@ -3924,6 +4016,8 @@ export default function HomePage() {
 
   React.useEffect(() => {
     if (!user) {
+      customerRequestIdRef.current += 1;
+      customerSearchRef.current = "";
       setTickets([]);
       setMessages([]);
       setMessageHasMore(false);
@@ -3934,6 +4028,10 @@ export default function HomePage() {
       setAgents([]);
       setQueues([]);
       setCustomers([]);
+      setCustomerListLoading(false);
+      setCustomerOlderLoading(false);
+      setCustomerHasMore(false);
+      setCustomerBeforeCursor(null);
       setQuickReplies([]);
       setAutomations([]);
       setAutomationExecutions([]);
@@ -3979,10 +4077,6 @@ export default function HomePage() {
       void refreshQuickReplies();
     }
 
-    if (activeWorkspace === "contacts" && canViewContacts) {
-      void refreshCustomers();
-    }
-
     if (activeWorkspace === "calendar" && user.permissions["calendar.view"]) {
       void refreshScheduledMessageOverview();
     }
@@ -4010,17 +4104,43 @@ export default function HomePage() {
         void refreshQueues();
       }
     }
-  }, [activeWorkspace, adminSection, canTransferTickets, canViewAutomations, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshAutomationExecutions, refreshAutomations, refreshCustomers, refreshDashboard, refreshInstances, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshTickets, user]);
+  }, [activeWorkspace, adminSection, canTransferTickets, canViewAutomations, canViewChannels, canViewContacts, canViewQuickReplies, canViewTeam, refreshAgents, refreshAutomationExecutions, refreshAutomations, refreshDashboard, refreshInstances, refreshQueues, refreshQuickReplies, refreshScheduledMessageOverview, refreshTickets, user]);
 
   React.useEffect(() => {
-    if (!user || !canViewContacts) {
+    if (!user || activeWorkspace !== "contacts" || !canViewContacts) {
       return;
     }
 
-    if (managementModal === "conversation" || showForwardModal) {
-      void refreshCustomers();
+    const timer = window.setTimeout(() => {
+      void refreshCustomers({ search: searchQuery });
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [activeWorkspace, canViewContacts, refreshCustomers, searchQuery, user]);
+
+  React.useEffect(() => {
+    if (!user || !canViewContacts || managementModal !== "conversation") {
+      return;
     }
-  }, [canViewContacts, managementModal, refreshCustomers, showForwardModal, user]);
+
+    const timer = window.setTimeout(() => {
+      void refreshCustomers({ search: conversationForm.customerSearch });
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [canViewContacts, conversationForm.customerSearch, managementModal, refreshCustomers, user]);
+
+  React.useEffect(() => {
+    if (!user || !canViewContacts || !showForwardModal) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void refreshCustomers({ search: forwardSearch });
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [canViewContacts, forwardSearch, refreshCustomers, showForwardModal, user]);
 
   React.useEffect(() => {
     if (!selectedTicketId || !user) {
@@ -6753,7 +6873,7 @@ export default function HomePage() {
       resetCustomerForm();
       closeManagementModal();
       setPanelMessage(editingCustomerId ? "Contato atualizado." : "Contato criado.");
-      await refreshCustomers();
+      await refreshCustomers({ search: searchQuery });
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao salvar contato.");
     } finally {
@@ -6788,7 +6908,7 @@ export default function HomePage() {
       }
 
       setPanelMessage("Contato excluído.");
-      await refreshCustomers();
+      await refreshCustomers({ search: searchQuery });
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao excluir contato.");
     } finally {
@@ -6950,6 +7070,71 @@ export default function HomePage() {
     }
   }
 
+  async function handleMergeRelatedTicket(ticket: TicketItem) {
+    if (!canMergeTickets || !canViewRelatedHistory || !customerTicketsViewer || ticket.status !== "closed" || ticket.isGroup) {
+      return;
+    }
+
+    const sourceTicketId = customerTicketsViewer.sourceTicketId;
+    const sourceTicket = sourceTicketId
+      ? tickets.find((item) => item.id === sourceTicketId) ?? (selectedTicket?.id === sourceTicketId ? selectedTicket : null)
+      : null;
+    const activeContactTickets = customerTicketsViewer.tickets.filter((item) => (
+      item.id !== ticket.id
+      && !item.isGroup
+      && (item.status === "open" || item.status === "pending")
+    ));
+    const primaryTicket = sourceTicket ?? (activeContactTickets.length === 1 ? activeContactTickets[0] : null);
+
+    if (
+      !primaryTicket
+      || primaryTicket.id === ticket.id
+      || primaryTicket.isGroup
+      || (primaryTicket.status !== "open" && primaryTicket.status !== "pending")
+    ) {
+      return;
+    }
+
+    const confirmed = await openConfirmDialog({
+      title: "Combinar tickets",
+      description: `Incorporar o ticket fechado de ${ticket.customerName} ao atendimento atual? Todas as mensagens serão preservadas no atendimento principal. O dashboard somará somente os períodos efetivamente atendidos e ignorará o intervalo entre os dois tickets.`,
+      confirmLabel: "Combinar tickets",
+      cancelLabel: "Cancelar",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    setMergeTicketLoadingId(ticket.id);
+    try {
+      const result = await apiFetch<{
+        movedMessageCount?: number;
+        preservedMessageCount?: number;
+      }>("/tickets/merge", {
+        method: "POST",
+        body: JSON.stringify({
+          primaryTicketId: primaryTicket.id,
+          duplicateTicketIds: [ticket.id],
+        }),
+      });
+      setCustomerTicketsViewer(null);
+      await refreshTickets();
+      if (selectedTicketId === primaryTicket.id) {
+        await refreshMessages(primaryTicket.id);
+      }
+      if (!sourceTicketId) {
+        await refreshCustomers({ search: searchQuery });
+      }
+      const preservedMessageCount = result.preservedMessageCount ?? result.movedMessageCount ?? 0;
+      setPanelMessage(`Tickets combinados com segurança. ${preservedMessageCount} mensagem(ns) foram preservadas.`);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Falha ao combinar tickets.");
+    } finally {
+      setMergeTicketLoadingId(null);
+    }
+  }
+
   async function handleLoadOlderRelatedTicketMessages() {
     const viewer = customerTicketsViewer;
     const ticketId = viewer?.selectedTicketId;
@@ -7001,7 +7186,7 @@ export default function HomePage() {
         body: JSON.stringify({ ignored }),
       });
       setPanelMessage(ignored ? "Contato ignorado no Painel Geral." : "Contato voltou a ser contabilizado no Painel Geral.");
-      await refreshCustomers();
+      await refreshCustomers({ search: searchQuery });
       await refreshDashboard();
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Falha ao atualizar a visibilidade do contato no dashboard.");
@@ -8542,7 +8727,7 @@ export default function HomePage() {
           <WorkspaceSection title="Contatos" description="Visualizacao em lista dos contatos atendidos pela operacao.">
             <ModuleToolbar
               title="Contatos"
-              count={filteredCustomers.length}
+              count={customerHasMore ? `${filteredCustomers.length}+` : filteredCustomers.length}
               searchValue={searchQuery}
               searchPlaceholder="Pesquisar contato, telefone ou empresa"
               onSearchChange={setSearchQuery}
@@ -8558,7 +8743,7 @@ export default function HomePage() {
               {filteredCustomers.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-5 py-8 text-sm text-slate-500">
-                    Nenhum contato encontrado.
+                    {customerListLoading ? "Carregando contatos..." : "Nenhum contato encontrado."}
                   </td>
                 </tr>
               ) : (
@@ -8615,6 +8800,18 @@ export default function HomePage() {
                 ))
               )}
             </DataTable>
+            {customerHasMore ? (
+              <div className="flex justify-center pt-4">
+                <button
+                  type="button"
+                  onClick={() => void loadMoreCustomers()}
+                  disabled={customerOlderLoading || customerListLoading}
+                  className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {customerOlderLoading ? "Carregando..." : "Carregar mais contatos"}
+                </button>
+              </div>
+            ) : null}
           </WorkspaceSection>
         </div>
       );
@@ -9351,16 +9548,6 @@ export default function HomePage() {
                       <span>{formatContactIdentity(selectedTicket.externalContactId ?? selectedTicket.externalChatId)}</span>
                       <span className="text-slate-300">•</span>
                       <span>{selectedTicket.isGroup ? "Conversa compartilhada" : (selectedTicket.currentAgent?.name ?? "Aguardando atendente")}</span>
-                      {!selectedTicket.isGroup && canViewRelatedHistory ? (
-                        <button
-                          type="button"
-                          onClick={() => void handleOpenRelatedTickets(selectedTicket)}
-                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-semibold text-sky-700 transition hover:bg-sky-50 hover:text-sky-900"
-                        >
-                          <History className="h-3 w-3" />
-                          Ver mais
-                        </button>
-                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -12369,12 +12556,7 @@ export default function HomePage() {
                               return;
                             }
 
-                            setSelectedTicketId(ticket.id);
-                            setActiveWorkspace("tickets");
-                            setShowTicketDetails(false);
-                            if (isMobileViewport) {
-                              setMobileTicketView("conversation");
-                            }
+                            openTicketFromNotification(ticket);
                           }}
                           className={`group relative mb-1.5 flex w-full min-w-0 items-start gap-2.5 rounded-[18px] border text-left transition ${selected ? "border-slate-300 bg-slate-50 shadow-sm" : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"} ${compact ? "p-2.5" : "p-3"}`}
                         >
@@ -12663,16 +12845,39 @@ export default function HomePage() {
                             {ticket.lastMessagePreview?.trim() || "Sem prévia de mensagem."}
                           </div>
                         </div>
-                        {canViewRelatedHistory ? (
-                          <button
-                            type="button"
-                            onClick={() => void handleOpenRelatedTicketMessages(ticket)}
-                            className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-700 transition hover:bg-sky-50"
-                          >
-                            <MessageSquare className="h-3.5 w-3.5" />
-                            Ver mensagens
-                          </button>
-                        ) : null}
+                        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                          {canViewRelatedHistory ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenRelatedTicketMessages(ticket)}
+                              className="inline-flex items-center justify-center gap-1.5 rounded-full border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-700 transition hover:bg-sky-50"
+                            >
+                              <MessageSquare className="h-3.5 w-3.5" />
+                              Ver mensagens
+                            </button>
+                          ) : null}
+                          {canMergeTickets && ticket.status === "closed" && !ticket.isGroup && (
+                            customerTicketsViewer.sourceTicketId
+                              ? selectedTicket?.id === customerTicketsViewer.sourceTicketId
+                                && !selectedTicket.isGroup
+                                && (selectedTicket.status === "open" || selectedTicket.status === "pending")
+                              : customerTicketsViewer.tickets.filter((item) => (
+                                  item.id !== ticket.id
+                                  && !item.isGroup
+                                  && (item.status === "open" || item.status === "pending")
+                                )).length === 1
+                          ) ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleMergeRelatedTicket(ticket)}
+                              disabled={mergeTicketLoadingId !== null}
+                              className="inline-flex items-center justify-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-60"
+                            >
+                              <ArrowRightLeft className="h-3.5 w-3.5" />
+                              {mergeTicketLoadingId === ticket.id ? "Combinando..." : "Combinar"}
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -13151,7 +13356,7 @@ function WorkspaceStatCard(props: { title: string; value: string; description: s
 
 function ModuleToolbar(props: {
   title: string;
-  count?: number;
+  count?: number | string;
   searchValue: string;
   searchPlaceholder: string;
   onSearchChange: (value: string) => void;
@@ -13168,7 +13373,7 @@ function ModuleToolbar(props: {
       <div>
         <h3 className="text-[30px] font-semibold leading-tight text-slate-900">
           {props.title}
-          {typeof props.count === "number" ? <span className="text-slate-500"> ({props.count})</span> : null}
+          {props.count !== undefined ? <span className="text-slate-500"> ({props.count})</span> : null}
         </h3>
       </div>
 

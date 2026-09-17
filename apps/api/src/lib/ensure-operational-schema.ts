@@ -259,6 +259,10 @@ const operationalStatements = [
       WHERE phone_e164 IS NOT NULL;
   `,
   `
+    CREATE INDEX IF NOT EXISTS customers_updated_at_id_idx
+      ON customers(updated_at DESC, id DESC);
+  `,
+  `
     CREATE TABLE IF NOT EXISTS queues (
       id UUID PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,

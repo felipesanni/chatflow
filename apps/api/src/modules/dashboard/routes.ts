@@ -43,6 +43,19 @@ function minutesBetween(from: Date, to: Date) {
   return Math.max(0, Math.round((to.getTime() - from.getTime()) / 60000));
 }
 
+function resolveMergedServiceMinutes(value: Prisma.JsonValue | null | undefined) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return 0;
+  }
+
+  const rawMinutes = (value as Record<string, unknown>).mergedServiceMinutes;
+  if (typeof rawMinutes !== 'number' || !Number.isFinite(rawMinutes) || rawMinutes < 0) {
+    return 0;
+  }
+
+  return Math.round(rawMinutes);
+}
+
 function uniqueTicketsById<T extends { id: string }>(tickets: T[]) {
   return Array.from(new Map(tickets.map((ticket) => [ticket.id, ticket])).values());
 }
@@ -215,6 +228,34 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       select: dashboardTicketSelect,
     });
 
+    const periodNonGroupTicketIds = periodTickets
+      .filter((ticket) => !ticket.isGroup)
+      .map((ticket) => ticket.id);
+    const mergedServiceEvents = periodNonGroupTicketIds.length > 0
+      ? await app.prisma.ticketEvent.findMany({
+          where: {
+            ticketId: { in: periodNonGroupTicketIds },
+            eventType: 'assigned',
+            metadata: {
+              path: ['action'],
+              equals: 'merged_tickets',
+            },
+          },
+          select: {
+            ticketId: true,
+            metadata: true,
+          },
+        })
+      : [];
+    const mergedServiceMinutesByTicket = new Map<string, number>();
+    for (const event of mergedServiceEvents) {
+      const currentMinutes = mergedServiceMinutesByTicket.get(event.ticketId) ?? 0;
+      mergedServiceMinutesByTicket.set(
+        event.ticketId,
+        currentMinutes + resolveMergedServiceMinutes(event.metadata),
+      );
+    }
+
     const createdTicketIds = periodTickets
       .filter((ticket) => !ticket.isGroup && ticket.createdAt >= range.from && ticket.createdAt <= range.to)
       .map((ticket) => ticket.id);
@@ -291,7 +332,10 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
 
     for (const ticket of periodTickets) {
       if (!ticket.isGroup && ticket.closedAt) {
-        handleMinutes.push(minutesBetween(ticket.createdAt, ticket.closedAt));
+        handleMinutes.push(
+          minutesBetween(ticket.createdAt, ticket.closedAt)
+          + (mergedServiceMinutesByTicket.get(ticket.id) ?? 0),
+        );
       }
     }
 

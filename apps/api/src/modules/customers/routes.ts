@@ -1,7 +1,18 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import type { Prisma } from '@prisma/client';
 import { requirePermission } from '../../lib/auth-guard.js';
+import {
+  decodeTimestampCursor,
+  encodeTimestampCursor,
+} from '../../lib/timestamp-cursor.js';
+
+const customerListQuerySchema = z.object({
+  search: z.string().trim().max(120).optional(),
+  cursor: z.string().trim().min(1).optional(),
+  limit: z.coerce.number().int().positive().max(500).default(300),
+});
 
 export const customerRoutes: FastifyPluginAsync = async (app) => {
   const customerBodySchema = z.object({
@@ -112,8 +123,52 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
     const access = await requirePermission(app, request, reply, 'contacts.view');
     if (!access) return;
 
+    const query = customerListQuerySchema.parse(request.query ?? {});
+    const cursor = query.cursor ? decodeTimestampCursor(query.cursor) : null;
+
+    if (query.cursor && !cursor) {
+      return reply.badRequest('Cursor de contatos invalido.');
+    }
+
+    const search = query.search?.trim() || null;
+    const phoneSearch = search ? search.replace(/\D+/g, '') : '';
+    const filters: Prisma.CustomerWhereInput[] = [];
+
+    if (cursor) {
+      filters.push({
+        OR: [
+          { updatedAt: { lt: cursor.timestamp } },
+          { updatedAt: cursor.timestamp, id: { lt: cursor.id } },
+        ],
+      });
+    }
+
+    if (search) {
+      filters.push({
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+          { companyName: { contains: search, mode: 'insensitive' } },
+          { notes: { contains: search, mode: 'insensitive' } },
+          ...(phoneSearch ? [{ phoneE164: { contains: phoneSearch } }] : []),
+        ],
+      });
+    }
+
     const items = await app.prisma.customer.findMany({
-      include: {
+      where: filters.length > 0 ? { AND: filters } : undefined,
+      select: {
+        id: true,
+        name: true,
+        phoneE164: true,
+        avatarUrl: true,
+        email: true,
+        companyName: true,
+        notes: true,
+        isNameManuallySet: true,
+        dashboardExcludedAt: true,
+        createdAt: true,
+        updatedAt: true,
         tickets: {
           select: {
             id: true,
@@ -131,13 +186,25 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
           take: 1,
         },
       },
-      orderBy: {
-        updatedAt: 'desc',
-      },
+      orderBy: [
+        { updatedAt: 'desc' },
+        { id: 'desc' },
+      ],
+      take: query.limit + 1,
     });
 
+    const hasMore = items.length > query.limit;
+    const pageItems = items.slice(0, query.limit);
+    const oldestItem = pageItems[pageItems.length - 1];
+    const nextCursor = hasMore && oldestItem
+      ? encodeTimestampCursor({
+          id: oldestItem.id,
+          timestamp: oldestItem.updatedAt,
+        })
+      : null;
+
     return {
-      items: items.map((customer) => ({
+      items: pageItems.map((customer) => ({
         id: customer.id,
         name: customer.name,
         phone: customer.phoneE164,
@@ -156,8 +223,13 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
               updatedAt: customer.tickets[0].updatedAt,
               queueName: customer.tickets[0].currentQueue?.name ?? null,
             }
-          : null,
+              : null,
       })),
+      pagination: {
+        limit: query.limit,
+        hasMore,
+        nextCursor,
+      },
     };
   });
 
