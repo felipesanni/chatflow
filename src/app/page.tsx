@@ -10002,6 +10002,11 @@ export default function HomePage() {
                         const sharedContact = isContactCardMessage ? parseSharedContactMessage(message.body) : null;
                         const selectedForBulkDelete = selectedMessageIdsForBulkDelete.includes(message.id);
                         const matchesAttachmentFileName = messageAttachments.some((attachment) => {
+                          // Image and video bodies can be WhatsApp captions, even when the
+                          // provider also reports the same text as the attachment name.
+                          if (attachment.mimeType.startsWith("image/") || attachment.mimeType.startsWith("video/")) {
+                            return false;
+                          }
                           const attachmentFileName = (attachment.fileName ?? "").trim().toLowerCase();
                           return Boolean(attachmentFileName) && normalizedBody.toLowerCase() === attachmentFileName;
                         });

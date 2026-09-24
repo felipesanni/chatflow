@@ -1015,7 +1015,9 @@ function extractText(message: EvolutionMessage | null, content: Record<string, a
       attachments: [
         buildExternalAttachment({
           url: inner.imageMessage.url ?? inner.imageMessage.directPath,
-          fileName: inner.imageMessage.fileName ?? inner.imageMessage.caption,
+          // WhatsApp captions belong to the message body, not the attachment name.
+          // Reusing a caption as fileName makes the UI mistake it for a duplicate filename.
+          fileName: inner.imageMessage.fileName,
           mimeType: inner.imageMessage.mimetype,
           sizeBytes: inner.imageMessage.fileLength ?? inner.imageMessage.fileLengthLow,
           fallbackMimeType: 'image/jpeg',
@@ -1047,7 +1049,7 @@ function extractText(message: EvolutionMessage | null, content: Record<string, a
       attachments: [
         buildExternalAttachment({
           url: inner.videoMessage.url ?? inner.videoMessage.directPath,
-          fileName: inner.videoMessage.fileName ?? inner.videoMessage.caption,
+          fileName: inner.videoMessage.fileName,
           mimeType: inner.videoMessage.mimetype,
           sizeBytes: inner.videoMessage.fileLength ?? inner.videoMessage.fileLengthLow,
           fallbackMimeType: 'video/mp4',
