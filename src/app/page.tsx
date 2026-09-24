@@ -2326,6 +2326,7 @@ export default function HomePage() {
   const [automationView, setAutomationView] = React.useState<"rules" | "executions">("rules");
 
   const [messageInput, setMessageInput] = React.useState("");
+  const messageInputRef = React.useRef<HTMLTextAreaElement>(null);
   const [messageCursorPosition, setMessageCursorPosition] = React.useState<number | null>(null);
   const [editingMessageId, setEditingMessageId] = React.useState<string | null>(null);
   const [replyToMessageId, setReplyToMessageId] = React.useState<string | null>(null);
@@ -4875,6 +4876,26 @@ export default function HomePage() {
     viewport.scrollTop = pending.scrollTop + (viewport.scrollHeight - pending.scrollHeight);
     pendingMessagePrependRef.current = null;
   }, [messages]);
+
+  React.useLayoutEffect(() => {
+    const textarea = messageInputRef.current;
+    if (!textarea) return;
+
+    const resizeTextarea = () => {
+      textarea.style.height = "auto";
+      const styles = window.getComputedStyle(textarea);
+      const maxHeight = Number.parseFloat(styles.maxHeight) || 192;
+      const minHeight = Number.parseFloat(styles.minHeight) || 44;
+      const contentHeight = textarea.scrollHeight;
+
+      textarea.style.height = `${Math.max(minHeight, Math.min(contentHeight, maxHeight))}px`;
+      textarea.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
+    };
+
+    resizeTextarea();
+    window.addEventListener("resize", resizeTextarea);
+    return () => window.removeEventListener("resize", resizeTextarea);
+  }, [isMobileViewport, messageInput, showRail, showTicketDetails]);
 
   React.useEffect(() => {
     if (!messagesViewportRef.current || !shouldStickMessagesToBottomRef.current) {
@@ -10452,6 +10473,7 @@ export default function HomePage() {
                   </div>
                   <div className="order-1 relative flex-1 md:order-2">
                     <textarea
+                      ref={messageInputRef}
                       value={messageInput}
                       onChange={(event) => {
                         setMessageInput(event.target.value);
@@ -10465,7 +10487,7 @@ export default function HomePage() {
                       placeholder={canSendToSelectedTicket ? (isEditingMessage ? "Edite a mensagem" : composerPlaceholder) : composerPlaceholder}
                       disabled={shouldDisableComposer}
                       onPaste={(event) => void handleComposerPaste(event)}
-                      className={`min-h-[56px] max-h-36 w-full resize-none rounded-[28px] border px-4 py-3 text-[16px] leading-6 text-slate-700 outline-none transition md:min-h-[44px] md:max-h-28 md:rounded-[24px] md:px-5 md:py-2.5 md:text-sm md:leading-5 disabled:cursor-not-allowed disabled:text-slate-400 ${
+                      className={`min-h-[56px] max-h-48 w-full resize-none overflow-y-hidden rounded-[28px] border px-4 py-3 text-[16px] leading-6 text-slate-700 outline-none transition-colors md:min-h-[44px] md:max-h-48 md:rounded-[24px] md:px-5 md:py-2.5 md:text-sm md:leading-5 disabled:cursor-not-allowed disabled:text-slate-400 ${
                         composerInternalNoteMode
                           ? "border-[#eadc7a] bg-[#fff7b8] focus:border-[#d6c14a] focus:bg-[#fffbe0] disabled:bg-[#f5efb7]"
                           : "border-slate-200 bg-[#f8fafc] focus:border-slate-300 focus:bg-white disabled:bg-slate-100"
