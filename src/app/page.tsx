@@ -3676,19 +3676,21 @@ export default function HomePage() {
             apiFetch<{ items: TicketItem[] }>(`/tickets?status=open&isGroup=false&limit=${ACTIVE_TICKET_PAGE_SIZE}`, { method: "GET" }),
             apiFetch<{ items: TicketItem[] }>(`/tickets?status=pending&isGroup=false&limit=${ACTIVE_TICKET_PAGE_SIZE}`, { method: "GET" }),
             apiFetch<{ items: TicketItem[] }>(`/tickets?status=open&isGroup=true&limit=${ACTIVE_TICKET_PAGE_SIZE}`, { method: "GET" }),
+            apiFetch<{ items: TicketItem[] }>(`/tickets?status=pending&isGroup=true&limit=${ACTIVE_TICKET_PAGE_SIZE}`, { method: "GET" }),
           ];
 
           if (showArchivedTickets) {
             requests.push(apiFetch<{ items: TicketItem[] }>(`/tickets?status=closed&isGroup=false&limit=${CLOSED_TICKET_PAGE_SIZE}`, { method: "GET" }));
           }
 
-          const [openPayload, pendingPayload, groupsPayload, closedPayload] = await Promise.all(requests);
+          const [openPayload, pendingPayload, groupsPayload, pendingGroupsPayload, closedPayload] = await Promise.all(requests);
 
           const deduped = new Map<string, TicketItem>();
           [
             ...openPayload.items,
             ...pendingPayload.items,
             ...groupsPayload.items,
+            ...pendingGroupsPayload.items,
             ...(closedPayload?.items ?? []),
           ].forEach((ticket) => {
             deduped.set(ticket.id, ticket);
