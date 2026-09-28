@@ -39,12 +39,12 @@ export const mcpRoutes: FastifyPluginAsync = async (app) => {
     };
 
     const server = new McpServer({ name: 'chatflow', version: '1.0.0' });
-    const listArgs = z.object({ search: z.string().optional(), limit: z.number().int().min(1).max(200).optional() });
+    const listArgs = { search: z.string().optional(), limit: z.number().int().min(1).max(200).optional() };
 
     server.registerTool('list_tickets', {
       title: 'Listar tickets',
       description: 'Lista tickets acessíveis ao token, com filtros de status, contato, fila, agente e instância.',
-      inputSchema: z.object({
+      inputSchema: {
         search: z.string().optional(),
         status: z.enum(['open', 'pending', 'closed']).optional(),
         phone: z.string().optional(),
@@ -53,7 +53,7 @@ export const mcpRoutes: FastifyPluginAsync = async (app) => {
         whatsappInstanceId: z.union([z.string().uuid(), z.number().int().positive()]).optional(),
         limit: z.number().int().min(1).max(200).optional(),
         cursor: z.string().optional(),
-      }),
+      },
       annotations: { readOnlyHint: true },
     }, async (args) => {
       const params = new URLSearchParams();
@@ -66,7 +66,7 @@ export const mcpRoutes: FastifyPluginAsync = async (app) => {
     server.registerTool('list_ticket_messages', {
       title: 'Ler mensagens de um ticket',
       description: 'Lê mensagens de uma conversa acessível ao token, em ordem cronológica.',
-      inputSchema: z.object({ ticketId: z.string().uuid(), limit: z.number().int().min(1).max(500).optional(), cursor: z.string().optional() }),
+      inputSchema: { ticketId: z.string().uuid(), limit: z.number().int().min(1).max(500).optional(), cursor: z.string().optional() },
       annotations: { readOnlyHint: true },
     }, async ({ ticketId, limit, cursor }) => {
       const params = new URLSearchParams();
@@ -78,12 +78,12 @@ export const mcpRoutes: FastifyPluginAsync = async (app) => {
     server.registerTool('list_new_messages', {
       title: 'Acompanhar mensagens novas',
       description: 'Retorna mensagens novas após o cursor informado. Guarde nextCursor e envie-o na próxima chamada para continuar a leitura sem duplicar mensagens.',
-      inputSchema: z.object({
+      inputSchema: {
         after: z.string().optional(),
         limit: z.number().int().min(1).max(500).optional(),
         direction: z.enum(['inbound', 'outbound', 'system']).optional(),
         ticketId: z.string().uuid().optional(),
-      }),
+      },
       annotations: { readOnlyHint: true },
     }, async ({ after, limit, direction, ticketId }) => {
       const params = new URLSearchParams();
@@ -97,7 +97,7 @@ export const mcpRoutes: FastifyPluginAsync = async (app) => {
     server.registerTool('list_customers', {
       title: 'Listar contatos',
       description: 'Lista contatos que aparecem em tickets dentro do escopo deste token.',
-      inputSchema: listArgs.extend({ phone: z.string().optional() }),
+      inputSchema: { ...listArgs, phone: z.string().optional() },
       annotations: { readOnlyHint: true },
     }, async (args) => {
       const params = new URLSearchParams();
@@ -142,41 +142,46 @@ export const mcpRoutes: FastifyPluginAsync = async (app) => {
       server.registerTool('reply_to_ticket', {
         title: 'Responder ticket',
         description: 'Envia uma mensagem para um ticket acessível pelo token.',
-        inputSchema: z.object({ ticketId: z.string().uuid(), body: z.string().min(1), replyToMessageId: z.string().uuid().optional() }),
+        inputSchema: { ticketId: z.string().uuid(), body: z.string().min(1), replyToMessageId: z.string().uuid().optional() },
         annotations: { readOnlyHint: false, destructiveHint: false },
       }, async ({ ticketId, body, replyToMessageId }) => callExternal('POST', `tickets/${ticketId}/messages`, { body, replyToMessageId }));
 
       server.registerTool('send_message', {
         title: 'Iniciar conversa',
         description: 'Inicia ou continua uma conversa pelo WhatsApp. A identidade de envio vem do responsável cadastrado no token.',
-        inputSchema: z.object({
+        inputSchema: {
           phone: z.string().min(8),
           body: z.string().min(1),
           whatsappInstanceId: z.union([z.string().uuid(), z.number().int().positive()]),
           queueId: z.union([z.string().uuid(), z.number().int().positive()]).optional(),
           customerName: z.string().max(160).optional(),
-        }),
+        },
         annotations: { readOnlyHint: false, destructiveHint: false },
       }, async (args) => callExternal('POST', 'messages/send', args));
 
       server.registerTool('transfer_ticket', {
         title: 'Transferir ticket',
         description: 'Transfere um ticket acessível pelo token para uma fila, um agente ou ambos, dentro dos limites deste token.',
-        inputSchema: z.object({
+        inputSchema: {
           ticketId: z.string().uuid(),
           agentId: z.union([z.string().uuid(), z.number().int().positive()]).optional(),
           queueId: z.union([z.string().uuid(), z.number().int().positive()]).optional(),
           note: z.string().optional(),
-        }).refine((args) => args.agentId !== undefined || args.queueId !== undefined, 'Informe agente, fila ou ambos.'),
+        },
         annotations: { readOnlyHint: false, destructiveHint: false },
-      }, async ({ ticketId, ...body }) => callExternal('POST', `tickets/${ticketId}/transfer`, body));
+      }, async ({ ticketId, ...body }) => {
+        if (body.agentId === undefined && body.queueId === undefined) {
+          return jsonToolResult(400, { message: 'Informe agente, fila ou ambos.' });
+        }
+        return callExternal('POST', `tickets/${ticketId}/transfer`, body);
+      });
     }
 
     if (accessToken.canMergeTickets) {
       server.registerTool('merge_tickets', {
         title: 'Mesclar tickets',
         description: 'Mescla tickets individuais arquivados do mesmo contato e instância em um ticket principal.',
-        inputSchema: z.object({ primaryTicketId: z.string().uuid(), duplicateTicketIds: z.array(z.string().uuid()).min(1).max(50) }),
+        inputSchema: { primaryTicketId: z.string().uuid(), duplicateTicketIds: z.array(z.string().uuid()).min(1).max(50) },
         annotations: { readOnlyHint: false, destructiveHint: true },
       }, async (args) => callExternal('POST', 'tickets/merge', args));
     }
