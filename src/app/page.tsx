@@ -384,6 +384,7 @@ type RelatedTicketsViewerState = {
   title: string;
   sourceTicketId?: string | null;
   sourceCustomerId?: string | null;
+  mergePrimaryTicketId?: string | null;
   tickets: TicketItem[];
   loading: boolean;
   selectedTicketId: string | null;
@@ -552,6 +553,7 @@ type ApiAccessTokenItem = {
   id: string;
   name: string;
   tokenPrefix: string;
+  accessMode: "read" | "read_write";
   isActive: boolean;
   lastUsedAt: string | null;
   createdAt: string;
@@ -1372,8 +1374,9 @@ const CHATFLOW_API_REFERENCE_MODULES: ApiModuleDoc[] = [
           2,
         ),
         notes: [
-          "Aceita filtros: status, phone, search, queueId, agentId, whatsappInstanceId e limit.",
+          "Aceita filtros: status, phone, search, queueId, agentId, whatsappInstanceId, limit e cursor.",
           "queueId, agentId e whatsappInstanceId aceitam publicId numérico ou UUID.",
+          "A resposta inclui pagination.nextCursor para percorrer todos os tickets em páginas de até 200 itens.",
         ],
       },
       {
@@ -1596,8 +1599,9 @@ const CHATFLOW_API_REFERENCE_MODULES: ApiModuleDoc[] = [
         ),
         notes: [
           "ticketId na rota deve ser o UUID interno do ticket.",
-          "Aceita o filtro limit, com padrao 200 e maximo 500.",
+          "Aceita os filtros limit e cursor, com padrao 200 e maximo 500.",
           "O retorno inclui mensagens inbound, outbound, observacoes internas e anexos relacionados ao ticket.",
+          "Use pagination.nextCursor para buscar as mensagens mais antigas até completar o histórico.",
         ],
       },
       {
@@ -1665,8 +1669,21 @@ const CHATFLOW_API_REFERENCE_MODULES: ApiModuleDoc[] = [
         testerPath: "/api-access/tokens",
         auth: "session",
         permission: "api.manage",
-        bodyExample: JSON.stringify({ name: "ERP Financeiro" }, null, 2),
-        notes: ["Guarde o token retornado no momento da criação. Depois disso só o prefixo permanece visível."],
+        bodyExample: JSON.stringify({ name: "ERP Financeiro", accessMode: "read" }, null, 2),
+        notes: ["accessMode=read permite apenas leitura. Use accessMode=read_write para liberar envio de mensagens e transferências.", "Guarde o token retornado no momento da criação. Depois disso só o prefixo permanece visível."],
+      },
+      {
+        key: "api-access-update",
+        method: "PATCH",
+        module: "Tokens",
+        title: "Alterar permissão do token",
+        summary: "Altera o nome ou o nível de acesso de um token existente sem precisar recriá-lo.",
+        publicPath: "/api/api-access/tokens/:tokenId",
+        testerPath: "/api-access/tokens/SEU_TOKEN_ID",
+        auth: "session",
+        permission: "api.manage",
+        bodyExample: JSON.stringify({ accessMode: "read_write" }, null, 2),
+        notes: ["A alteração vale para a próxima chamada feita com o token."],
       },
       {
         key: "api-access-delete",
@@ -2304,6 +2321,8 @@ export default function HomePage() {
   const [apiTokens, setApiTokens] = React.useState<ApiAccessTokenItem[]>([]);
   const [apiTokensLoading, setApiTokensLoading] = React.useState(false);
   const [apiTokenNameInput, setApiTokenNameInput] = React.useState("");
+  const [apiTokenAccessModeInput, setApiTokenAccessModeInput] = React.useState<ApiAccessTokenItem["accessMode"]>("read");
+  const [apiTokenUpdatingId, setApiTokenUpdatingId] = React.useState<string | null>(null);
   const [apiNewTokenValue, setApiNewTokenValue] = React.useState<string | null>(null);
   const [apiSelectedAuthMode, setApiSelectedAuthMode] = React.useState<ApiTesterAuthMode>(
     API_REFERENCE_ENDPOINTS[0]?.auth === "bearer" ? "bearer" : "session",
@@ -2838,10 +2857,11 @@ export default function HomePage() {
     try {
       const payload = await apiFetch<ApiAccessTokenCreateResponse>("/api-access/tokens", {
         method: "POST",
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, accessMode: apiTokenAccessModeInput }),
       });
       setApiTokens((current) => [payload.item, ...current]);
       setApiTokenNameInput("");
+      setApiTokenAccessModeInput("read");
       setApiNewTokenValue(payload.token);
       setApiBearerToken(payload.token);
       setPanelMessage("Token criado. Copie o valor agora: ele nao sera exibido novamente.");
@@ -2850,7 +2870,22 @@ export default function HomePage() {
     } finally {
       setApiTokensLoading(false);
     }
-  }, [apiTokenNameInput]);
+  }, [apiTokenAccessModeInput, apiTokenNameInput]);
+  const handleUpdateApiToken = React.useCallback(async (tokenId: string, accessMode: ApiAccessTokenItem["accessMode"]) => {
+    setApiTokenUpdatingId(tokenId);
+    try {
+      const payload = await apiFetch<{ item: ApiAccessTokenItem; message: string }>(`/api-access/tokens/${tokenId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ accessMode }),
+      });
+      setApiTokens((current) => current.map((item) => item.id === tokenId ? payload.item : item));
+      setPanelMessage("Permissão do token atualizada.");
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Nao foi possivel atualizar a permissao do token.");
+    } finally {
+      setApiTokenUpdatingId(null);
+    }
+  }, []);
   const handleDeleteApiToken = React.useCallback(async (tokenId: string) => {
     setApiTokensLoading(true);
     try {
@@ -7198,34 +7233,62 @@ export default function HomePage() {
     }
   }
 
+  function getMergePrimaryTicket(ticket: TicketItem, viewer = customerTicketsViewer) {
+    if (!viewer || ticket.status !== "closed" || ticket.isGroup) {
+      return null;
+    }
+
+    if (viewer.sourceTicketId) {
+      return tickets.find((item) => item.id === viewer.sourceTicketId)
+        ?? (selectedTicket?.id === viewer.sourceTicketId ? selectedTicket : null);
+    }
+
+    if (viewer.mergePrimaryTicketId) {
+      return viewer.tickets.find((item) => item.id === viewer.mergePrimaryTicketId) ?? null;
+    }
+
+    const activeContactTickets = viewer.tickets.filter((item) => (
+      item.id !== ticket.id
+      && !item.isGroup
+      && (item.status === "open" || item.status === "pending")
+    ));
+    if (activeContactTickets.length === 1) {
+      return activeContactTickets[0];
+    }
+
+    const archivedContactTickets = viewer.tickets.filter((item) => (
+      item.id !== ticket.id
+      && !item.isGroup
+      && item.status === "closed"
+    ));
+    return activeContactTickets.length === 0 && archivedContactTickets.length === 1
+      ? archivedContactTickets[0]
+      : null;
+  }
+
   async function handleMergeRelatedTicket(ticket: TicketItem) {
     if (!canMergeTickets || !canViewRelatedHistory || !customerTicketsViewer || ticket.status !== "closed" || ticket.isGroup) {
       return;
     }
 
     const sourceTicketId = customerTicketsViewer.sourceTicketId;
-    const sourceTicket = sourceTicketId
-      ? tickets.find((item) => item.id === sourceTicketId) ?? (selectedTicket?.id === sourceTicketId ? selectedTicket : null)
-      : null;
-    const activeContactTickets = customerTicketsViewer.tickets.filter((item) => (
-      item.id !== ticket.id
-      && !item.isGroup
-      && (item.status === "open" || item.status === "pending")
-    ));
-    const primaryTicket = sourceTicket ?? (activeContactTickets.length === 1 ? activeContactTickets[0] : null);
+    const primaryTicket = getMergePrimaryTicket(ticket);
 
     if (
       !primaryTicket
       || primaryTicket.id === ticket.id
       || primaryTicket.isGroup
-      || (primaryTicket.status !== "open" && primaryTicket.status !== "pending")
+      || (primaryTicket.status !== "open" && primaryTicket.status !== "pending" && primaryTicket.status !== "closed")
     ) {
       return;
     }
 
+    const primaryIsArchived = primaryTicket.status === "closed";
     const confirmed = await openConfirmDialog({
       title: "Combinar tickets",
-      description: `Incorporar o ticket fechado de ${ticket.customerName} ao atendimento atual? Todas as mensagens serão preservadas no atendimento principal. O dashboard somará somente os períodos efetivamente atendidos e ignorará o intervalo entre os dois tickets.`,
+      description: primaryIsArchived
+        ? `Incorporar o ticket arquivado de ${ticket.customerName} ao ticket arquivado escolhido como principal? Todas as mensagens serão preservadas e o ticket principal continuará arquivado.`
+        : `Incorporar o ticket fechado de ${ticket.customerName} ao atendimento atual? Todas as mensagens serão preservadas no atendimento principal. O dashboard somará somente os períodos efetivamente atendidos e ignorará o intervalo entre os dois tickets.`,
       confirmLabel: "Combinar tickets",
       cancelLabel: "Cancelar",
     });
@@ -8126,6 +8189,20 @@ export default function HomePage() {
                       className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
                     />
                   </label>
+                  <label className="mt-4 block text-sm font-medium text-slate-600">
+                    Permissão inicial
+                    <select
+                      value={apiTokenAccessModeInput}
+                      onChange={(event) => setApiTokenAccessModeInput(event.target.value as ApiAccessTokenItem["accessMode"])}
+                      className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+                    >
+                      <option value="read">Somente leitura</option>
+                      <option value="read_write">Leitura e resposta</option>
+                    </select>
+                    <span className="mt-2 block text-xs leading-5 text-slate-500">
+                      Somente leitura permite consultar tickets e mensagens. Leitura e resposta também libera envio de mensagens e transferências.
+                    </span>
+                  </label>
                   <div className="mt-4 flex flex-wrap items-center gap-3">
                     <button
                       type="button"
@@ -8174,6 +8251,19 @@ export default function HomePage() {
                               <div className="mt-2 text-xs text-slate-500">
                                 Criado em {formatDateTime(token.createdAt)}{token.lastUsedAt ? ` • Último uso ${formatDateTime(token.lastUsedAt)}` : " • Ainda não utilizado"}
                               </div>
+                              <label className="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-600">
+                                Permissão
+                                <select
+                                  value={token.accessMode}
+                                  disabled={apiTokenUpdatingId === token.id}
+                                  onChange={(event) => void handleUpdateApiToken(token.id, event.target.value as ApiAccessTokenItem["accessMode"])}
+                                  className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none transition focus:border-slate-300 disabled:cursor-not-allowed disabled:bg-slate-100"
+                                >
+                                  <option value="read">Somente leitura</option>
+                                  <option value="read_write">Leitura e resposta</option>
+                                </select>
+                                {apiTokenUpdatingId === token.id ? <span className="font-normal text-slate-400">Salvando...</span> : null}
+                              </label>
                             </div>
                             <button
                               type="button"
@@ -12990,27 +13080,53 @@ export default function HomePage() {
                               Ver mensagens
                             </button>
                           ) : null}
-                          {canMergeTickets && ticket.status === "closed" && !ticket.isGroup && (
-                            customerTicketsViewer.sourceTicketId
-                              ? selectedTicket?.id === customerTicketsViewer.sourceTicketId
-                                && !selectedTicket.isGroup
-                                && (selectedTicket.status === "open" || selectedTicket.status === "pending")
-                              : customerTicketsViewer.tickets.filter((item) => (
-                                  item.id !== ticket.id
-                                  && !item.isGroup
-                                  && (item.status === "open" || item.status === "pending")
-                                )).length === 1
-                          ) ? (
-                            <button
-                              type="button"
-                              onClick={() => void handleMergeRelatedTicket(ticket)}
-                              disabled={mergeTicketLoadingId !== null}
-                              className="inline-flex items-center justify-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-60"
-                            >
-                              <ArrowRightLeft className="h-3.5 w-3.5" />
-                              {mergeTicketLoadingId === ticket.id ? "Combinando..." : "Combinar"}
-                            </button>
-                          ) : null}
+                          {canMergeTickets && ticket.status === "closed" && !ticket.isGroup ? (() => {
+                            const primaryTicket = getMergePrimaryTicket(ticket);
+                            const canMergeIntoPrimary = primaryTicket
+                              && primaryTicket.id !== ticket.id
+                              && !primaryTicket.isGroup
+                              && (primaryTicket.status === "open" || primaryTicket.status === "pending" || primaryTicket.status === "closed");
+                            const hasArchivedPeer = !customerTicketsViewer.sourceTicketId
+                              && customerTicketsViewer.tickets.some((item) => (
+                                item.id !== ticket.id
+                                && !item.isGroup
+                                && item.status === "closed"
+                              ));
+
+                            if (canMergeIntoPrimary) {
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleMergeRelatedTicket(ticket)}
+                                  disabled={mergeTicketLoadingId !== null}
+                                  className="inline-flex items-center justify-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-60"
+                                >
+                                  <ArrowRightLeft className="h-3.5 w-3.5" />
+                                  {mergeTicketLoadingId === ticket.id ? "Combinando..." : "Combinar"}
+                                </button>
+                              );
+                            }
+
+                            if (hasArchivedPeer) {
+                              return customerTicketsViewer.mergePrimaryTicketId === ticket.id ? (
+                                <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-700">
+                                  Ticket principal
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setCustomerTicketsViewer((current) => current
+                                    ? { ...current, mergePrimaryTicketId: ticket.id }
+                                    : current)}
+                                  className="inline-flex items-center justify-center gap-1.5 rounded-full border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-700 transition hover:bg-sky-50"
+                                >
+                                  Usar como principal
+                                </button>
+                              );
+                            }
+
+                            return null;
+                          })() : null}
                         </div>
                       </div>
                     </div>

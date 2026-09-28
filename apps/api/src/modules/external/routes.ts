@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { Prisma } from '@prisma/client';
 import { requireApiAccessToken } from '../../lib/api-token-auth.js';
 import { deliverOutboundMessage } from '../../lib/outbound-messages.js';
+import { decodeTimestampCursor, encodeTimestampCursor } from '../../lib/timestamp-cursor.js';
 import {
   buildActiveTicketIdentityWhere,
   buildTicketAliasCandidates,
@@ -57,6 +58,7 @@ const externalListTicketMessagesParamsSchema = z.object({
 
 const externalListTicketMessagesQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(500).default(200),
+  cursor: z.string().trim().min(1).optional(),
 });
 
 const externalSendTicketMessageBodySchema = z.object({
@@ -76,6 +78,7 @@ const externalTicketListQuerySchema = externalListQuerySchema.extend({
   queueId: optionalExternalEntityIdentifierSchema,
   agentId: optionalExternalEntityIdentifierSchema,
   whatsappInstanceId: optionalExternalEntityIdentifierSchema,
+  cursor: z.string().trim().min(1).optional(),
 });
 
 const externalCustomerListQuerySchema = externalListQuerySchema.extend({
@@ -389,8 +392,23 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
     if (!accessToken) return;
 
     const query = externalTicketListQuerySchema.parse(request.query ?? {});
+    const cursor = query.cursor ? decodeTimestampCursor(query.cursor) : null;
+
+    if (query.cursor && !cursor) {
+      return reply.badRequest('Cursor de tickets invalido.');
+    }
+
     const normalizedPhone = query.phone ? normalizePhone(query.phone) : undefined;
     const ticketAndFilters: Prisma.TicketWhereInput[] = [];
+
+    if (cursor) {
+      ticketAndFilters.push({
+        OR: [
+          { updatedAt: { lt: cursor.timestamp } },
+          { updatedAt: cursor.timestamp, id: { lt: cursor.id } },
+        ],
+      });
+    }
 
     if (normalizedPhone) {
       ticketAndFilters.push({
@@ -445,14 +463,29 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
         whatsappInstance: { select: { id: true, name: true } },
       },
       orderBy: [
-        { lastMessageAt: 'desc' },
         { updatedAt: 'desc' },
+        { id: 'desc' },
       ],
-      take: query.limit,
+      take: query.limit + 1,
     });
 
+    const hasMore = items.length > query.limit;
+    const pageItems = items.slice(0, query.limit);
+    const oldestItem = pageItems[pageItems.length - 1];
+    const nextCursor = hasMore && oldestItem
+      ? encodeTimestampCursor({
+          id: oldestItem.id,
+          timestamp: oldestItem.updatedAt,
+        })
+      : null;
+
     return {
-      items: items.map((item) => serializeExternalTicket(item)),
+      items: pageItems.map((item) => serializeExternalTicket(item)),
+      pagination: {
+        limit: query.limit,
+        hasMore,
+        nextCursor,
+      },
     };
   });
 
@@ -556,7 +589,7 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/external/messages/send', async (request, reply) => {
-    const accessToken = await requireApiAccessToken(app, request, reply);
+    const accessToken = await requireApiAccessToken(app, request, reply, 'write');
     if (!accessToken) return;
 
     const body = externalSendMessageBodySchema.parse(request.body);
@@ -790,7 +823,7 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/external/tickets/:ticketId/messages', async (request, reply) => {
-    const accessToken = await requireApiAccessToken(app, request, reply);
+    const accessToken = await requireApiAccessToken(app, request, reply, 'write');
     if (!accessToken) return;
 
     const params = externalSendTicketMessageParamsSchema.parse(request.params);
@@ -860,6 +893,11 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
 
     const params = externalListTicketMessagesParamsSchema.parse(request.params);
     const query = externalListTicketMessagesQuerySchema.parse(request.query ?? {});
+    const cursor = query.cursor ? decodeTimestampCursor(query.cursor) : null;
+
+    if (query.cursor && !cursor) {
+      return reply.badRequest('Cursor de mensagens invalido.');
+    }
 
     const ticket = await app.prisma.ticket.findUnique({
       where: { id: params.ticketId },
@@ -875,11 +913,20 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
     const items = await app.prisma.ticketMessage.findMany({
       where: {
         ticketId: params.ticketId,
+        ...(cursor
+          ? {
+              OR: [
+                { createdAt: { lt: cursor.timestamp } },
+                { createdAt: cursor.timestamp, id: { lt: cursor.id } },
+              ],
+            }
+          : {}),
       },
-      orderBy: {
-        createdAt: 'asc',
-      },
-      take: query.limit,
+      orderBy: [
+        { createdAt: 'desc' },
+        { id: 'desc' },
+      ],
+      take: query.limit + 1,
       include: {
         senderAgent: true,
         attachments: true,
@@ -891,13 +938,28 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       },
     });
 
+    const hasMore = items.length > query.limit;
+    const pageItems = items.slice(0, query.limit);
+    const oldestItem = pageItems[pageItems.length - 1];
+    const nextCursor = hasMore && oldestItem
+      ? encodeTimestampCursor({
+          id: oldestItem.id,
+          timestamp: oldestItem.createdAt,
+        })
+      : null;
+
     return reply.code(200).send({
-      items: items.map((item) => serializeExternalMessage(item)),
+      items: pageItems.map((item) => serializeExternalMessage(item)).reverse(),
+      pagination: {
+        limit: query.limit,
+        hasMore,
+        nextCursor,
+      },
     });
   });
 
   app.post('/external/tickets/:ticketId/transfer', async (request, reply) => {
-    const accessToken = await requireApiAccessToken(app, request, reply);
+    const accessToken = await requireApiAccessToken(app, request, reply, 'write');
     if (!accessToken) return;
 
     const params = externalTransferTicketParamsSchema.parse(request.params);

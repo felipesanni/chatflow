@@ -173,12 +173,27 @@ const operationalStatements = [
       name TEXT NOT NULL,
       token_hash TEXT NOT NULL UNIQUE,
       token_prefix TEXT NOT NULL,
+      access_mode TEXT NOT NULL DEFAULT 'read',
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
       created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
       last_used_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+  `,
+  `
+    ALTER TABLE api_access_tokens
+      ADD COLUMN IF NOT EXISTS access_mode TEXT NOT NULL DEFAULT 'read';
+  `,
+  `
+    DO $$
+    BEGIN
+      ALTER TABLE api_access_tokens
+        ADD CONSTRAINT api_access_tokens_access_mode_check
+        CHECK (access_mode IN ('read', 'read_write'));
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
   `,
   `
     CREATE TABLE IF NOT EXISTS browser_push_subscriptions (

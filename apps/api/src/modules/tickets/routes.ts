@@ -2037,7 +2037,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
 
     const duplicateTickets = tickets.filter((ticket) => body.duplicateTicketIds.includes(ticket.id));
 
-    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, primaryTicket)) {
+    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, primaryTicket, true)) {
       return reply.forbidden('Voce nao possui permissao para mesclar o ticket principal.');
     }
 
@@ -2051,13 +2051,17 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       return reply.badRequest('A combinacao esta disponivel somente para conversas individuais.');
     }
 
-    if (primaryTicket.status !== 'open' && primaryTicket.status !== 'pending') {
-      return reply.badRequest('O ticket principal precisa estar aberto ou aguardando atendimento.');
+    if (
+      primaryTicket.status !== 'open'
+      && primaryTicket.status !== 'pending'
+      && primaryTicket.status !== 'closed'
+    ) {
+      return reply.badRequest('O ticket principal precisa estar aberto, aguardando atendimento ou arquivado.');
     }
 
     const closedDuplicate = duplicateTickets.find((ticket) => ticket.status !== 'closed');
     if (closedDuplicate) {
-      return reply.badRequest('Somente tickets fechados podem ser incorporados ao atendimento atual.');
+      return reply.badRequest('Somente tickets arquivados podem ser incorporados ao ticket principal.');
     }
 
     const primaryIdentityKey = buildDuplicateDetectionKey(primaryTicket);
@@ -2097,11 +2101,11 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
           },
         });
 
-        if (
-          currentPrimary.status !== 'open'
-          && currentPrimary.status !== 'pending'
-        ) {
-          throw new TicketMergeConflictError('O ticket principal deixou de estar aberto. Atualize a tela e tente novamente.');
+        const primaryStatusChanged = primaryTicket.status === 'closed'
+          ? currentPrimary.status !== 'closed'
+          : currentPrimary.status !== 'open' && currentPrimary.status !== 'pending';
+        if (primaryStatusChanged) {
+          throw new TicketMergeConflictError('O ticket principal mudou de estado. Atualize a tela e tente novamente.');
         }
 
         if (
@@ -2247,8 +2251,8 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
             unreadCount: currentPrimary.unreadCount + currentDuplicates.reduce((sum, ticket) => sum + ticket.unreadCount, 0),
             lastMessagePreview: latestPreviewOwner.lastMessagePreview ?? currentPrimary.lastMessagePreview,
             lastMessageAt: latestPreviewOwner.lastMessageAt,
-            closedReason: null,
-            closedAt: null,
+            closedReason: currentPrimary.status === 'closed' ? currentPrimary.closedReason : null,
+            closedAt: currentPrimary.status === 'closed' ? currentPrimary.closedAt : null,
             updatedAt: mergeTimestamp,
           },
         });

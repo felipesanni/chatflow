@@ -1,7 +1,16 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { parseBearerToken, hashApiAccessToken } from './api-access-tokens.js';
 
-export async function requireApiAccessToken(app: FastifyInstance, request: FastifyRequest, reply: FastifyReply) {
+export type ApiAccessMode = 'read' | 'read_write';
+
+export type ApiTokenRequiredAccess = 'read' | 'write';
+
+export async function requireApiAccessToken(
+  app: FastifyInstance,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  requiredAccess: ApiTokenRequiredAccess = 'read',
+) {
   const token = parseBearerToken(request.headers.authorization);
 
   if (!token) {
@@ -28,6 +37,11 @@ export async function requireApiAccessToken(app: FastifyInstance, request: Fasti
 
   if (!accessToken || !accessToken.isActive) {
     reply.unauthorized('Token de API invalido ou inativo.');
+    return null;
+  }
+
+  if (requiredAccess === 'write' && accessToken.accessMode !== 'read_write') {
+    reply.forbidden('Este token esta configurado como somente leitura.');
     return null;
   }
 
