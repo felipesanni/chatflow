@@ -554,16 +554,64 @@ type ApiAccessTokenItem = {
   name: string;
   tokenPrefix: string;
   accessMode: "read" | "read_write";
+  canMergeTickets: boolean;
+  allowedQueueIds: string[];
+  allowedAgentIds: string[];
+  allowedInstanceIds: string[];
   isActive: boolean;
   lastUsedAt: string | null;
   createdAt: string;
   createdBy: { id: string; name: string } | null;
 };
 
+function ApiTokenScopeSelector(props: {
+  title: string;
+  options: Array<{ id: string; name: string }>;
+  selectedIds: string[];
+  disabled?: boolean;
+  onChange: (ids: string[]) => void;
+}) {
+  return (
+    <fieldset className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3">
+      <legend className="px-1 text-xs font-semibold text-slate-600">{props.title}</legend>
+      <div className="max-h-32 space-y-1 overflow-y-auto pr-1">
+        {props.options.length === 0 ? (
+          <p className="py-2 text-xs text-slate-400">Nenhum item disponível nesta tela.</p>
+        ) : props.options.map((option) => (
+          <label key={option.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1 text-xs text-slate-700 hover:bg-slate-50">
+            <input
+              type="checkbox"
+              checked={props.selectedIds.includes(option.id)}
+              disabled={props.disabled}
+              onChange={(event) => {
+                const next = event.target.checked
+                  ? [...props.selectedIds, option.id]
+                  : props.selectedIds.filter((id) => id !== option.id);
+                props.onChange(next);
+              }}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-[#1A1C32] focus:ring-[#1A1C32]"
+            />
+            <span className="truncate">{option.name}</span>
+          </label>
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] leading-4 text-slate-400">
+        {props.selectedIds.length === 0 ? "Sem seleção: todas" : `${props.selectedIds.length} selecionado(s)`}
+      </p>
+    </fieldset>
+  );
+}
+
 type ApiAccessTokenCreateResponse = {
   item: ApiAccessTokenItem;
   token: string;
   message: string;
+};
+
+type ApiTokenScopeOptions = {
+  queues: Array<{ id: string; name: string }>;
+  agents: Array<{ id: string; name: string }>;
+  instances: Array<{ id: string; name: string }>;
 };
 
 type BrowserPushConfigResponse = {
@@ -1641,6 +1689,41 @@ const CHATFLOW_API_REFERENCE_MODULES: ApiModuleDoc[] = [
           "ticketId na rota deve ser o UUID interno do ticket.",
         ],
       },
+      {
+        key: "external-merge-tickets",
+        method: "POST",
+        module: "Tickets externos",
+        title: "Mesclar tickets",
+        summary: "Incorpora tickets arquivados do mesmo contato e instância a um ticket principal, preservando o histórico.",
+        publicPath: "/api/external/tickets/merge",
+        testerPath: "/external/tickets/merge",
+        auth: "bearer",
+        bodyExample: JSON.stringify(
+          {
+            primaryTicketId: "UUID_DO_TICKET_PRINCIPAL",
+            duplicateTicketIds: ["UUID_DO_TICKET_ARQUIVADO"],
+          },
+          null,
+          2,
+        ),
+        successExample: JSON.stringify(
+          {
+            primaryTicketId: "UUID_DO_TICKET_PRINCIPAL",
+            mergedTicketIds: ["UUID_DO_TICKET_ARQUIVADO"],
+            movedMessageCount: 18,
+            preservedMessageCount: 18,
+            discardedAutomationDedupeCount: 0,
+          },
+          null,
+          2,
+        ),
+        notes: [
+          "O token precisa estar com a permissão Mesclar tickets ativada.",
+          "O ticket principal pode estar aberto, aguardando ou arquivado; os tickets incorporados precisam estar arquivados.",
+          "Todos devem ser conversas individuais do mesmo contato e da mesma instância. O limite é de 50 tickets duplicados por chamada.",
+          "ticketId e IDs do corpo devem ser UUIDs internos dos tickets.",
+        ],
+      },
     ],
   },
   {
@@ -1669,20 +1752,20 @@ const CHATFLOW_API_REFERENCE_MODULES: ApiModuleDoc[] = [
         testerPath: "/api-access/tokens",
         auth: "session",
         permission: "api.manage",
-        bodyExample: JSON.stringify({ name: "ERP Financeiro", accessMode: "read" }, null, 2),
-        notes: ["accessMode=read permite apenas leitura. Use accessMode=read_write para liberar envio de mensagens e transferências.", "Guarde o token retornado no momento da criação. Depois disso só o prefixo permanece visível."],
+        bodyExample: JSON.stringify({ name: "ERP Financeiro", accessMode: "read", canMergeTickets: false }, null, 2),
+        notes: ["accessMode=read permite apenas leitura. Use accessMode=read_write para liberar envio de mensagens e transferências. canMergeTickets=true libera mesclagem de tickets independentemente do modo de mensagem.", "Guarde o token retornado no momento da criação. Depois disso só o prefixo permanece visível."],
       },
       {
         key: "api-access-update",
         method: "PATCH",
         module: "Tokens",
         title: "Alterar permissão do token",
-        summary: "Altera o nome ou o nível de acesso de um token existente sem precisar recriá-lo.",
+        summary: "Altera o nível de acesso, a permissão de mesclagem ou o nome de um token existente sem precisar recriá-lo.",
         publicPath: "/api/api-access/tokens/:tokenId",
         testerPath: "/api-access/tokens/SEU_TOKEN_ID",
         auth: "session",
         permission: "api.manage",
-        bodyExample: JSON.stringify({ accessMode: "read_write" }, null, 2),
+        bodyExample: JSON.stringify({ accessMode: "read_write", canMergeTickets: true }, null, 2),
         notes: ["A alteração vale para a próxima chamada feita com o token."],
       },
       {
@@ -2319,9 +2402,14 @@ export default function HomePage() {
   const [apiTesterResult, setApiTesterResult] = React.useState<ApiTesterResult | null>(null);
   const [apiTesterError, setApiTesterError] = React.useState<string | null>(null);
   const [apiTokens, setApiTokens] = React.useState<ApiAccessTokenItem[]>([]);
+  const [apiTokenScopeOptions, setApiTokenScopeOptions] = React.useState<ApiTokenScopeOptions>({ queues: [], agents: [], instances: [] });
   const [apiTokensLoading, setApiTokensLoading] = React.useState(false);
   const [apiTokenNameInput, setApiTokenNameInput] = React.useState("");
   const [apiTokenAccessModeInput, setApiTokenAccessModeInput] = React.useState<ApiAccessTokenItem["accessMode"]>("read");
+  const [apiTokenCanMergeTicketsInput, setApiTokenCanMergeTicketsInput] = React.useState(false);
+  const [apiTokenAllowedQueueIdsInput, setApiTokenAllowedQueueIdsInput] = React.useState<string[]>([]);
+  const [apiTokenAllowedAgentIdsInput, setApiTokenAllowedAgentIdsInput] = React.useState<string[]>([]);
+  const [apiTokenAllowedInstanceIdsInput, setApiTokenAllowedInstanceIdsInput] = React.useState<string[]>([]);
   const [apiTokenUpdatingId, setApiTokenUpdatingId] = React.useState<string | null>(null);
   const [apiNewTokenValue, setApiNewTokenValue] = React.useState<string | null>(null);
   const [apiSelectedAuthMode, setApiSelectedAuthMode] = React.useState<ApiTesterAuthMode>(
@@ -2846,6 +2934,15 @@ export default function HomePage() {
       setApiTokensLoading(false);
     }
   }, [canManageApiTokens]);
+  const refreshApiTokenScopeOptions = React.useCallback(async () => {
+    if (!canManageApiTokens) return;
+    try {
+      const payload = await apiFetch<ApiTokenScopeOptions>("/api-access/scope-options", { method: "GET" });
+      setApiTokenScopeOptions(payload);
+    } catch (error) {
+      setPanelMessage(error instanceof Error ? error.message : "Não foi possível carregar os limites dos tokens.");
+    }
+  }, [canManageApiTokens]);
   const handleCreateApiToken = React.useCallback(async () => {
     const name = apiTokenNameInput.trim();
     if (!name) {
@@ -2857,11 +2954,22 @@ export default function HomePage() {
     try {
       const payload = await apiFetch<ApiAccessTokenCreateResponse>("/api-access/tokens", {
         method: "POST",
-        body: JSON.stringify({ name, accessMode: apiTokenAccessModeInput }),
+        body: JSON.stringify({
+          name,
+          accessMode: apiTokenAccessModeInput,
+          canMergeTickets: apiTokenCanMergeTicketsInput,
+          allowedQueueIds: apiTokenAllowedQueueIdsInput,
+          allowedAgentIds: apiTokenAllowedAgentIdsInput,
+          allowedInstanceIds: apiTokenAllowedInstanceIdsInput,
+        }),
       });
       setApiTokens((current) => [payload.item, ...current]);
       setApiTokenNameInput("");
       setApiTokenAccessModeInput("read");
+      setApiTokenCanMergeTicketsInput(false);
+      setApiTokenAllowedQueueIdsInput([]);
+      setApiTokenAllowedAgentIdsInput([]);
+      setApiTokenAllowedInstanceIdsInput([]);
       setApiNewTokenValue(payload.token);
       setApiBearerToken(payload.token);
       setPanelMessage("Token criado. Copie o valor agora: ele nao sera exibido novamente.");
@@ -2870,16 +2978,19 @@ export default function HomePage() {
     } finally {
       setApiTokensLoading(false);
     }
-  }, [apiTokenAccessModeInput, apiTokenNameInput]);
-  const handleUpdateApiToken = React.useCallback(async (tokenId: string, accessMode: ApiAccessTokenItem["accessMode"]) => {
+  }, [apiTokenAccessModeInput, apiTokenAllowedAgentIdsInput, apiTokenAllowedInstanceIdsInput, apiTokenAllowedQueueIdsInput, apiTokenCanMergeTicketsInput, apiTokenNameInput]);
+  const handleUpdateApiToken = React.useCallback(async (
+    tokenId: string,
+    changes: Partial<Pick<ApiAccessTokenItem, "accessMode" | "canMergeTickets" | "allowedQueueIds" | "allowedAgentIds" | "allowedInstanceIds">>,
+  ) => {
     setApiTokenUpdatingId(tokenId);
     try {
       const payload = await apiFetch<{ item: ApiAccessTokenItem; message: string }>(`/api-access/tokens/${tokenId}`, {
         method: "PATCH",
-        body: JSON.stringify({ accessMode }),
+        body: JSON.stringify(changes),
       });
       setApiTokens((current) => current.map((item) => item.id === tokenId ? payload.item : item));
-      setPanelMessage("Permissão do token atualizada.");
+      setPanelMessage("Permissões do token atualizadas.");
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : "Nao foi possivel atualizar a permissao do token.");
     } finally {
@@ -2908,7 +3019,8 @@ export default function HomePage() {
   React.useEffect(() => {
     if (activeWorkspace !== "api" || !canManageApiTokens) return;
     void refreshApiTokens();
-  }, [activeWorkspace, canManageApiTokens, refreshApiTokens]);
+    void refreshApiTokenScopeOptions();
+  }, [activeWorkspace, canManageApiTokens, refreshApiTokenScopeOptions, refreshApiTokens]);
   const forwardDestinations = React.useMemo(() => {
     const items: ForwardDestination[] = [];
     const seen = new Set<string>();
@@ -4143,7 +4255,14 @@ export default function HomePage() {
       requests.push(refreshAgents());
       requests.push(refreshQueues());
     }
-    if (activeWorkspace === "api") requests.push(refreshApiTokens());
+    if (activeWorkspace === "api") {
+      requests.push(refreshApiTokens());
+      if (canViewChannels) requests.push(refreshInstances());
+      if (canViewTeam || canTransferTickets) {
+        requests.push(refreshAgents());
+        requests.push(refreshQueues());
+      }
+    }
     if (activeWorkspace === "settings") {
       if (adminSection === "instances" && canViewChannels) requests.push(refreshInstances());
       if (adminSection === "agents" && (canViewTeam || canTransferTickets)) requests.push(refreshAgents());
@@ -8176,6 +8295,36 @@ export default function HomePage() {
             </div>
           </WorkspaceSection>
 
+          <WorkspaceSection title="Servidor MCP para agentes de IA" description="Conecte clientes MCP ao ChatFlow usando as permissões de um token de acesso.">
+            <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+              <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Endpoint Streamable HTTP</div>
+                <div className="mt-2 flex items-start justify-between gap-3">
+                  <div className="break-all font-mono text-sm font-medium text-slate-800">{`${publicUrls.apiBaseUrl}/api/mcp`}</div>
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyApiValue(`${publicUrls.apiBaseUrl}/api/mcp`, "Endpoint MCP copiado.")}
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </button>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-slate-600">
+                  Configure no cliente MCP o cabeçalho <span className="font-mono text-xs">Authorization: Bearer SEU_TOKEN</span>. O endpoint usa os limites de leitura, resposta, mesclagem, filas, agentes e instâncias definidos abaixo.
+                </p>
+              </div>
+              <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Ferramentas disponíveis</div>
+                <p className="mt-2 text-sm leading-6 text-slate-700">
+                  Leitura: tickets, mensagens por ticket, novas mensagens, contatos, agentes, filas e instâncias. Tokens com leitura e resposta também recebem ferramentas de resposta, envio e transferência. A ferramenta de mesclagem aparece quando essa permissão estiver ativa.
+                </p>
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  Para acompanhar mensagens, o cliente chama <span className="font-mono">list_new_messages</span> com o cursor devolvido na chamada anterior. Esse fluxo faz polling; notificações push/webhook ainda não estão incluídas.
+                </p>
+              </div>
+            </div>
+          </WorkspaceSection>
+
           {canManageApiTokens ? (
             <WorkspaceSection title="Tokens de acesso" description="Crie um token por integração. O valor completo só aparece no momento da criação.">
               <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
@@ -8203,6 +8352,43 @@ export default function HomePage() {
                       Somente leitura permite consultar tickets e mensagens. Leitura e resposta também libera envio de mensagens e transferências.
                     </span>
                   </label>
+                  <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={apiTokenCanMergeTicketsInput}
+                      onChange={(event) => setApiTokenCanMergeTicketsInput(event.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#1A1C32] focus:ring-[#1A1C32]"
+                    />
+                    <span>
+                      <span className="block font-semibold">Permitir mesclar tickets</span>
+                      <span className="mt-1 block text-xs leading-5 text-slate-500">
+                        Autoriza combinar tickets individuais do mesmo contato e instância. A permissão é independente do envio de mensagens.
+                      </span>
+                    </span>
+                  </label>
+                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    <ApiTokenScopeSelector
+                      title="Filas acessíveis"
+                      options={apiTokenScopeOptions.queues}
+                      selectedIds={apiTokenAllowedQueueIdsInput}
+                      onChange={setApiTokenAllowedQueueIdsInput}
+                    />
+                    <ApiTokenScopeSelector
+                      title="Agentes acessíveis"
+                      options={apiTokenScopeOptions.agents}
+                      selectedIds={apiTokenAllowedAgentIdsInput}
+                      onChange={setApiTokenAllowedAgentIdsInput}
+                    />
+                    <ApiTokenScopeSelector
+                      title="Instâncias acessíveis"
+                      options={apiTokenScopeOptions.instances}
+                      selectedIds={apiTokenAllowedInstanceIdsInput}
+                      onChange={setApiTokenAllowedInstanceIdsInput}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                    Sem itens selecionados em uma categoria, o token terá acesso a todos os itens dessa categoria.
+                  </p>
                   <div className="mt-4 flex flex-wrap items-center gap-3">
                     <button
                       type="button"
@@ -8256,7 +8442,7 @@ export default function HomePage() {
                                 <select
                                   value={token.accessMode}
                                   disabled={apiTokenUpdatingId === token.id}
-                                  onChange={(event) => void handleUpdateApiToken(token.id, event.target.value as ApiAccessTokenItem["accessMode"])}
+                                  onChange={(event) => void handleUpdateApiToken(token.id, { accessMode: event.target.value as ApiAccessTokenItem["accessMode"] })}
                                   className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none transition focus:border-slate-300 disabled:cursor-not-allowed disabled:bg-slate-100"
                                 >
                                   <option value="read">Somente leitura</option>
@@ -8264,6 +8450,44 @@ export default function HomePage() {
                                 </select>
                                 {apiTokenUpdatingId === token.id ? <span className="font-normal text-slate-400">Salvando...</span> : null}
                               </label>
+                              <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs font-semibold text-slate-600">
+                                <input
+                                  type="checkbox"
+                                  checked={token.canMergeTickets}
+                                  disabled={apiTokenUpdatingId === token.id}
+                                  onChange={(event) => void handleUpdateApiToken(token.id, { canMergeTickets: event.target.checked })}
+                                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#1A1C32] focus:ring-[#1A1C32] disabled:cursor-not-allowed"
+                                />
+                                <span>
+                                  <span className="block">Permitir mesclar tickets</span>
+                                  <span className="mt-1 block font-normal leading-5 text-slate-500">
+                                    Pode ser ativada mesmo quando o token está somente para leitura de mensagens.
+                                  </span>
+                                </span>
+                              </label>
+                              <div className="mt-3 grid gap-2 lg:grid-cols-3">
+                                <ApiTokenScopeSelector
+                                  title="Filas"
+                                  options={apiTokenScopeOptions.queues}
+                                  selectedIds={token.allowedQueueIds}
+                                  disabled={apiTokenUpdatingId === token.id}
+                                  onChange={(allowedQueueIds) => void handleUpdateApiToken(token.id, { allowedQueueIds })}
+                                />
+                                <ApiTokenScopeSelector
+                                  title="Agentes"
+                                  options={apiTokenScopeOptions.agents}
+                                  selectedIds={token.allowedAgentIds}
+                                  disabled={apiTokenUpdatingId === token.id}
+                                  onChange={(allowedAgentIds) => void handleUpdateApiToken(token.id, { allowedAgentIds })}
+                                />
+                                <ApiTokenScopeSelector
+                                  title="Instâncias"
+                                  options={apiTokenScopeOptions.instances}
+                                  selectedIds={token.allowedInstanceIds}
+                                  disabled={apiTokenUpdatingId === token.id}
+                                  onChange={(allowedInstanceIds) => void handleUpdateApiToken(token.id, { allowedInstanceIds })}
+                                />
+                              </div>
                             </div>
                             <button
                               type="button"

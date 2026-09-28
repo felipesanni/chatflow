@@ -174,6 +174,10 @@ const operationalStatements = [
       token_hash TEXT NOT NULL UNIQUE,
       token_prefix TEXT NOT NULL,
       access_mode TEXT NOT NULL DEFAULT 'read',
+      can_merge_tickets BOOLEAN NOT NULL DEFAULT FALSE,
+      allowed_queue_ids TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      allowed_agent_ids TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      allowed_instance_ids TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
       created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
       last_used_at TIMESTAMPTZ,
@@ -184,6 +188,22 @@ const operationalStatements = [
   `
     ALTER TABLE api_access_tokens
       ADD COLUMN IF NOT EXISTS access_mode TEXT NOT NULL DEFAULT 'read';
+  `,
+  `
+    ALTER TABLE api_access_tokens
+      ADD COLUMN IF NOT EXISTS can_merge_tickets BOOLEAN NOT NULL DEFAULT FALSE;
+  `,
+  `
+    ALTER TABLE api_access_tokens
+      ADD COLUMN IF NOT EXISTS allowed_queue_ids TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+  `,
+  `
+    ALTER TABLE api_access_tokens
+      ADD COLUMN IF NOT EXISTS allowed_agent_ids TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+  `,
+  `
+    ALTER TABLE api_access_tokens
+      ADD COLUMN IF NOT EXISTS allowed_instance_ids TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
   `,
   `
     DO $$

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { Prisma, type TicketStatus } from '@prisma/client';
 import { requirePermission } from '../../lib/auth-guard.js';
+import { apiTokenCanAccessTicket, requireApiAccessToken } from '../../lib/api-token-auth.js';
 import type { PermissionMap } from '../../lib/permissions.js';
 import {
   ACTIVE_TICKET_STATUSES,
@@ -2002,16 +2003,32 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
-  const mergeTicketsHandler = async (request: FastifyRequest, reply: FastifyReply) => {
-    const access = await requirePermission(app, request, reply, 'tickets.merge');
-    if (!access) return;
-    if (!access.permissions['tickets.view']) {
-      return reply.forbidden('A permissao de visualizar tickets e necessaria para combinar atendimentos.');
+  const mergeTicketsHandler = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    externalContext?: {
+      tokenId: string;
+      tokenName: string;
+      createdByUserId: string | null;
+      allowedQueueIds: string[];
+      allowedAgentIds: string[];
+      allowedInstanceIds: string[];
+    },
+  ) => {
+    let internalAccess: NonNullable<Awaited<ReturnType<typeof requirePermission>>> | null = null;
+
+    if (!externalContext) {
+      internalAccess = await requirePermission(app, request, reply, 'tickets.merge');
+      if (!internalAccess) return;
+      if (!internalAccess.permissions['tickets.view']) {
+        return reply.forbidden('A permissao de visualizar tickets e necessaria para combinar atendimentos.');
+      }
+      if (!internalAccess.permissions['tickets.relatedHistory']) {
+        return reply.forbidden('A permissao de consultar o historico relacionado e necessaria para combinar atendimentos.');
+      }
     }
-    if (!access.permissions['tickets.relatedHistory']) {
-      return reply.forbidden('A permissao de consultar o historico relacionado e necessaria para combinar atendimentos.');
-    }
-    const session = access.session;
+
+    const actorUserId = externalContext?.createdByUserId ?? internalAccess?.session.userId ?? null;
     const body = mergeTicketsBodySchema.parse(request.body ?? {});
 
     const tickets = await app.prisma.ticket.findMany({
@@ -2022,12 +2039,16 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
       },
       include: {
         whatsappInstance: true,
-        hiddenForUsers: groupTicketHiddenUsersInclude(session.userId),
+        hiddenForUsers: groupTicketHiddenUsersInclude(actorUserId ?? ''),
       },
     });
 
     if (tickets.length !== body.duplicateTicketIds.length + 1) {
       return reply.badRequest('Um ou mais tickets informados nao foram encontrados.');
+    }
+
+    if (externalContext && tickets.some((ticket) => !apiTokenCanAccessTicket(externalContext, ticket))) {
+      return reply.forbidden('Este token nao possui acesso a todos os tickets informados.');
     }
 
     const primaryTicket = tickets.find((ticket) => ticket.id === body.primaryTicketId);
@@ -2037,12 +2058,26 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
 
     const duplicateTickets = tickets.filter((ticket) => body.duplicateTicketIds.includes(ticket.id));
 
-    if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, primaryTicket, true)) {
+    if (internalAccess && !canViewTicket(
+      internalAccess.session.userId,
+      internalAccess.user.role,
+      internalAccess.permissions,
+      internalAccess.queueIds,
+      primaryTicket,
+      true,
+    )) {
       return reply.forbidden('Voce nao possui permissao para mesclar o ticket principal.');
     }
 
     for (const ticket of duplicateTickets) {
-      if (!canViewTicket(session.userId, access.user.role, access.permissions, access.queueIds, ticket, true)) {
+      if (internalAccess && !canViewTicket(
+        internalAccess.session.userId,
+        internalAccess.user.role,
+        internalAccess.permissions,
+        internalAccess.queueIds,
+        ticket,
+        true,
+      )) {
         return reply.forbidden('Voce nao possui permissao para mesclar um ou mais tickets duplicados.');
       }
     }
@@ -2262,7 +2297,7 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
             id: randomUUID(),
             ticketId: updatedPrimary.id,
             eventType: 'assigned',
-            actorUserId: session.userId,
+            actorUserId,
             metadata: {
               action: 'merged_tickets',
               primaryTicketId: updatedPrimary.id,
@@ -2271,6 +2306,13 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
               discardedAutomationDedupeCount,
               mergedServiceMinutes,
               serviceTimePolicy: 'sum_closed_segments_without_gap',
+              ...(externalContext
+                ? {
+                    source: 'external_api',
+                    tokenId: externalContext.tokenId,
+                    tokenName: externalContext.tokenName,
+                  }
+                : {}),
             },
           },
         });
@@ -2312,4 +2354,17 @@ export const ticketRoutes: FastifyPluginAsync = async (app) => {
   // Keep the previous internal path working while clients migrate to the
   // explicit combine-tickets endpoint.
   app.post('/tickets/merge-duplicates', mergeTicketsHandler);
+  app.post('/external/tickets/merge', async (request, reply) => {
+    const accessToken = await requireApiAccessToken(app, request, reply, 'merge');
+    if (!accessToken) return;
+
+    return mergeTicketsHandler(request, reply, {
+      tokenId: accessToken.id,
+      tokenName: accessToken.name,
+      createdByUserId: accessToken.createdByUserId,
+      allowedQueueIds: accessToken.allowedQueueIds,
+      allowedAgentIds: accessToken.allowedAgentIds,
+      allowedInstanceIds: accessToken.allowedInstanceIds,
+    });
+  });
 };

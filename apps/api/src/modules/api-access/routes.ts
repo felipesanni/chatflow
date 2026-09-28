@@ -7,12 +7,21 @@ import { buildApiAccessTokenPrefix, createApiAccessTokenValue, hashApiAccessToke
 const createApiAccessTokenBodySchema = z.object({
   name: z.string().trim().min(2).max(120),
   accessMode: z.enum(['read', 'read_write']).default('read'),
+  canMergeTickets: z.boolean().default(false),
+  allowedQueueIds: z.array(z.string().uuid()).default([]),
+  allowedAgentIds: z.array(z.string().uuid()).default([]),
+  allowedInstanceIds: z.array(z.string().uuid()).default([]),
 });
 
 const updateApiAccessTokenBodySchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
   accessMode: z.enum(['read', 'read_write']).optional(),
-}).refine((value) => value.name !== undefined || value.accessMode !== undefined, {
+  canMergeTickets: z.boolean().optional(),
+  allowedQueueIds: z.array(z.string().uuid()).optional(),
+  allowedAgentIds: z.array(z.string().uuid()).optional(),
+  allowedInstanceIds: z.array(z.string().uuid()).optional(),
+}).refine((value) => value.name !== undefined || value.accessMode !== undefined || value.canMergeTickets !== undefined
+  || value.allowedQueueIds !== undefined || value.allowedAgentIds !== undefined || value.allowedInstanceIds !== undefined, {
   message: 'Informe ao menos uma propriedade para atualizar o token.',
 });
 
@@ -25,6 +34,10 @@ function serializeApiAccessToken(item: {
   name: string;
   tokenPrefix: string;
   accessMode: string;
+  canMergeTickets: boolean;
+  allowedQueueIds: string[];
+  allowedAgentIds: string[];
+  allowedInstanceIds: string[];
   isActive: boolean;
   lastUsedAt: Date | null;
   createdAt: Date;
@@ -35,6 +48,10 @@ function serializeApiAccessToken(item: {
     name: item.name,
     tokenPrefix: item.tokenPrefix,
     accessMode: item.accessMode === 'read_write' ? 'read_write' : 'read',
+    canMergeTickets: item.canMergeTickets,
+    allowedQueueIds: item.allowedQueueIds,
+    allowedAgentIds: item.allowedAgentIds,
+    allowedInstanceIds: item.allowedInstanceIds,
     isActive: item.isActive,
     lastUsedAt: item.lastUsedAt,
     createdAt: item.createdAt,
@@ -48,6 +65,19 @@ function serializeApiAccessToken(item: {
 }
 
 export const apiAccessRoutes: FastifyPluginAsync = async (app) => {
+  app.get('/api-access/scope-options', async (request, reply) => {
+    const access = await requirePermission(app, request, reply, 'api.manage');
+    if (!access) return;
+
+    const [queues, agents, instances] = await Promise.all([
+      app.prisma.queue.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+      app.prisma.agent.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+      app.prisma.whatsAppInstance.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+    ]);
+
+    return { queues, agents, instances };
+  });
+
   app.get('/api-access/tokens', async (request, reply) => {
     const access = await requirePermission(app, request, reply, 'api.manage');
     if (!access) return;
@@ -87,6 +117,10 @@ export const apiAccessRoutes: FastifyPluginAsync = async (app) => {
         id: randomUUID(),
         name: body.name,
         accessMode: body.accessMode,
+        canMergeTickets: body.canMergeTickets,
+        allowedQueueIds: body.allowedQueueIds,
+        allowedAgentIds: body.allowedAgentIds,
+        allowedInstanceIds: body.allowedInstanceIds,
         tokenHash,
         tokenPrefix: buildApiAccessTokenPrefix(rawToken),
         createdByUserId: access.session.userId,
@@ -132,6 +166,10 @@ export const apiAccessRoutes: FastifyPluginAsync = async (app) => {
       data: {
         ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.accessMode !== undefined ? { accessMode: body.accessMode } : {}),
+        ...(body.canMergeTickets !== undefined ? { canMergeTickets: body.canMergeTickets } : {}),
+        ...(body.allowedQueueIds !== undefined ? { allowedQueueIds: body.allowedQueueIds } : {}),
+        ...(body.allowedAgentIds !== undefined ? { allowedAgentIds: body.allowedAgentIds } : {}),
+        ...(body.allowedInstanceIds !== undefined ? { allowedInstanceIds: body.allowedInstanceIds } : {}),
       },
       include: {
         createdByUser: {

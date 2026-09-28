@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import { Prisma } from '@prisma/client';
-import { requireApiAccessToken } from '../../lib/api-token-auth.js';
+import { apiTokenCanAccessTarget, apiTokenCanAccessTicket, buildApiTokenTicketScopeWhere, requireApiAccessToken } from '../../lib/api-token-auth.js';
 import { deliverOutboundMessage } from '../../lib/outbound-messages.js';
 import { decodeTimestampCursor, encodeTimestampCursor } from '../../lib/timestamp-cursor.js';
 import {
@@ -83,6 +83,13 @@ const externalTicketListQuerySchema = externalListQuerySchema.extend({
 
 const externalCustomerListQuerySchema = externalListQuerySchema.extend({
   phone: z.string().trim().min(8).optional(),
+});
+
+const externalMessageFeedQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(500).default(100),
+  after: z.string().trim().min(1).optional(),
+  direction: z.enum(['inbound', 'outbound', 'system']).optional(),
+  ticketId: z.string().uuid().optional(),
 });
 
 const externalTransferTicketParamsSchema = z.object({
@@ -455,7 +462,9 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
                 : { id: query.whatsappInstanceId },
             }
           : {}),
-        ...(ticketAndFilters.length > 0 ? { AND: ticketAndFilters } : {}),
+        ...((ticketAndFilters.length + buildApiTokenTicketScopeWhere(accessToken).length) > 0
+          ? { AND: [...ticketAndFilters, ...buildApiTokenTicketScopeWhere(accessToken)] }
+          : {}),
       },
       include: {
         currentAgent: { select: { id: true, name: true } },
@@ -514,6 +523,13 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
+    const tokenTicketScope = buildApiTokenTicketScopeWhere(accessToken);
+    if (tokenTicketScope.length > 0) {
+      customerAndFilters.push({
+        tickets: { some: { AND: tokenTicketScope } },
+      });
+    }
+
     const items = await app.prisma.customer.findMany({
       where: customerAndFilters.length > 0 ? { AND: customerAndFilters } : undefined,
       orderBy: [
@@ -535,14 +551,17 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
     const query = externalListQuerySchema.parse(request.query ?? {});
 
     const items = await app.prisma.agent.findMany({
-      where: query.search
-        ? {
-            OR: [
-              { name: { contains: query.search, mode: 'insensitive' } },
-              { user: { email: { contains: query.search, mode: 'insensitive' } } },
-            ],
-          }
-        : undefined,
+      where: {
+        ...(accessToken.allowedAgentIds.length > 0 ? { id: { in: accessToken.allowedAgentIds } } : {}),
+        ...(query.search
+          ? {
+              OR: [
+                { name: { contains: query.search, mode: 'insensitive' as const } },
+                { user: { email: { contains: query.search, mode: 'insensitive' as const } } },
+              ],
+            }
+          : {}),
+      },
       include: {
         user: {
           select: {
@@ -571,11 +590,10 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
     const query = externalListQuerySchema.parse(request.query ?? {});
 
     const items = await app.prisma.queue.findMany({
-      where: query.search
-        ? {
-            name: { contains: query.search, mode: 'insensitive' },
-          }
-        : undefined,
+      where: {
+        ...(accessToken.allowedQueueIds.length > 0 ? { id: { in: accessToken.allowedQueueIds } } : {}),
+        ...(query.search ? { name: { contains: query.search, mode: 'insensitive' as const } } : {}),
+      },
       orderBy: [
         { isBotQueue: 'asc' },
         { name: 'asc' },
@@ -585,6 +603,94 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
 
     return {
       items: items.map((item) => serializeExternalQueue(item)),
+    };
+  });
+
+  app.get('/external/instances', async (request, reply) => {
+    const accessToken = await requireApiAccessToken(app, request, reply);
+    if (!accessToken) return;
+
+    const query = externalListQuerySchema.parse(request.query ?? {});
+    const items = await app.prisma.whatsAppInstance.findMany({
+      where: {
+        ...(accessToken.allowedInstanceIds.length > 0 ? { id: { in: accessToken.allowedInstanceIds } } : {}),
+        ...(query.search ? { name: { contains: query.search, mode: 'insensitive' as const } } : {}),
+      },
+      select: { id: true, publicId: true, name: true, status: true },
+      orderBy: { name: 'asc' },
+      take: query.limit,
+    });
+
+    return { items };
+  });
+
+  app.get('/external/messages', async (request, reply) => {
+    const accessToken = await requireApiAccessToken(app, request, reply);
+    if (!accessToken) return;
+
+    const query = externalMessageFeedQuerySchema.parse(request.query ?? {});
+    const cursor = query.after ? decodeTimestampCursor(query.after) : null;
+    if (query.after && !cursor) return reply.badRequest('Cursor de mensagens invalido.');
+
+    const ticketScope = buildApiTokenTicketScopeWhere(accessToken);
+    const ticketFilters: Prisma.TicketWhereInput[] = [...ticketScope];
+    if (query.ticketId) ticketFilters.push({ id: query.ticketId });
+
+    const messageFilters: Prisma.TicketMessageWhereInput[] = [];
+    if (ticketFilters.length > 0) messageFilters.push({ ticket: { is: { AND: ticketFilters } } });
+    if (query.direction) messageFilters.push({ direction: query.direction });
+    if (cursor) {
+      messageFilters.push({
+        OR: [
+          { createdAt: { gt: cursor.timestamp } },
+          { createdAt: cursor.timestamp, id: { gt: cursor.id } },
+        ],
+      });
+    }
+
+    const items = await app.prisma.ticketMessage.findMany({
+      where: messageFilters.length > 0 ? { AND: messageFilters } : undefined,
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: query.limit + 1,
+      include: {
+        senderAgent: true,
+        attachments: true,
+        replyToMessage: { include: { attachments: true } },
+        ticket: {
+          select: {
+            id: true,
+            status: true,
+            customerNameSnapshot: true,
+            externalContactId: true,
+            currentAgent: { select: { id: true, name: true } },
+            currentQueue: { select: { id: true, name: true } },
+            whatsappInstance: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+
+    const hasMore = items.length > query.limit;
+    const pageItems = items.slice(0, query.limit);
+    const latestItem = pageItems[pageItems.length - 1];
+    const nextCursor = latestItem
+      ? encodeTimestampCursor({ id: latestItem.id, timestamp: latestItem.createdAt })
+      : query.after ?? null;
+
+    return {
+      items: pageItems.map((item) => ({
+        ...serializeExternalMessage(item),
+        ticket: {
+          id: item.ticket.id,
+          status: item.ticket.status,
+          customerName: item.ticket.customerNameSnapshot,
+          phone: item.ticket.externalContactId,
+          currentAgent: item.ticket.currentAgent,
+          currentQueue: item.ticket.currentQueue,
+          whatsappInstance: item.ticket.whatsappInstance,
+        },
+      })),
+      pagination: { limit: query.limit, hasMore, nextCursor },
     };
   });
 
@@ -616,6 +722,10 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Instancia nao encontrada.');
     }
 
+    if (!apiTokenCanAccessTarget(accessToken, 'instance', instance.id)) {
+      return reply.forbidden('Este token nao possui acesso a instancia selecionada.');
+    }
+
     const queue = body.queueId
       ? await app.prisma.queue.findUnique({
           where: typeof body.queueId === 'number'
@@ -627,6 +737,13 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
 
     if (body.queueId && !queue) {
       return reply.notFound('Fila nao encontrada.');
+    }
+
+    if (queue && !apiTokenCanAccessTarget(accessToken, 'queue', queue.id)) {
+      return reply.forbidden('Este token nao possui acesso a fila selecionada.');
+    }
+    if (accessToken.allowedQueueIds.length > 0 && !queue) {
+      return reply.forbidden('Este token precisa selecionar uma das filas permitidas para iniciar a conversa.');
     }
 
     const agent = body.agentId
@@ -647,6 +764,13 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
 
     if (body.agentId && !agent) {
       return reply.notFound('Agente nao encontrado.');
+    }
+
+    if (agent && !apiTokenCanAccessTarget(accessToken, 'agent', agent.id)) {
+      return reply.forbidden('Este token nao possui acesso ao agente selecionado.');
+    }
+    if (accessToken.allowedAgentIds.length > 0 && !agent) {
+      return reply.forbidden('Este token precisa selecionar um dos agentes permitidos para iniciar a conversa.');
     }
 
     const fallbackActorUserId = accessToken.createdByUser?.id ?? agent?.user.id ?? null;
@@ -782,6 +906,17 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       };
     });
 
+    if (!apiTokenCanAccessTicket(accessToken, {
+      currentAgentId: ticketResult.ticket.currentAgent?.id ?? null,
+      currentQueueId: ticketResult.ticket.currentQueue?.id ?? null,
+      whatsappInstanceId: instance.id,
+    })) {
+      if (ticketResult.created) {
+        await app.prisma.ticket.delete({ where: { id: ticketResult.ticket.id } }).catch(() => {});
+      }
+      return reply.forbidden('Este token nao possui acesso a conversa vinculada a este contato.');
+    }
+
     try {
       const delivered = await deliverOutboundMessage(app, {
         ticketId: ticketResult.ticket.id,
@@ -834,11 +969,17 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       select: {
         id: true,
         currentAgentId: true,
+        currentQueueId: true,
+        whatsappInstanceId: true,
       },
     });
 
     if (!ticket) {
       return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!apiTokenCanAccessTicket(accessToken, ticket)) {
+      return reply.forbidden('Este token nao possui acesso a este ticket.');
     }
 
     const actorUserId = accessToken.createdByUser?.id ?? ticket.currentAgentId ?? null;
@@ -903,11 +1044,18 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       where: { id: params.ticketId },
       select: {
         id: true,
+        currentAgentId: true,
+        currentQueueId: true,
+        whatsappInstanceId: true,
       },
     });
 
     if (!ticket) {
       return reply.notFound('Ticket nao encontrado.');
+    }
+
+    if (!apiTokenCanAccessTicket(accessToken, ticket)) {
+      return reply.forbidden('Este token nao possui acesso a este ticket.');
     }
 
     const items = await app.prisma.ticketMessage.findMany({
@@ -978,6 +1126,10 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Ticket nao encontrado.');
     }
 
+    if (!apiTokenCanAccessTicket(accessToken, ticket)) {
+      return reply.forbidden('Este token nao possui acesso a este ticket.');
+    }
+
     const targetAgent = body.agentId
       ? await app.prisma.agent.findUnique({
           where: typeof body.agentId === 'number'
@@ -998,6 +1150,13 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Agente nao encontrado.');
     }
 
+    if (targetAgent && !apiTokenCanAccessTarget(accessToken, 'agent', targetAgent.id)) {
+      return reply.forbidden('Este token nao possui acesso ao agente de destino.');
+    }
+    if (accessToken.allowedAgentIds.length > 0 && !targetAgent) {
+      return reply.forbidden('Este token precisa manter o ticket com um dos agentes permitidos.');
+    }
+
     const targetQueue = body.queueId
       ? await app.prisma.queue.findUnique({
           where: typeof body.queueId === 'number'
@@ -1009,6 +1168,10 @@ export const externalRoutes: FastifyPluginAsync = async (app) => {
 
     if (body.queueId && !targetQueue) {
       return reply.notFound('Fila nao encontrada.');
+    }
+
+    if (targetQueue && !apiTokenCanAccessTarget(accessToken, 'queue', targetQueue.id)) {
+      return reply.forbidden('Este token nao possui acesso a fila de destino.');
     }
 
     const actorUserId = accessToken.createdByUser?.id ?? targetAgent?.user?.id ?? null;

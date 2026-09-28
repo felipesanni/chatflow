@@ -24,6 +24,7 @@ import { scheduledMessageRoutes } from './modules/scheduled-messages/routes.js';
 import { whatsappRoutes } from './modules/whatsapp/routes.js';
 import { apiAccessRoutes } from './modules/api-access/routes.js';
 import { externalRoutes } from './modules/external/routes.js';
+import { mcpRoutes } from './modules/mcp/routes.js';
 import { browserNotificationRoutes } from './modules/browser-notifications/routes.js';
 import { automationRoutes } from './modules/automations/routes.js';
 import { ZodError } from 'zod';
@@ -71,6 +72,7 @@ export async function buildApp() {
   await app.register(whatsappRoutes, { prefix: '/api' });
   await app.register(apiAccessRoutes, { prefix: '/api' });
   await app.register(externalRoutes, { prefix: '/api' });
+  await app.register(mcpRoutes, { prefix: '/api' });
   await app.register(browserNotificationRoutes, { prefix: '/api' });
   await app.register(automationRoutes, { prefix: '/api' });
 
