@@ -9988,7 +9988,23 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                <div ref={ticketActionsRef} className="relative flex shrink-0 items-center gap-2 self-start md:self-auto">
+                <div ref={ticketActionsRef} className="relative flex min-w-0 max-w-full flex-wrap items-center gap-2 self-start md:justify-end md:self-auto">
+                  {!selectedTicket.isGroup && activeTab === "aguardando" ? (
+                    <button
+                      type="button"
+                      aria-label="Assumir atendimento selecionado"
+                      title="Assumir atendimento"
+                      onClick={() => {
+                        setTicketActionsOpen(false);
+                        void handleAcceptTicket();
+                      }}
+                      disabled={!canAcceptSelectedTicket}
+                      className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-full bg-[#e7eff8] px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#385a7a] transition hover:bg-[#dbe7f3] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+                    >
+                      <CheckSquare className="h-3.5 w-3.5" />
+                      {selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Atendimento fechado" : "Aceitar atendimento"}
+                    </button>
+                  ) : null}
                   {canTransferSelectedTicket ? (
                     <button
                       type="button"
@@ -9998,7 +10014,7 @@ export default function HomePage() {
                         setTicketActionsOpen(false);
                         setShowTransferPanel((current) => !current);
                       }}
-                      className={`inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] transition ${showTransferPanel ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+                      className={`inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-full border px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] transition ${showTransferPanel ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
                     >
                       <ArrowRightLeft className="h-3.5 w-3.5" />
                       Transferir
@@ -10010,7 +10026,7 @@ export default function HomePage() {
                     title="Ações do atendimento"
                     aria-expanded={ticketActionsOpen}
                     onClick={() => setTicketActionsOpen((current) => !current)}
-                    className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-50"
+                    className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-full border border-slate-200 bg-white px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-50"
                   >
                     <Menu className="h-3.5 w-3.5" />
                     Ações
@@ -10058,7 +10074,7 @@ export default function HomePage() {
                             <span>{messageBulkSelectionMode ? "Cancelar seleção" : "Apagar mensagens"}</span>
                           </button>
                         ) : null}
-                        {!selectedTicket.isGroup ? (
+                        {!selectedTicket.isGroup && activeTab !== "aguardando" ? (
                           <button
                             type="button"
                             onClick={() => {
