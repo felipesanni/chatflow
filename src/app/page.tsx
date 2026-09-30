@@ -2478,7 +2478,7 @@ export default function HomePage() {
     items: TicketHistoryItem[];
   }>(null);
   const [showTransferPanel, setShowTransferPanel] = React.useState(false);
-  const [mobileTicketActionsOpen, setMobileTicketActionsOpen] = React.useState(false);
+  const [ticketActionsOpen, setTicketActionsOpen] = React.useState(false);
   const [showGroupNameModal, setShowGroupNameModal] = React.useState(false);
   const [showGroupVisibilityModal, setShowGroupVisibilityModal] = React.useState(false);
   const [showScheduleModal, setShowScheduleModal] = React.useState(false);
@@ -2706,7 +2706,7 @@ export default function HomePage() {
   const ticketNudgesPrimedRef = React.useRef(false);
   const ticketTransfersPrimedRef = React.useRef(false);
   const userMenuRef = React.useRef<HTMLDivElement | null>(null);
-  const mobileTicketActionsRef = React.useRef<HTMLDivElement | null>(null);
+  const ticketActionsRef = React.useRef<HTMLDivElement | null>(null);
   const messageMenuRef = React.useRef<HTMLDivElement | null>(null);
   const attachmentUploadRef = React.useRef<HTMLInputElement | null>(null);
   const messagesViewportRef = React.useRef<HTMLDivElement | null>(null);
@@ -3602,18 +3602,18 @@ export default function HomePage() {
   }, [userMenuOpen]);
 
   React.useEffect(() => {
-    if (!mobileTicketActionsOpen) return;
+    if (!ticketActionsOpen) return;
 
     function handlePointerDown(event: MouseEvent) {
-      if (!mobileTicketActionsRef.current) return;
-      if (!mobileTicketActionsRef.current.contains(event.target as Node)) {
-        setMobileTicketActionsOpen(false);
+      if (!ticketActionsRef.current) return;
+      if (!ticketActionsRef.current.contains(event.target as Node)) {
+        setTicketActionsOpen(false);
       }
     }
 
     function handleEscape(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        setMobileTicketActionsOpen(false);
+        setTicketActionsOpen(false);
       }
     }
 
@@ -3623,16 +3623,10 @@ export default function HomePage() {
       document.removeEventListener("mousedown", handlePointerDown);
       document.removeEventListener("keydown", handleEscape);
     };
-  }, [mobileTicketActionsOpen]);
+  }, [ticketActionsOpen]);
 
   React.useEffect(() => {
-    if (!isMobileViewport) {
-      setMobileTicketActionsOpen(false);
-    }
-  }, [isMobileViewport]);
-
-  React.useEffect(() => {
-    setMobileTicketActionsOpen(false);
+    setTicketActionsOpen(false);
   }, [selectedTicketId]);
 
   React.useEffect(() => {
@@ -9957,7 +9951,7 @@ export default function HomePage() {
           <>
             <div className="border-b border-slate-200 bg-white px-3 py-3 md:px-5">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
-                <div className="flex items-center gap-3 md:gap-4">
+                <div className="flex min-w-0 flex-1 items-center gap-3 md:gap-4">
                   {isMobileViewport ? (
                     <button
                       type="button"
@@ -9976,7 +9970,7 @@ export default function HomePage() {
                     src={selectedCustomer?.avatarUrl ?? selectedTicket.customerAvatarUrl}
                     name={selectedCustomer?.name ?? selectedTicket.customerName}
                     alt={`Foto de ${selectedCustomer?.name ?? selectedTicket.customerName}`}
-                    className="grid h-12 w-12 place-items-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700"
+                    className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700"
                   />
                   <div className="min-w-0">
                     <button
@@ -9994,225 +9988,146 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                {isMobileViewport ? (
-                  <div ref={mobileTicketActionsRef} className="relative self-start">
+                <div ref={ticketActionsRef} className="relative flex shrink-0 items-center gap-2 self-start md:self-auto">
+                  {canTransferSelectedTicket ? (
                     <button
                       type="button"
-                      aria-label="Abrir ações do atendimento"
-                      title="Ações"
-                      aria-expanded={mobileTicketActionsOpen}
-                      onClick={() => setMobileTicketActionsOpen((current) => !current)}
-                      className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-50"
+                      aria-label={showTransferPanel ? "Fechar popup de transferência" : "Transferir atendimento"}
+                      title="Transferir atendimento"
+                      onClick={() => {
+                        setTicketActionsOpen(false);
+                        setShowTransferPanel((current) => !current);
+                      }}
+                      className={`inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] transition ${showTransferPanel ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
                     >
-                      <Menu className="h-4 w-4" />
-                      Ações
-                      <ChevronDown className={`h-3.5 w-3.5 transition ${mobileTicketActionsOpen ? "rotate-180" : ""}`} />
+                      <ArrowRightLeft className="h-3.5 w-3.5" />
+                      Transferir
                     </button>
-                    {mobileTicketActionsOpen ? (
-                      <div className="absolute left-0 top-[calc(100%+0.65rem)] z-[65] w-[min(84vw,320px)] rounded-[24px] border border-slate-200 bg-white p-2 shadow-[0_24px_60px_rgba(15,23,42,0.16)]">
-                        <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Ações do atendimento</div>
-                        <div className="space-y-1">
-                          {canDeleteSelectedTicket ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setMobileTicketActionsOpen(false);
-                                void handleDeleteSelectedTicket();
-                              }}
-                              disabled={bulkDeleteLoading}
-                              className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:text-slate-300"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                              <span>Apagar ticket</span>
-                            </button>
-                          ) : null}
-                          {canBulkDeleteMessages ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setMobileTicketActionsOpen(false);
-                                if (messageBulkSelectionMode) {
-                                  cancelMessageBulkSelectionMode();
-                                } else {
-                                  startMessageBulkSelectionMode();
-                                }
-                              }}
-                              className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm transition ${
-                                messageBulkSelectionMode
-                                  ? "bg-rose-50 text-rose-700 hover:bg-rose-100"
-                                  : "text-slate-700 hover:bg-slate-50"
-                              }`}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                              <span>{messageBulkSelectionMode ? "Cancelar seleção" : "Apagar mensagens"}</span>
-                            </button>
-                          ) : null}
-                          {!selectedTicket.isGroup ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setMobileTicketActionsOpen(false);
-                                void handleAcceptTicket();
-                              }}
-                              disabled={!canAcceptSelectedTicket}
-                              className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-[#385a7a] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
-                            >
-                              <CheckSquare className="h-4 w-4" />
-                              <span>{selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Atendimento fechado" : "Aceitar atendimento"}</span>
-                            </button>
-                          ) : null}
-                          {canTransferSelectedTicket ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setMobileTicketActionsOpen(false);
-                                setShowTransferPanel(true);
-                              }}
-                              className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-slate-700 transition hover:bg-slate-50"
-                            >
-                              <ArrowRightLeft className="h-4 w-4" />
-                              <span>Transferir</span>
-                            </button>
-                          ) : null}
-                          {canNudgeSelectedTicket ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setMobileTicketActionsOpen(false);
-                                void handleNudgeTicket();
-                              }}
-                              disabled={nudgeLoading}
-                              className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:text-slate-400"
-                            >
-                              <Zap className="h-4 w-4" />
-                              <span>{nudgeLoading ? "Enviando alerta..." : "Chamar atenção"}</span>
-                            </button>
-                          ) : null}
-                          {selectedTicket.status === "closed" ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setMobileTicketActionsOpen(false);
-                                void handleReopenTicket();
-                              }}
-                              disabled={!canReopenSelectedTicket}
-                              className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-emerald-600 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:text-slate-400"
-                            >
-                              <RefreshCw className="h-4 w-4" />
-                              <span>Reabrir</span>
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setMobileTicketActionsOpen(false);
-                                void handleCloseTicket();
-                              }}
-                              disabled={!canCloseSelectedTicket}
-                              className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:text-slate-400"
-                            >
-                              <X className="h-4 w-4" />
-                              <span>Fechar</span>
-                            </button>
-                          )}
+                  ) : null}
+                  <button
+                    type="button"
+                    aria-label="Abrir ações do atendimento"
+                    title="Ações do atendimento"
+                    aria-expanded={ticketActionsOpen}
+                    onClick={() => setTicketActionsOpen((current) => !current)}
+                    className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-50"
+                  >
+                    <Menu className="h-3.5 w-3.5" />
+                    Ações
+                    <ChevronDown className={`h-3.5 w-3.5 transition ${ticketActionsOpen ? "rotate-180" : ""}`} />
+                  </button>
+                  {ticketActionsOpen ? (
+                    <div
+                      id="ticket-actions-menu"
+                      className="absolute right-0 top-[calc(100%+0.65rem)] z-[65] w-[min(84vw,320px)] rounded-[24px] border border-slate-200 bg-white p-2 shadow-[0_24px_60px_rgba(15,23,42,0.16)]"
+                    >
+                      <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Ações do atendimento</div>
+                      <div className="space-y-1">
+                        {canDeleteSelectedTicket ? (
                           <button
                             type="button"
                             onClick={() => {
-                              setMobileTicketActionsOpen(false);
-                              void openTicketHistoryViewer(selectedTicket);
+                              setTicketActionsOpen(false);
+                              void handleDeleteSelectedTicket();
                             }}
-                            className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-slate-700 transition hover:bg-slate-50"
+                            disabled={bulkDeleteLoading}
+                            className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:text-slate-300"
                           >
-                            <Info className="h-4 w-4" />
-                            <span>Histórico do ticket</span>
+                            <Trash2 className="h-4 w-4" />
+                            <span>Apagar ticket</span>
                           </button>
-                        </div>
+                        ) : null}
+                        {canBulkDeleteMessages ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTicketActionsOpen(false);
+                              if (messageBulkSelectionMode) {
+                                cancelMessageBulkSelectionMode();
+                              } else {
+                                startMessageBulkSelectionMode();
+                              }
+                            }}
+                            className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm transition ${
+                              messageBulkSelectionMode
+                                ? "bg-rose-50 text-rose-700 hover:bg-rose-100"
+                                : "text-slate-700 hover:bg-slate-50"
+                            }`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            <span>{messageBulkSelectionMode ? "Cancelar seleção" : "Apagar mensagens"}</span>
+                          </button>
+                        ) : null}
+                        {!selectedTicket.isGroup ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTicketActionsOpen(false);
+                              void handleAcceptTicket();
+                            }}
+                            disabled={!canAcceptSelectedTicket}
+                            className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-[#385a7a] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                          >
+                            <CheckSquare className="h-4 w-4" />
+                            <span>{selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Atendimento fechado" : "Aceitar atendimento"}</span>
+                          </button>
+                        ) : null}
+                        {canNudgeSelectedTicket ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTicketActionsOpen(false);
+                              void handleNudgeTicket();
+                            }}
+                            disabled={nudgeLoading}
+                            className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                          >
+                            <Zap className="h-4 w-4" />
+                            <span>{nudgeLoading ? "Enviando alerta..." : "Chamar atenção"}</span>
+                          </button>
+                        ) : null}
+                        {selectedTicket.status === "closed" ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTicketActionsOpen(false);
+                              void handleReopenTicket();
+                            }}
+                            disabled={!canReopenSelectedTicket}
+                            className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-emerald-600 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                          >
+                            <RefreshCw className="h-4 w-4" />
+                            <span>Reabrir</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTicketActionsOpen(false);
+                              void handleCloseTicket();
+                            }}
+                            disabled={!canCloseSelectedTicket}
+                            className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                          >
+                            <X className="h-4 w-4" />
+                            <span>Fechar</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTicketActionsOpen(false);
+                            void openTicketHistoryViewer(selectedTicket);
+                          }}
+                          className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-slate-700 transition hover:bg-slate-50"
+                        >
+                          <Info className="h-4 w-4" />
+                          <span>Histórico do ticket</span>
+                        </button>
                       </div>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    {canDeleteSelectedTicket ? (
-                      <button
-                        type="button"
-                        aria-label="Apagar ticket selecionado"
-                        title="Apagar ticket"
-                        onClick={() => void handleDeleteSelectedTicket()}
-                        disabled={bulkDeleteLoading}
-                        className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-white disabled:text-slate-300"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    ) : null}
-                    {canBulkDeleteMessages ? (
-                      <button
-                        type="button"
-                        aria-label={messageBulkSelectionMode ? "Cancelar seleção de mensagens" : "Selecionar mensagens para apagar"}
-                        title={messageBulkSelectionMode ? "Cancelar seleção de mensagens" : "Selecionar mensagens para apagar"}
-                        onClick={() => {
-                          if (messageBulkSelectionMode) {
-                            cancelMessageBulkSelectionMode();
-                          } else {
-                            startMessageBulkSelectionMode();
-                          }
-                        }}
-                        className={`inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] transition ${
-                          messageBulkSelectionMode
-                            ? "border-rose-200 bg-rose-50 text-rose-700"
-                            : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                        }`}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        {messageBulkSelectionMode ? "Cancelar seleção" : "Apagar mensagens"}
-                      </button>
-                    ) : null}
-                    {!selectedTicket.isGroup ? (
-                      <button type="button" aria-label="Assumir atendimento selecionado" title="Assumir atendimento" onClick={() => void handleAcceptTicket()} disabled={!canAcceptSelectedTicket} className="inline-flex h-9 items-center gap-2 rounded-full bg-[#e7eff8] px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#385a7a] transition hover:bg-[#dbe7f3] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
-                        <CheckSquare className="h-4 w-4" />
-                        {selectedTicket.currentAgent?.id === currentUser.id ? "Em atendimento" : selectedTicket.status === "closed" ? "Atendimento fechado" : "Aceitar atendimento"}
-                      </button>
-                    ) : null}
-                    {canTransferSelectedTicket ? (
-                      <button
-                        type="button"
-                        aria-label={showTransferPanel ? "Fechar popup de transferência" : "Transferir atendimento"}
-                        title="Transferir atendimento"
-                        onClick={() => setShowTransferPanel(true)}
-                        className={`inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] transition ${showTransferPanel ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
-                      >
-                        <ArrowRightLeft className="h-3.5 w-3.5" />
-                        Transferir
-                      </button>
-                    ) : null}
-                    {canNudgeSelectedTicket ? (
-                      <button
-                        type="button"
-                        aria-label="Chamar atenção do responsável"
-                        title="Chamar atenção do responsável"
-                        onClick={() => void handleNudgeTicket()}
-                        disabled={nudgeLoading}
-                        className="inline-flex h-9 items-center gap-2 rounded-full border border-amber-200 bg-white px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
-                      >
-                        <Zap className="h-3.5 w-3.5" />
-                        {nudgeLoading ? "Enviando..." : "Chamar atenção"}
-                      </button>
-                    ) : null}
-                    {selectedTicket.status === "closed" ? (
-                      <button type="button" aria-label="Reabrir atendimento selecionado" title="Reabrir atendimento" onClick={() => void handleReopenTicket()} disabled={!canReopenSelectedTicket} className="inline-flex h-9 items-center gap-2 rounded-full border border-emerald-200 bg-white px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-600 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
-                        <RefreshCw className="h-3.5 w-3.5" />
-                        Reabrir
-                      </button>
-                    ) : (
-                      <button type="button" aria-label="Fechar atendimento selecionado" title="Fechar atendimento" onClick={() => void handleCloseTicket()} disabled={!canCloseSelectedTicket} className="inline-flex h-9 items-center gap-2 rounded-full border border-red-200 bg-white px-3.5 text-[10px] font-bold uppercase tracking-[0.12em] text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
-                        <X className="h-3.5 w-3.5" />
-                        Fechar
-                      </button>
-                    )}
-                    <button type="button" aria-label="Abrir histórico do ticket" title="Histórico do ticket" onClick={() => void openTicketHistoryViewer(selectedTicket)} className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700">
-                      <Info className="h-4 w-4" />
-                    </button>
-                  </div>
-                )}
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
 
